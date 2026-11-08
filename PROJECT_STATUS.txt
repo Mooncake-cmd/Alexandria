@@ -1,0 +1,10 @@
+ALEXANDRIA — STATUS DA ENTREGA
+
+Fonte: incluída
+APK: não incluído (não foi possível compilar neste ambiente: Android SDK e Gradle não estão acessíveis)
+Versão do projeto: 0.2.0
+
+Implementado: biblioteca local, importação múltipla, leitor de PDF e TXT, progresso de leitura salvo.
+Não implementado: leitor de EPUB, MOBI, DJVU, DOCX, CBZ, CBR; zoom no PDF; testes automatizados.
+
+IMPORTANTE: o código desta versão nunca foi compilado. Rode o workflow do GitHub Actions e corrija o que o log apontar antes de considerar a versão estável.
