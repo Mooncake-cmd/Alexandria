@@ -11,8 +11,8 @@ android {
         applicationId = "com.alexandria.reader"
         minSdk = 23
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0"
     }
 
     // Java e Kotlin precisam apontar para o mesmo alvo, senão o Gradle acusa
@@ -24,4 +24,24 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
+
+    lint {
+        // Erros de lint quebram o build; avisos aparecem no relatório (app/build/reports).
+        abortOnError = true
+        checkDependencies = false
+        // A interface é montada em código e só existe em português; mover cada texto para
+        // strings.xml fica para quando houver tradução. Os demais avisos continuam ativos.
+        disable += "SetTextI18n"
+    }
+}
+
+dependencies {
+    // Só para testes unitários na JVM: o APK continua sem dependências externas.
+    testImplementation("junit:junit:4.13.2")
+    // Simula o Android na JVM para testar banco de dados e telas sem emulador.
+    testImplementation("org.robolectric:robolectric:4.14.1")
 }

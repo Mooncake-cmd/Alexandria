@@ -2,6 +2,7 @@ package com.alexandria.reader
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
@@ -175,7 +176,7 @@ class MainActivity : Activity() {
                 card.addView(label(entry.format.uppercase(), 10f, gold, true).apply {
                     setPadding(0, dp(5), 0, 0)
                 })
-                card.addView(label(statusLine(entry), 11f, muted).apply {
+                card.addView(label(ReadingStatus.describe(entry), 11f, muted).apply {
                     setPadding(0, dp(3), 0, 0)
                 })
                 content.addView(card, LinearLayout.LayoutParams(-1, -2).apply {
@@ -186,13 +187,6 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun statusLine(entry: LibraryItem): String = when {
-        entry.format !in Formats.readable -> "Leitor em breve"
-        entry.position <= 0 -> "Toque para ler"
-        entry.format == "pdf" -> "Parou na página ${entry.position + 1}"
-        else -> "${entry.position / 100}% lido"
-    }
-
     @Suppress("DEPRECATION")
     private fun chooseDocument() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
@@ -201,7 +195,12 @@ class MainActivity : Activity() {
             putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
         }
-        startActivityForResult(intent, REQUEST_DOCUMENT)
+        try {
+            startActivityForResult(intent, REQUEST_DOCUMENT)
+        } catch (e: ActivityNotFoundException) {
+            // Alguns aparelhos (TVs, sistemas modificados) não têm o seletor de documentos.
+            Toast.makeText(this, "Este aparelho não tem um seletor de arquivos disponível.", Toast.LENGTH_LONG).show()
+        }
     }
 
     @Suppress("OVERRIDE_DEPRECATION", "DEPRECATION")

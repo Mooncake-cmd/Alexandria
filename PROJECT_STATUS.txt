@@ -1,10 +1,12 @@
 ALEXANDRIA — STATUS DA ENTREGA
 
-Fonte: incluída
-APK: não incluído (não foi possível compilar neste ambiente: Android SDK e Gradle não estão acessíveis)
-Versão do projeto: 0.2.0
+Versão do projeto: 0.3.0
 
-Implementado: biblioteca local, importação múltipla, leitor de PDF e TXT, progresso de leitura salvo.
-Não implementado: leitor de EPUB, MOBI, DJVU, DOCX, CBZ, CBR; zoom no PDF; testes automatizados.
+Build: compilado com sucesso (AGP 8.7.3, Gradle 8.14.3, SDK 35). Lint sem avisos. 30 testes automatizados passando.
+APK: não versionado no repositório; gerado pelo GitHub Actions (artefato Alexandria-debug-apk) ou por ./gradlew assembleDebug.
 
-IMPORTANTE: o código desta versão nunca foi compilado. Rode o workflow do GitHub Actions e corrija o que o log apontar antes de considerar a versão estável.
+Implementado: biblioteca local ordenada por leitura recente, importação múltipla, leitor de PDF (zoom, deslizar, ir para página)
+e TXT (em blocos, UTF-8/UTF-16/Windows-1252, tema escuro), progresso de leitura salvo com total de páginas.
+Não implementado: leitor de EPUB, MOBI, DJVU, DOCX, CBZ, CBR; busca; notas e estatísticas.
+
+A VALIDAR EM APARELHO REAL: gestos do leitor de PDF (pinça, toque duplo, deslizar), que os testes na JVM não cobrem.

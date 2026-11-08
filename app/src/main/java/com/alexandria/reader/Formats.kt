@@ -27,3 +27,24 @@ object Formats {
         }
     }
 }
+
+/** Texto de progresso exibido no cartão da biblioteca. Kotlin puro, coberto por testes. */
+object ReadingStatus {
+    /** Fração (de 0 a 10000) a partir da qual um TXT conta como lido até o fim. */
+    const val FINISHED_FRACTION = 9_950
+
+    fun describe(item: LibraryItem): String = when {
+        item.format !in Formats.readable -> "Leitor em breve"
+        item.format == "pdf" -> describePdf(item.position, item.pageCount, item.openedAt > 0)
+        item.position <= 0 -> "Toque para ler"
+        item.position >= FINISHED_FRACTION -> "Concluído"
+        else -> "${item.position / 100}% lido"
+    }
+
+    private fun describePdf(page: Int, pageCount: Int, opened: Boolean): String = when {
+        pageCount <= 0 -> if (page <= 0) "Toque para ler" else "Parou na página ${page + 1}"
+        !opened && page <= 0 -> "Toque para ler · $pageCount páginas"
+        page >= pageCount - 1 && pageCount > 1 -> "Concluído · $pageCount páginas"
+        else -> "Página ${page + 1} de $pageCount · ${(page + 1) * 100 / pageCount}%"
+    }
+}

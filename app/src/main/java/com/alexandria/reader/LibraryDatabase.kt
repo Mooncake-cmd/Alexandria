@@ -8,6 +8,8 @@ import android.database.sqlite.SQLiteOpenHelper
 
 /**
  * [position] guarda o ponto de leitura: índice da página (PDF) ou fração rolada de 0 a 10000 (TXT).
+ * [pageCount] é o total de páginas do PDF (0 enquanto o documento não foi aberto).
+ * [openedAt] é a última vez em que o leitor salvou progresso (0 se nunca foi lido).
  */
 data class LibraryItem(
     val id: Long,
@@ -15,10 +17,12 @@ data class LibraryItem(
     val uri: String,
     val format: String,
     val addedAt: Long,
-    val position: Int
+    val position: Int,
+    val pageCount: Int = 0,
+    val openedAt: Long = 0
 )
 
-class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.db", null, 2) {
+class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.db", null, 3) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""
             CREATE TABLE library_items (
@@ -27,7 +31,9 @@ class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.
                 uri TEXT NOT NULL UNIQUE,
                 format TEXT NOT NULL,
                 added_at INTEGER NOT NULL,
-                last_position INTEGER NOT NULL DEFAULT 0
+                last_position INTEGER NOT NULL DEFAULT 0,
+                page_count INTEGER NOT NULL DEFAULT 0,
+                opened_at INTEGER NOT NULL DEFAULT 0
             )
         """.trimIndent())
     }
@@ -36,6 +42,10 @@ class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.
         // Migrações sempre preservam os dados do usuário.
         if (oldVersion < 2) {
             db.execSQL("ALTER TABLE library_items ADD COLUMN last_position INTEGER NOT NULL DEFAULT 0")
+        }
+        if (oldVersion < 3) {
+            db.execSQL("ALTER TABLE library_items ADD COLUMN page_count INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE library_items ADD COLUMN opened_at INTEGER NOT NULL DEFAULT 0")
         }
     }
 
@@ -58,9 +68,10 @@ class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.
         return false
     }
 
+    /** Mais recentes primeiro: o que foi lido ou importado por último aparece no topo. */
     fun all(): List<LibraryItem> {
         val result = mutableListOf<LibraryItem>()
-        readableDatabase.rawQuery("$SELECT ORDER BY added_at DESC", null).use { cursor ->
+        readableDatabase.rawQuery("$SELECT ORDER BY MAX(opened_at, added_at) DESC, id DESC", null).use { cursor ->
             while (cursor.moveToNext()) result += cursor.toItem()
         }
         return result
@@ -71,8 +82,13 @@ class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.
             if (cursor.moveToFirst()) cursor.toItem() else null
         }
 
-    fun updatePosition(id: Long, position: Int) {
-        val values = ContentValues().apply { put("last_position", position) }
+    /** Salva o ponto de leitura. [pageCount] só é gravado quando conhecido (maior que 0). */
+    fun updateProgress(id: Long, position: Int, pageCount: Int = 0) {
+        val values = ContentValues().apply {
+            put("last_position", position)
+            put("opened_at", System.currentTimeMillis())
+            if (pageCount > 0) put("page_count", pageCount)
+        }
         writableDatabase.update("library_items", values, "id = ?", arrayOf(id.toString()))
     }
 
@@ -81,10 +97,10 @@ class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.
     }
 
     private fun Cursor.toItem() = LibraryItem(
-        getLong(0), getString(1), getString(2), getString(3), getLong(4), getInt(5)
+        getLong(0), getString(1), getString(2), getString(3), getLong(4), getInt(5), getInt(6), getLong(7)
     )
 
     private companion object {
-        const val SELECT = "SELECT id, name, uri, format, added_at, last_position FROM library_items"
+        const val SELECT = "SELECT id, name, uri, format, added_at, last_position, page_count, opened_at FROM library_items"
     }
 }
