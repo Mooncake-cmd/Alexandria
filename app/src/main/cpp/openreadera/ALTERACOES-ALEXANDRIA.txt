@@ -1,0 +1,25 @@
+ALTERAÇÕES FEITAS PELO ALEXANDRIA NAS FONTES DO OPENREADERA
+============================================================
+
+Origem: The OpenReadEra Project, versão 21.12.11 (README em readme-openreadera.txt), obtida do espelho
+público https://github.com/champignoom/openreadera (commit 664251abd5584b97b5c6941a3ef5e8856d2c0efc,
+"initial clone from 21.12.11"). Endereço oficial indicado pelo projeto: https://readera.org/book-reader/OpenReadEra
+
+Licenças: EraMOBI, EraDjVu e orecrop — AGPL-3.0-ou-posterior; EraComic — GPL-2.0; libmobi — LGPL-3.0-ou-posterior;
+DjVuLibre e dmc_unrar — GPL-2.0-ou-posterior; partes da "Common CLI viewer interface" (orebridge) — Apache-2.0;
+libjpeg-turbo, libpng, libwebp, MiniZip, EasyBMP — licenças permissivas próprias (arquivos LICENSE/COPYING de cada pasta).
+
+O que mudou (2026-11-08):
+1. Só entraram os motores usados pelo app (eramobi, eradjvu, eracomic) e suas dependências. EraPDF, EraEPUB,
+   freetype e orelibjpeg não foram copiados.
+2. Android.mk da raiz reescrito para incluir só esses módulos (o original incluía todos os subdiretórios).
+3. Application.mk novo: STL estático, Android 6 (API 23) e opções para o compilador do NDK r27 aceitar código
+   escrito para o NDK r20 (avisos de C antigo deixam de ser erro; a palavra "register" do C++ é aceita).
+4. Removida a pasta eramobi/docs/tests (55 MB de livros de teste do libmobi). Três deles, pequenos, estão em
+   app/src/test/resources/ore para os testes automatizados.
+
+Nenhum arquivo de código-fonte (.c, .cpp, .h) foi alterado.
+
+Como os motores são usados: como programas separados, executados pelo app e controlados por pipes nomeados
+(FIFOs), exatamente como descrito na seção 3 do readme-openreadera.txt. O app não liga (link) nenhum desses
+códigos ao próprio código.

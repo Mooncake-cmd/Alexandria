@@ -20,6 +20,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import java.io.File
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
@@ -81,7 +82,8 @@ class MainActivity : Activity() {
             SECTION_LIBRARY -> showLibrary()
             SECTION_NOTES -> showNotes()
             SECTION_STATS -> showStats()
-            else -> showPlaceholder(name)
+            SECTION_SETTINGS -> showSettings()
+            else -> showLibrary()
         }
     }
 
@@ -173,11 +175,7 @@ class MainActivity : Activity() {
         content.addView(label("LEITURA DISPONÍVEL", 10f, muted, true).apply {
             setPadding(0, dp(22), 0, dp(4))
         })
-        content.addView(label("PDF  ·  EPUB  ·  CBZ  ·  DOCX  ·  TXT", 12f, ink))
-        content.addView(label("EM BREVE", 10f, muted, true).apply {
-            setPadding(0, dp(10), 0, dp(4))
-        })
-        content.addView(label("MOBI  ·  DJVU  ·  CBR (RAR)", 12f, ink))
+        content.addView(label("PDF  ·  EPUB  ·  MOBI  ·  AZW3  ·  DJVU  ·  CBZ  ·  CBR  ·  DOCX  ·  TXT", 12f, ink))
         spacer(22)
 
         val items = database.all()
@@ -191,7 +189,7 @@ class MainActivity : Activity() {
                 emptyPanel(
                     "▤",
                     "Sua biblioteca começa aqui",
-                    "Importe um PDF, EPUB, quadrinho CBZ, DOCX ou TXT para começar a ler. Os outros formatos ficam guardados até o leitor deles ficar pronto."
+                    "Importe um PDF, EPUB, MOBI, AZW3, DJVU, quadrinho CBZ/CBR, DOCX ou TXT para começar a ler."
                 ),
                 LinearLayout.LayoutParams(-1, -2)
             )
@@ -485,8 +483,7 @@ class MainActivity : Activity() {
             if (position != null) intent.putExtra(ReaderActivity.EXTRA_POSITION, position)
             startActivity(intent)
         } else {
-            val detail = if (entry.format == "cbr") "Este CBR está em formato RAR, que ainda não é suportado." else "O leitor de ${entry.format.uppercase()} ainda não existe."
-            Toast.makeText(this, "$detail O arquivo continua guardado na biblioteca.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "O leitor de ${entry.format.uppercase()} ainda não existe.", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -597,19 +594,103 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun showPlaceholder(name: String) {
-        setContentView(baseScreen(name))
-        sectionTitle(name, "Esta área será desenvolvida em uma próxima etapa.")
+    // ---------- Ajustes ----------
+
+    private fun showSettings() {
+        setContentView(baseScreen(SECTION_SETTINGS))
+        sectionTitle("Ajustes", "Sobre o app, armazenamento e licenças.")
+
+        settingsPanel("Sobre o Alexandria") {
+            val version = try {
+                packageManager.getPackageInfo(packageName, 0).versionName
+            } catch (e: Exception) {
+                "?"
+            }
+            addView(label("Versão $version", 13f, ink))
+            addView(label("Leitor de PDF, EPUB, MOBI, AZW3, DJVU, CBZ, CBR, DOCX e TXT. Sem anúncios, sem conta e sem acesso à internet: seus livros e anotações ficam só neste aparelho.", 12f, muted).apply {
+                setPadding(0, dp(6), 0, 0)
+            })
+        }
+
+        settingsPanel("Armazenamento") {
+            val cache = File(cacheDir, "books")
+            addView(label("Cópias e conversões em cache: ${formatSize(folderSize(cache))}", 13f, ink))
+            addView(label("EPUB, MOBI, DJVU, quadrinhos e DOCX são copiados (e o MOBI, convertido) na primeira leitura. Liberar o espaço não apaga livros, progresso nem anotações; as cópias são refeitas quando o livro for aberto de novo.", 12f, muted).apply {
+                setPadding(0, dp(6), 0, dp(10))
+            })
+            addView(Button(this@MainActivity).apply {
+                text = "Liberar espaço"
+                setAllCaps(false)
+                setTextColor(Color.WHITE)
+                background = rounded(ink, 10)
+                setOnClickListener {
+                    this@MainActivity.background.execute {
+                        cache.deleteRecursively()
+                        File(cacheDir, "engines").deleteRecursively()
+                        runOnUiThread {
+                            if (!destroyed) {
+                                Toast.makeText(this@MainActivity, "Espaço liberado.", Toast.LENGTH_SHORT).show()
+                                if (section == SECTION_SETTINGS) showSettings()
+                            }
+                        }
+                    }
+                }
+            }, LinearLayout.LayoutParams(-1, dp(48)))
+        }
+
+        settingsPanel("Licenças de código aberto") {
+            addView(label("MOBI/AZW3, DJVU e CBR são lidos pelos motores EraMOBI, EraDjVu e EraComic do projeto OpenReadEra (ReadEra), que são software livre. O código-fonte deles acompanha o código do Alexandria.", 12f, muted).apply {
+                setPadding(0, 0, 0, dp(8))
+            })
+            LICENSES.forEach { (title, file) ->
+                addView(label("›  $title", 14f, gold, true).apply {
+                    minHeight = dp(44)
+                    gravity = Gravity.CENTER_VERTICAL
+                    setOnClickListener { showLicense(title, file) }
+                })
+            }
+        }
+    }
+
+    private fun settingsPanel(title: String, fill: LinearLayout.() -> Unit) {
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(22), dp(18), dp(22))
-            background = rounded(Color.WHITE, 16)
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            background = rounded(Color.WHITE, 14)
+            addView(label(title, 15f, ink, true).apply { setPadding(0, 0, 0, dp(8)) })
+            fill()
         }
-        panel.addView(label("Em construção", 17f, ink, true))
-        panel.addView(label("A estrutura inicial do Alexandria está sendo preparada. Esta seção receberá seus recursos durante as próximas etapas.", 13f, muted).apply {
-            setPadding(0, dp(8), 0, 0)
-        })
-        content.addView(panel)
+        content.addView(panel, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
+    }
+
+    private fun showLicense(title: String, file: String) {
+        val text = try {
+            assets.open("licenses/$file").use { String(it.readBytes(), Charsets.UTF_8) }
+        } catch (e: Exception) {
+            "Texto não encontrado."
+        }
+        val view = TextView(this).apply {
+            this.text = text
+            textSize = 11f
+            typeface = Typeface.MONOSPACE
+            setTextColor(ink)
+            setTextIsSelectable(true)
+            setPadding(dp(18), dp(8), dp(18), dp(8))
+        }
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setView(ScrollView(this).apply { addView(view) })
+            .setPositiveButton("Fechar", null)
+            .show()
+    }
+
+    private fun folderSize(dir: File): Long = dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+
+    private fun formatSize(bytes: Long): String = when {
+        bytes >= 1024L * 1024 * 1024 -> String.format(Locale("pt", "BR"), "%.1f GB", bytes / (1024.0 * 1024 * 1024))
+        bytes >= 1024L * 1024 -> String.format(Locale("pt", "BR"), "%.1f MB", bytes / (1024.0 * 1024))
+        bytes >= 1024L -> String.format(Locale("pt", "BR"), "%.0f KB", bytes / 1024.0)
+        else -> "$bytes bytes"
     }
 
     companion object {
@@ -620,7 +701,16 @@ class MainActivity : Activity() {
         private const val SECTION_LIBRARY = "Biblioteca"
         private const val SECTION_NOTES = "Notas"
         private const val SECTION_STATS = "Estatísticas"
-        private val NAV_ITEMS = listOf(SECTION_LIBRARY, SECTION_NOTES, SECTION_STATS, "Ajustes")
-        private val COVER_FORMATS = setOf("pdf", "cbz", "epub")
+        private const val SECTION_SETTINGS = "Ajustes"
+        private val NAV_ITEMS = listOf(SECTION_LIBRARY, SECTION_NOTES, SECTION_STATS, SECTION_SETTINGS)
+        private val LICENSES = listOf(
+            "EraMOBI e EraDjVu — GNU AGPL 3.0" to "AGPL-3.0.txt",
+            "EraComic — GNU GPL 2.0" to "GPL-2.0.txt",
+            "libmobi — GNU LGPL 3.0" to "LGPL-3.0.txt",
+            "GNU GPL 3.0 (base da LGPL 3.0)" to "GPL-3.0.txt",
+            "Common CLI viewer interface — Apache 2.0" to "Apache-2.0.txt",
+            "libjpeg-turbo, libpng, libwebp, MiniZip, EasyBMP" to "terceiros.txt"
+        )
+        private val COVER_FORMATS = setOf("pdf", "cbz", "cbr", "epub", "mobi", "djvu")
     }
 }

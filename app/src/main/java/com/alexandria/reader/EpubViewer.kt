@@ -30,7 +30,11 @@ class BookWebView(context: Context) : WebView(context) {
  *
  * A posição é uma fração de 0 a 10000 do livro: capítulo atual mais o quanto dele já foi rolado.
  */
-class EpubViewer(host: ReaderHost) : BookViewer(host) {
+class EpubViewer(
+    host: ReaderHost,
+    /** Arquivo EPUB a abrir (roda em thread de fundo). MOBI/AZW3 chegam aqui já convertidos. */
+    private val epubFile: (LibraryItem) -> java.io.File = { item -> BookFiles.localCopy(host.activity, item) }
+) : BookViewer(host) {
     private var zip: ZipFile? = null
     private var book: EpubPackage? = null
     private var chapter = 0
@@ -86,7 +90,7 @@ class EpubViewer(host: ReaderHost) : BookViewer(host) {
     override fun open(item: LibraryItem, start: Int) {
         host.worker.execute {
             val result = try {
-                val file = ZipFile(BookFiles.localCopy(context, item))
+                val file = ZipFile(epubFile(item))
                 try {
                     file to EpubPackage.read(file)
                 } catch (e: Exception) {
@@ -97,7 +101,7 @@ class EpubViewer(host: ReaderHost) : BookViewer(host) {
                 onUi { host.fail("Sem permissão para abrir este arquivo. Remova-o e importe de novo.") }
                 return@execute
             } catch (e: Exception) {
-                onUi { host.fail("Não foi possível abrir este EPUB. Ele pode estar danificado ou protegido por DRM.") }
+                onUi { host.fail("Não foi possível abrir este livro. Ele pode estar danificado ou protegido por DRM.") }
                 return@execute
             }
             onUi {

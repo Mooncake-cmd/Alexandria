@@ -190,10 +190,10 @@ class PageViewer(host: ReaderHost, private val openSource: (LibraryItem) -> Page
         }
     }
 
-    private fun openError() = if (kind == "pdf") {
-        "Não foi possível abrir este PDF. Ele pode estar protegido por senha, danificado ou indisponível."
-    } else {
-        "Não foi possível abrir este quadrinho. O arquivo pode estar danificado, sem imagens ou em formato RAR."
+    private fun openError() = when (kind) {
+        "pdf" -> "Não foi possível abrir este PDF. Ele pode estar protegido por senha, danificado ou indisponível."
+        "djvu" -> "Não foi possível abrir este DJVU. O arquivo pode estar danificado."
+        else -> "Não foi possível abrir este quadrinho. O arquivo pode estar danificado ou sem imagens."
     }
 
     override fun position() = pageIndex
@@ -392,8 +392,10 @@ class PageViewer(host: ReaderHost, private val openSource: (LibraryItem) -> Page
 
         fun pdf(host: ReaderHost) = PageViewer(host, { item -> PdfSource(host.activity, Uri.parse(item.uri)) }, "pdf")
 
-        fun comic(host: ReaderHost) = PageViewer(host, { item ->
-            ComicSource(ZipFile(BookFiles.localCopy(host.activity, item)))
-        }, "cbz")
+        /** CBZ, ou CBR (ZIP disfarçado ou RAR de verdade, este pelo motor EraComic). */
+        fun comic(host: ReaderHost) = PageViewer(host, { item -> BookFiles.comicSource(host.activity, item) }, "cbz")
+
+        /** DJVU pelo motor EraDjVu. */
+        fun djvu(host: ReaderHost) = PageViewer(host, { item -> BookFiles.djvuSource(host.activity, item) }, "djvu")
     }
 }

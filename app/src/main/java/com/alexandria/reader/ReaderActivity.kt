@@ -54,7 +54,9 @@ class ReaderActivity : Activity(), ReaderHost {
         }
         val created = when (item.format) {
             "pdf" -> PageViewer.pdf(this)
-            "cbz" -> PageViewer.comic(this)
+            "cbz", "cbr" -> PageViewer.comic(this)
+            "djvu" -> PageViewer.djvu(this)
+            "mobi" -> EpubViewer(this) { BookFiles.mobiAsEpub(this, it) }
             "txt" -> TextViewer.txt(this)
             "docx" -> TextViewer.docx(this)
             "epub" -> EpubViewer(this)

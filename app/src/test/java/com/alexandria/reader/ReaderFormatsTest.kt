@@ -116,10 +116,53 @@ class ReaderFormatsTest {
     }
 
     @Test
-    fun rarComicFailsWithClearMessage() {
-        val file = File(context.cacheDir, "quadrinho.cbz").apply { writeText("Rar!\u001a\u0007 não é zip") }
+    fun brokenComicFailsWithClearMessage() {
+        val file = File(context.cacheDir, "quadrinho.cbz").apply { writeText("isto não é um quadrinho") }
         val controller = launch(add(file, "cbz"))
         waitUntil { controller.get().isFinishing }
         assertTrue(controller.get().isFinishing)
+    }
+
+    // ---------- formatos lidos pelos motores do OpenReadEra (compilados para Linux nos testes) ----------
+
+    private fun requireEngines() {
+        val dir = File(System.getProperty("ore.hostEngines") ?: "")
+        val present = listOf("eramobi", "eradjvu", "eracomic").all { File(dir, it).canExecute() }
+        if (System.getProperty("ore.requireHostEngines") != null) assertTrue("Motores para Linux ausentes", present)
+        org.junit.Assume.assumeTrue(present)
+    }
+
+    private fun resource(name: String): File = File(context.cacheDir, name).also { target ->
+        javaClass.getResourceAsStream("/ore/$name")!!.use { input -> target.outputStream().use { input.copyTo(it) } }
+    }
+
+    @Test
+    fun mobiOpensThroughTheEpubReader() {
+        requireEngines()
+        val controller = launch(add(resource("windows-1252.mobi"), "mobi"))
+        val web = find<WebView>(controller.get().window.decorView).single()
+        waitUntil { shadowOf(web).lastLoadDataWithBaseURL != null || controller.get().isFinishing }
+        assertFalse(controller.get().isFinishing)
+        val loaded = shadowOf(web).lastLoadDataWithBaseURL
+        assertTrue(loaded.baseUrl.startsWith("https://book.alexandria/OEBPS/"))
+        assertTrue(loaded.data.length > 200)
+        controller.pause().stop().destroy()
+        LibraryDatabase(context).use { db -> assertTrue(db.all().single().pageCount > 0) }
+    }
+
+    @Test
+    fun djvuAndRarComicOpenInThePageReader() {
+        requireEngines()
+        for ((name, format, pages) in listOf(Triple("amostra.djvu", "djvu", 2), Triple("quadrinho-rar5.cbr", "cbr", 3))) {
+            context.deleteDatabase("alexandria.db")
+            val controller = launch(add(resource(name), format))
+            val root = controller.get().window.decorView
+            val label = { find<TextView>(root).firstOrNull { it.text.startsWith("Página ") }?.text?.toString() }
+            waitUntil { label() != null || controller.get().isFinishing }
+            assertFalse("$name não abriu: ${org.robolectric.shadows.ShadowToast.getTextOfLatestToast()}", controller.get().isFinishing)
+            assertEquals("Página 1 de $pages", label())
+            controller.pause().stop().destroy()
+            LibraryDatabase(context).use { db -> assertEquals(pages, db.all().single().pageCount) }
+        }
     }
 }

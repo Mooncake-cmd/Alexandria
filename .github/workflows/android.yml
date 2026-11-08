@@ -16,7 +16,10 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
+    env:
+      # Os testes dos motores (MOBI, DJVU, CBR) falham em vez de serem pulados se não puderem rodar.
+      ORE_REQUIRE_HOST_ENGINES: "1"
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -25,6 +28,13 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      # NDK para compilar os motores do OpenReadEra; nasm e zlib para compilá-los também para Linux (testes).
+      - name: Install NDK and native test tools
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.0.12077973"
+          sudo apt-get update
+          sudo apt-get install -y nasm zlib1g-dev
       # Usa o Gradle Wrapper do repositório (versão fixada em gradle/wrapper) e valida o JAR dele.
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4

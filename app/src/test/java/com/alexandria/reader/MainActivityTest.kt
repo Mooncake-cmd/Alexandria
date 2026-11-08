@@ -64,7 +64,7 @@ class MainActivityTest {
         var shown = texts(root)
         assertTrue(shown.contains("Dom Casmurro"))
         assertTrue(shown.contains("25% lido"))
-        assertTrue(shown.contains("Leitor em breve"))
+        assertTrue(shown.contains("Antigo"))
         assertTrue(shown.any { it.startsWith("▶  📁 HQs (1)") })
         assertFalse("Quadrinho fica dentro da prateleira recolhida", shown.contains("Quadrinho"))
         assertTrue(shown.any { it.contains("Estante · 1 concluído") })
@@ -92,5 +92,21 @@ class MainActivityTest {
         assertTrue(shown.contains("na biblioteca"))
         assertTrue(shown.contains("4"))
         assertTrue(shown.contains("EPUB  ·  1"))
+    }
+
+    @Test
+    fun settingsShowLicensesAndCache() {
+        val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        click(activity.window.decorView, "Ajustes")
+        val shown = texts(activity.window.decorView)
+        assertTrue(shown.any { it.startsWith("Versão ") })
+        assertTrue(shown.any { it.startsWith("Cópias e conversões em cache:") })
+        assertTrue(shown.contains("›  EraMOBI e EraDjVu — GNU AGPL 3.0"))
+        assertTrue(shown.contains("›  EraComic — GNU GPL 2.0"))
+        // Todos os textos de licença listados existem nos assets do app.
+        for (file in listOf("AGPL-3.0.txt", "GPL-2.0.txt", "LGPL-3.0.txt", "GPL-3.0.txt", "Apache-2.0.txt", "terceiros.txt")) {
+            val text = activity.assets.open("licenses/$file").use { String(it.readBytes()) }
+            assertTrue("$file vazio", text.length > 1000)
+        }
     }
 }

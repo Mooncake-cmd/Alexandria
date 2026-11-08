@@ -1,12 +1,14 @@
 ALEXANDRIA — STATUS DA ENTREGA
 
-Versão do projeto: 0.4.0
+Versão do projeto: 0.5.0
 
-Build: compilado com sucesso (AGP 8.7.3, Gradle 8.14.3, SDK 35). Lint sem avisos. 58 testes automatizados passando.
-APK: não versionado no repositório; gerado pelo GitHub Actions (artefato Alexandria-debug-apk) ou por ./gradlew assembleDebug.
+Build: compilado com sucesso (AGP 8.7.3, Gradle 8.14.3, SDK 35, NDK 27.0.12077973). Lint sem avisos.
+66 testes automatizados passando, incluindo integração com os motores do OpenReadEra compilados para Linux.
+APK: ~5 MB, não versionado; gerado pelo GitHub Actions (artefato Alexandria-debug-apk) ou por ./gradlew assembleDebug.
 
-Implementado: biblioteca com capas, Estante de concluídos e prateleiras; leitores de PDF, CBZ (e CBR que é ZIP), EPUB, DOCX e TXT;
-anotações com aba Notas; busca no livro (EPUB, DOCX, TXT); estatísticas; ícone do app.
-Não implementado: leitores de MOBI/AZW3, DJVU e CBR em RAR; busca em PDF; backup; Ajustes.
+Formatos com leitor: PDF, EPUB, MOBI/AZW/AZW3, DJVU, CBZ, CBR (RAR 4/5 ou ZIP), DOCX, TXT.
+MOBI, DJVU e CBR em RAR usam os motores EraMOBI, EraDjVu e EraComic (OpenReadEra, AGPL/GPL), compilados das fontes
+abertas que estão em app/src/main/cpp/openreadera. Licenças e obrigações: TERCEIROS.md.
 
-A VALIDAR EM APARELHO REAL: gestos do PDF/CBZ, exibição do EPUB no WebView e geração de capas, que os testes na JVM não renderizam.
+A VALIDAR EM APARELHO REAL: execução dos motores no Android, gestos do PDF/CBZ/DJVU, exibição do EPUB/MOBI no WebView.
+PENDENTE (decisão do dono do projeto): licença do código do próprio Alexandria.

@@ -9,8 +9,10 @@ class ReadingStatusTest {
 
     @Test
     fun formatsWithoutReader() {
-        assertEquals("Leitor em breve", ReadingStatus.describe(item("mobi", 0)))
-        assertEquals("Leitor em breve", ReadingStatus.describe(item("cbr", 0)))
+        assertEquals("Leitor em breve", ReadingStatus.describe(item("xyz", 0)))
+        assertEquals("Toque para ler · 30 capítulos", ReadingStatus.describe(item("mobi", 0, 30)))
+        assertEquals("Página 2 de 8 · 25%", ReadingStatus.describe(item("djvu", 1, 8, openedAt = 1)))
+        assertEquals("Toque para ler · 20 páginas", ReadingStatus.describe(item("cbr", 0, 20)))
     }
 
     @Test

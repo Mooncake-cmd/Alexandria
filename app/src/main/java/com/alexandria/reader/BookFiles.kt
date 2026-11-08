@@ -18,6 +18,14 @@ import java.util.zip.ZipFile
 object BookFiles {
     private const val COVER_WIDTH = 240
 
+    /**
+     * Um documento pode ser copiado/convertido ao mesmo tempo pela capa (em segundo plano) e pelo
+     * leitor. A trava por documento faz o segundo esperar e reaproveitar o arquivo pronto.
+     */
+    private val locks = java.util.concurrent.ConcurrentHashMap<Long, Any>()
+
+    private inline fun <T> locked(id: Long, block: () -> T): T = synchronized(locks.getOrPut(id) { Any() }) { block() }
+
     private fun booksDir(context: Context) = File(context.cacheDir, "books").apply { mkdirs() }
     private fun coversDir(context: Context) = File(context.filesDir, "covers").apply { mkdirs() }
 
@@ -43,20 +51,46 @@ object BookFiles {
         } ?: ByteArray(0)
 
     /** Cópia local do documento. Roda em thread de fundo: pode levar alguns segundos. */
-    fun localCopy(context: Context, item: LibraryItem): File {
+    fun localCopy(context: Context, item: LibraryItem): File = locked(item.id) {
         val target = File(booksDir(context), "${item.id}.${item.format}")
-        if (target.length() > 0) return target
+        if (target.length() > 0) return@locked target
         val partial = File(target.path + ".part")
         val input = context.contentResolver.openInputStream(Uri.parse(item.uri))
             ?: throw IllegalStateException("Documento indisponível")
         input.use { source -> FileOutputStream(partial).use { source.copyTo(it, 256 * 1024) } }
         if (!partial.renameTo(target)) throw IllegalStateException("Não foi possível guardar a cópia local")
-        return target
+        target
     }
+
+    /**
+     * EPUB gerado a partir de um MOBI/AZW/AZW3 pelo EraMOBI. A conversão é feita uma vez e fica no
+     * cache, junto da cópia local. Roda em thread de fundo.
+     */
+    fun mobiAsEpub(context: Context, item: LibraryItem): File = locked(item.id) {
+        val epub = File(booksDir(context), "${item.id}.mobi.epub")
+        if (epub.length() > 0) return@locked epub
+        val source = localCopy(context, item)
+        OreEngine.start(context, "eramobi").use { engine -> OreFormats.mobiToEpub(engine, source, epub) }
+        epub
+    }
+
+    /** Pasta onde as páginas de um CBR em RAR são extraídas sob demanda. */
+    fun rarPagesDir(context: Context, id: Long) = File(booksDir(context), "$id.pages")
+
+    /** Fonte de páginas de um quadrinho CBR: ZIP disfarçado ou RAR de verdade (pelo EraComic). */
+    fun comicSource(context: Context, item: LibraryItem): PageSource {
+        val file = localCopy(context, item)
+        val header = file.inputStream().use { input -> ByteArray(4).also { input.read(it) } }
+        if (looksLikeZip(header)) return ComicSource(ZipFile(file))
+        return RarComicSource(OreEngine.start(context, "eracomic"), file, rarPagesDir(context, item.id))
+    }
+
+    fun djvuSource(context: Context, item: LibraryItem): PageSource =
+        DjvuSource(OreEngine.start(context, "eradjvu"), localCopy(context, item))
 
     /** Apaga cópia local, capa e marcadores de um documento removido da biblioteca. */
     fun delete(context: Context, id: Long) {
-        booksDir(context).listFiles()?.filter { it.name.startsWith("$id.") }?.forEach { it.delete() }
+        booksDir(context).listFiles()?.filter { it.name.startsWith("$id.") }?.forEach { it.deleteRecursively() }
         coverFile(context, id).delete()
         noCoverMarker(context, id).delete()
     }
@@ -79,11 +113,9 @@ object BookFiles {
                     database.updatePageCount(item.id, pages.size)
                     pages.firstOrNull()
                 }
-                "epub" -> zipCover(context, item, database) { zip ->
-                    val book = EpubPackage.read(zip)
-                    database.updatePageCount(item.id, book.chapters.size)
-                    book.coverPath
-                }
+                "epub" -> epubCover(context, item, database, localCopy(context, item))
+                "mobi" -> epubCover(context, item, database, mobiAsEpub(context, item))
+                "djvu", "cbr" -> pageCover(database, item, if (item.format == "djvu") djvuSource(context, item) else comicSource(context, item))
                 else -> null
             }
         } catch (e: Exception) {
@@ -114,6 +146,22 @@ object BookFiles {
                 }
             }
         }
+    }
+
+    private fun epubCover(context: Context, item: LibraryItem, database: LibraryDatabase, epub: File): Bitmap? =
+        ZipFile(epub).use { zip ->
+            val book = EpubPackage.read(zip)
+            database.updatePageCount(item.id, book.chapters.size)
+            val entry = book.coverPath?.let { zip.getEntry(it) } ?: return null
+            decodeScaled({ zip.getInputStream(entry) }, COVER_WIDTH)
+        }
+
+    /** Capa de um documento paginado pelos motores: a primeira página, pequena. */
+    private fun pageCover(database: LibraryDatabase, item: LibraryItem, source: PageSource): Bitmap? = try {
+        database.updatePageCount(item.id, source.pageCount)
+        source.render(0, COVER_WIDTH)?.bitmap
+    } finally {
+        source.close()
     }
 
     private fun zipCover(
