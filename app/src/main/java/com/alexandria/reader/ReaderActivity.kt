@@ -2,74 +2,47 @@ package com.alexandria.reader
 
 import android.app.Activity
 import android.app.AlertDialog
-import android.graphics.Bitmap
 import android.graphics.Color
-import android.graphics.Typeface
-import android.graphics.pdf.PdfRenderer
-import android.net.Uri
 import android.os.Bundle
-import android.os.ParcelFileDescriptor
 import android.text.InputType
 import android.text.TextUtils
-import android.view.GestureDetector
+import android.view.ActionMode
 import android.view.Gravity
+import android.view.KeyEvent
+import android.view.Menu
 import android.view.MotionEvent
-import android.view.ScaleGestureDetector
 import android.view.View
-import android.view.ViewGroup
-import android.view.ViewTreeObserver
-import android.widget.AbsListView
-import android.widget.BaseAdapter
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
-import android.widget.HorizontalScrollView
-import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.ListView
-import android.widget.ScrollView
+import android.widget.PopupMenu
 import android.widget.TextView
 import android.widget.Toast
-import java.io.ByteArrayOutputStream
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
-import kotlin.math.abs
-import kotlin.math.floor
-import kotlin.math.roundToInt
-import kotlin.math.sqrt
 
 /**
- * Leitor de PDF (PdfRenderer da plataforma) e TXT. Salva o ponto de leitura ao sair.
- * Todo acesso ao PdfRenderer acontece na thread [worker], porque ele não é thread-safe.
+ * Tela de leitura. Monta a moldura comum (barra de título, busca, anotações, aviso de fim de
+ * livro) e entrega o conteúdo a um [BookViewer] do formato. Salva o ponto de leitura ao sair.
  */
-class ReaderActivity : Activity() {
+class ReaderActivity : Activity(), ReaderHost {
     private lateinit var database: LibraryDatabase
     private var current: LibraryItem? = null
-    private val worker = Executors.newSingleThreadExecutor()
-    private var destroyed = false
+    private var viewer: BookViewer? = null
+    override val worker: ExecutorService = Executors.newSingleThreadExecutor()
+    override val activity: Activity get() = this
+    override var closed = false
+        private set
 
-    // PDF. renderer e descriptor só são tocados na thread worker.
-    private var renderer: PdfRenderer? = null
-    private var descriptor: ParcelFileDescriptor? = null
-    private var pageCount = 0
-    private var pageIndex = 0
-    private var renderToken = 0
-    private var zoom = 1f
-    private lateinit var pageScroll: ScrollView
-    private lateinit var pageHScroll: HorizontalScrollView
-    private lateinit var pageImage: ImageView
-    private lateinit var pageLabel: TextView
-    private lateinit var prevButton: TextView
-    private lateinit var nextButton: TextView
-    private var pdfGestures: PdfGestures? = null
-    private var touchInPage = false
-    private var pinching = false
-
-    // TXT
-    private lateinit var textList: ListView
-    private lateinit var progressLabel: TextView
-    private lateinit var textAdapter: ChunkAdapter
-    private var textSizeSp = DEFAULT_TEXT_SP
-    private var nightMode = false
-    private var textLoaded = false
+    private lateinit var searchBar: LinearLayout
+    private lateinit var searchInput: EditText
+    private lateinit var searchInfo: TextView
+    private lateinit var finishBanner: LinearLayout
+    private var hits: List<SearchHit> = emptyList()
+    private var hitIndex = -1
+    private var searchTerm = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -79,12 +52,24 @@ class ReaderActivity : Activity() {
             fail("Documento não encontrado na biblioteca.")
             return
         }
-        current = item
-        when (item.format) {
-            "pdf" -> buildPdfScreen(item)
-            "txt" -> buildTextScreen(item)
-            else -> fail("O leitor de ${item.format.uppercase()} ainda não existe.")
+        val created = when (item.format) {
+            "pdf" -> PageViewer.pdf(this)
+            "cbz" -> PageViewer.comic(this)
+            "txt" -> TextViewer.txt(this)
+            "docx" -> TextViewer.docx(this)
+            "epub" -> EpubViewer(this)
+            else -> null
         }
+        if (created == null) {
+            fail("O leitor de ${item.format.uppercase()} ainda não existe.")
+            return
+        }
+        current = item
+        viewer = created
+        setContentView(frame(item, created))
+        // Uma anotação aberta pela aba Notas leva direto ao ponto dela.
+        val start = intent.getIntExtra(EXTRA_POSITION, -1).takeIf { it >= 0 } ?: item.position
+        created.open(item, start)
     }
 
     override fun onPause() {
@@ -93,29 +78,30 @@ class ReaderActivity : Activity() {
     }
 
     override fun onDestroy() {
-        destroyed = true
-        worker.execute { closePdf() }
+        closed = true
+        viewer?.close()
         worker.shutdown()
         database.close()
         super.onDestroy()
     }
 
-    private fun fail(message: String) {
+    override fun fail(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
         finish()
     }
 
     private fun saveProgress() {
         val item = current ?: return
-        when (item.format) {
-            "pdf" -> if (pageCount > 0) database.updateProgress(item.id, pageIndex, pageCount)
-            "txt" -> if (textLoaded) database.updateProgress(item.id, textFraction())
-        }
+        val view = viewer ?: return
+        if (view.loaded) database.updateProgress(item.id, view.position(), view.pageCount())
     }
 
-    // ---------- estrutura comum ----------
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean =
+        viewer?.dispatchTouch(ev) ?: super.dispatchTouchEvent(ev)
 
-    private fun barButton(text: String, color: Int, onClick: () -> Unit): TextView =
+    // ---------- moldura ----------
+
+    private fun barButton(text: String, description: String, onClick: (View) -> Unit): TextView =
         TextView(this).apply {
             this.text = text
             textSize = 16f
@@ -123,11 +109,12 @@ class ReaderActivity : Activity() {
             minWidth = dp(48)
             minHeight = dp(48)
             setPadding(dp(10), 0, dp(10), 0)
-            setTextColor(color)
-            setOnClickListener { onClick() }
+            setTextColor(Color.WHITE)
+            contentDescription = description
+            setOnClickListener { onClick(it) }
         }
 
-    private fun frame(title: String, body: View, footer: View, topActions: List<View> = emptyList()): LinearLayout {
+    private fun frame(item: LibraryItem, viewer: BookViewer): LinearLayout {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Palette.paper)
@@ -138,527 +125,314 @@ class ReaderActivity : Activity() {
             setBackgroundColor(Palette.ink)
             setPadding(dp(8), dp(6), dp(8), dp(6))
         }
-        bar.addView(barButton("‹", Color.WHITE) { finish() }.apply { contentDescription = "Voltar" })
+        bar.addView(barButton("‹", "Voltar") { finish() })
         bar.addView(
-            label(title, 15f, Color.WHITE, true).apply {
+            label(item.name, 15f, Color.WHITE, true).apply {
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
                 setPadding(dp(4), 0, dp(8), 0)
             },
             LinearLayout.LayoutParams(0, -2, 1f)
         )
-        topActions.forEach { bar.addView(it) }
+        if (viewer.searchable) bar.addView(barButton("🔍", "Buscar no livro") { toggleSearch() })
+        bar.addView(barButton("📝", "Anotações") { showNotes() })
+        bar.addView(barButton("⋮", "Mais opções") { showMenu(it) })
         root.addView(bar)
-        root.addView(body, LinearLayout.LayoutParams(-1, 0, 1f))
+
+        searchBar = buildSearchBar()
+        root.addView(searchBar)
+        root.addView(viewer.body, LinearLayout.LayoutParams(-1, 0, 1f))
+
+        finishBanner = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(Color.rgb(250, 243, 228))
+            setPadding(dp(16), dp(4), dp(8), dp(4))
+            visibility = View.GONE
+            addView(label("Você chegou ao fim.", 13f, Palette.ink), LinearLayout.LayoutParams(0, -2, 1f))
+            addView(TextView(this@ReaderActivity).apply {
+                text = "🏁 Concluir livro"
+                textSize = 14f
+                gravity = Gravity.CENTER
+                minHeight = dp(48)
+                setPadding(dp(12), 0, dp(12), 0)
+                setTextColor(Palette.gold)
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setOnClickListener { markFinished(true) }
+            })
+        }
+        root.addView(finishBanner)
+
+        val footer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(viewer.footer)
+        }
         root.addView(footer)
         installSystemBarInsets(root, bar, footer)
         return root
     }
 
-    private fun footerBar(): LinearLayout = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
-        setBackgroundColor(Color.WHITE)
-        setPadding(dp(8), dp(4), dp(8), dp(4))
+    override fun onPositionChanged() {
+        val view = viewer ?: return
+        val item = current ?: return
+        val show = view.loaded && view.atEnd() && !item.finished
+        finishBanner.visibility = if (show) View.VISIBLE else View.GONE
     }
 
-    // ---------- PDF ----------
+    private fun showMenu(anchor: View) {
+        val view = viewer ?: return
+        val item = current ?: return
+        val actions = mutableListOf<Pair<String, () -> Unit>>()
+        actions += view.menuActions()
+        actions += if (item.finished) {
+            "Voltar para \"Lendo agora\"" to { markFinished(false) }
+        } else {
+            "Concluir livro" to { markFinished(true) }
+        }
+        val popup = PopupMenu(this, anchor)
+        actions.forEachIndexed { index, (title, _) -> popup.menu.add(Menu.NONE, index, index, title) }
+        popup.setOnMenuItemClickListener { menuItem ->
+            actions.getOrNull(menuItem.itemId)?.second?.invoke()
+            true
+        }
+        popup.show()
+    }
 
-    private fun buildPdfScreen(item: LibraryItem) {
-        pageImage = ImageView(this).apply {
-            scaleType = ImageView.ScaleType.FIT_XY
-            setBackgroundColor(Color.WHITE)
+    /** Concluir move o livro para a Estante, como o botão "Finalizar" do leitor web. */
+    private fun markFinished(finished: Boolean) {
+        val item = current ?: return
+        saveProgress()
+        database.setFinished(item.id, finished)
+        current = database.find(item.id)
+        onPositionChanged()
+        if (finished) {
+            Toast.makeText(this, "\"${item.name}\" concluído e movido para a Estante.", Toast.LENGTH_LONG).show()
+            finish()
+        } else {
+            Toast.makeText(this, "De volta para \"Lendo agora\".", Toast.LENGTH_SHORT).show()
         }
-        pageHScroll = HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-            addView(pageImage, FrameLayout.LayoutParams(-2, -2))
+    }
+
+    // ---------- busca ----------
+
+    private fun buildSearchBar(): LinearLayout {
+        searchInput = EditText(this).apply {
+            hint = "Buscar no livro"
+            textSize = 14f
+            maxLines = 1
+            inputType = InputType.TYPE_CLASS_TEXT
+            imeOptions = EditorInfo.IME_ACTION_SEARCH
+            setOnEditorActionListener { _, actionId, event ->
+                val enter = event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN
+                if (actionId == EditorInfo.IME_ACTION_SEARCH || enter) {
+                    runSearch()
+                    true
+                } else {
+                    false
+                }
+            }
         }
-        pageScroll = ScrollView(this).apply {
-            setBackgroundColor(Palette.paper)
-            addView(pageHScroll, FrameLayout.LayoutParams(-1, -2))
-        }
-        prevButton = barButton("‹ Anterior", Palette.ink) { showPage(pageIndex - 1) }
-        nextButton = barButton("Próxima ›", Palette.ink) { showPage(pageIndex + 1) }
-        pageLabel = label("Abrindo…", 13f, Palette.muted).apply {
+        searchInfo = label("", 12f, Palette.muted).apply {
             gravity = Gravity.CENTER
+            minWidth = dp(56)
+            setOnClickListener { showHitList() }
+        }
+        fun small(text: String, description: String, onClick: () -> Unit) = TextView(this).apply {
+            this.text = text
+            textSize = 16f
+            gravity = Gravity.CENTER
+            minWidth = dp(44)
             minHeight = dp(48)
-            contentDescription = "Ir para a página"
-            setOnClickListener { askPage() }
+            setTextColor(Palette.ink)
+            contentDescription = description
+            setOnClickListener { onClick() }
         }
-        prevButton.isEnabled = false
-        nextButton.isEnabled = false
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(Color.WHITE)
+            setPadding(dp(12), 0, dp(4), 0)
+            visibility = View.GONE
+            addView(searchInput, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(searchInfo)
+            addView(small("◀", "Resultado anterior") { stepHit(-1) })
+            addView(small("▶", "Próximo resultado") { stepHit(1) })
+            addView(small("✕", "Fechar busca") { toggleSearch() })
+        }
+    }
 
-        val footer = footerBar()
-        footer.addView(prevButton)
-        footer.addView(pageLabel, LinearLayout.LayoutParams(0, -2, 1f))
-        footer.addView(nextButton)
-        setContentView(frame(item.name, pageScroll, footer))
-        pdfGestures = PdfGestures()
+    private fun toggleSearch() {
+        val input = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+        if (searchBar.visibility == View.VISIBLE) {
+            searchBar.visibility = View.GONE
+            input.hideSoftInputFromWindow(searchInput.windowToken, 0)
+            viewer?.clearSearch()
+            hits = emptyList()
+            hitIndex = -1
+            searchInfo.text = ""
+        } else {
+            searchBar.visibility = View.VISIBLE
+            searchInput.requestFocus()
+            input.showSoftInput(searchInput, InputMethodManager.SHOW_IMPLICIT)
+        }
+    }
 
-        val uri = Uri.parse(item.uri)
-        worker.execute {
-            try {
-                val pfd = contentResolver.openFileDescriptor(uri, "r")
-                    ?: throw IllegalStateException("Sem descritor de arquivo")
-                val opened = try {
-                    PdfRenderer(pfd)
-                } catch (e: Exception) {
-                    pfd.close()
-                    throw e
-                }
-                descriptor = pfd
-                renderer = opened
-                val count = opened.pageCount
-                runOnUiThread {
-                    if (destroyed) return@runOnUiThread
-                    if (count == 0) {
-                        fail("Este PDF não tem páginas.")
-                    } else {
-                        pageCount = count
-                        // Espera o layout para saber a largura real da área de leitura.
-                        pageScroll.post { showPage(item.position) }
-                    }
-                }
-            } catch (e: SecurityException) {
-                failOnUi("Sem permissão para abrir este PDF. Remova-o e importe de novo.")
-            } catch (e: Exception) {
-                failOnUi("Não foi possível abrir este PDF. Ele pode estar protegido por senha, danificado ou indisponível.")
+    private fun runSearch() {
+        val view = viewer ?: return
+        val term = searchInput.text.toString().trim()
+        if (term.isEmpty() || !view.loaded) return
+        searchTerm = term
+        searchInfo.text = "…"
+        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(searchInput.windowToken, 0)
+        view.search(term) { found ->
+            hits = found
+            if (found.isEmpty()) {
+                hitIndex = -1
+                searchInfo.text = "0"
+                view.clearSearch()
+                Toast.makeText(this, "Nada encontrado para \"$term\".", Toast.LENGTH_SHORT).show()
+            } else {
+                showHit(0)
             }
         }
     }
 
-    private fun failOnUi(message: String) = runOnUiThread { if (!destroyed) fail(message) }
-
-    /** Muda de página (ou só re-renderiza, com outro zoom). [focus] mantém um ponto da tela parado no zoom. */
-    private fun showPage(index: Int, focus: Focus? = null) {
-        if (pageCount == 0) return
-        val changedPage = index.coerceIn(0, pageCount - 1) != pageIndex
-        pageIndex = index.coerceIn(0, pageCount - 1)
-        updatePageControls()
-        val target = pageIndex
-        val token = ++renderToken
-        val baseWidth = if (pageScroll.width > 0) pageScroll.width else resources.displayMetrics.widthPixels
-        val requestedZoom = zoom
-        worker.execute {
-            val bitmap = try {
-                renderPage(target, baseWidth, requestedZoom)
-            } catch (e: Exception) {
-                null
-            } catch (e: OutOfMemoryError) {
-                null
-            }
-            runOnUiThread {
-                if (destroyed || token != renderToken) return@runOnUiThread
-                pageImage.scaleX = 1f
-                pageImage.scaleY = 1f
-                if (bitmap == null) {
-                    Toast.makeText(this, "Não foi possível exibir esta página.", Toast.LENGTH_SHORT).show()
-                    return@runOnUiThread
-                }
-                // O limite de memória pode ter reduzido o zoom pedido.
-                zoom = bitmap.width.toFloat() / baseWidth
-                updatePageControls()
-                pageImage.layoutParams = FrameLayout.LayoutParams(bitmap.width, bitmap.height)
-                pageImage.setImageBitmap(bitmap)
-                pageScroll.post {
-                    if (focus != null && !changedPage) {
-                        pageHScroll.scrollTo((focus.fractionX * bitmap.width - focus.screenX).toInt(), 0)
-                        pageScroll.scrollTo(0, (focus.fractionY * bitmap.height - focus.screenY).toInt())
-                    } else {
-                        pageHScroll.scrollTo(0, 0)
-                        pageScroll.scrollTo(0, 0)
-                    }
-                }
-            }
-        }
+    private fun stepHit(delta: Int) {
+        if (hits.isEmpty()) return
+        showHit((hitIndex + delta + hits.size) % hits.size)
     }
 
-    private fun updatePageControls() {
-        val zoomText = if (zoom > 1.05f) " · ${(zoom * 100).toInt()}%" else ""
-        pageLabel.text = "Página ${pageIndex + 1} de $pageCount$zoomText"
-        prevButton.isEnabled = pageIndex > 0
-        nextButton.isEnabled = pageIndex < pageCount - 1
-        prevButton.alpha = if (prevButton.isEnabled) 1f else 0.35f
-        nextButton.alpha = if (nextButton.isEnabled) 1f else 0.35f
+    private fun showHit(index: Int) {
+        hitIndex = index
+        searchInfo.text = "${index + 1}/${hits.size}"
+        viewer?.showHit(hits[index], searchTerm)
     }
 
-    private fun askPage() {
-        if (pageCount == 0) return
-        val input = EditText(this).apply {
-            inputType = InputType.TYPE_CLASS_NUMBER
-            hint = "1 a $pageCount"
-            setText((pageIndex + 1).toString())
-            selectAll()
-        }
-        val container = FrameLayout(this).apply {
-            setPadding(dp(22), dp(8), dp(22), 0)
-            addView(input)
-        }
+    private fun showHitList() {
+        if (hits.isEmpty()) return
         AlertDialog.Builder(this)
-            .setTitle("Ir para a página")
+            .setTitle("${hits.size} resultado(s)")
+            .setItems(hits.map { it.label }.toTypedArray()) { _, which -> showHit(which) }
+            .setNegativeButton("Fechar", null)
+            .show()
+    }
+
+    // ---------- anotações ----------
+
+    /** Ao selecionar texto do livro, o menu da seleção ganha a opção "Anotar". */
+    override fun onActionModeStarted(mode: ActionMode) {
+        super.onActionModeStarted(mode)
+        val view = viewer ?: return
+        if (view.annotatesPages || currentFocus == searchInput) return
+        mode.menu.add(Menu.NONE, MENU_ANNOTATE, 0, "Anotar").setOnMenuItemClickListener {
+            // A seleção do EPUB é lida de forma assíncrona: o menu só fecha depois da leitura.
+            val found = view.selection { excerpt, position ->
+                mode.finish()
+                if (excerpt.isNotEmpty()) editNote(null, excerpt, position)
+                else Toast.makeText(this, "Selecione um trecho do livro para anotar.", Toast.LENGTH_SHORT).show()
+            }
+            if (!found) {
+                mode.finish()
+                Toast.makeText(this, "Selecione um trecho do livro para anotar.", Toast.LENGTH_SHORT).show()
+            }
+            true
+        }
+    }
+
+    private fun showNotes() {
+        val item = current ?: return
+        val view = viewer ?: return
+        val notes = database.notesFor(item.id)
+        val labels = notes.map { note ->
+            buildString {
+                append(view.describe(note.position))
+                if (note.excerpt.isNotEmpty()) append(" — “").append(note.excerpt.take(120)).append(if (note.excerpt.length > 120) "…”" else "”")
+                if (note.text.isNotEmpty()) append("\n").append(note.text)
+            }
+        }
+        val builder = AlertDialog.Builder(this)
+            .setTitle(if (notes.isEmpty()) "Anotações" else "Anotações (${notes.size})")
+            .setNegativeButton("Fechar", null)
+        if (notes.isEmpty()) {
+            builder.setMessage(
+                if (view.annotatesPages) "Nenhuma anotação ainda. Use \"Anotar esta página\"."
+                else "Nenhuma anotação ainda. Selecione um trecho do texto e toque em \"Anotar\"."
+            )
+        } else {
+            builder.setItems(labels.toTypedArray()) { _, which -> view.goTo(notes[which].position) }
+        }
+        if (view.annotatesPages) {
+            builder.setPositiveButton("Anotar esta página") { _, _ -> if (view.loaded) editNote(null, "", view.position()) }
+        }
+        val dialog = builder.show()
+        dialog.listView?.setOnItemLongClickListener { _, _, which, _ ->
+            dialog.dismiss()
+            noteOptions(notes[which])
+            true
+        }
+    }
+
+    private fun noteOptions(note: Note) {
+        AlertDialog.Builder(this)
+            .setTitle(viewer?.describe(note.position) ?: "Anotação")
+            .setItems(arrayOf("Ir para o trecho", "Editar nota", "Remover")) { _, which ->
+                when (which) {
+                    0 -> viewer?.goTo(note.position)
+                    1 -> editNote(note, note.excerpt, note.position)
+                    2 -> {
+                        database.removeNote(note.id)
+                        Toast.makeText(this, "Anotação removida.", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+
+    /** Cria ([existing] nulo) ou edita uma anotação. */
+    private fun editNote(existing: Note?, excerpt: String, position: Int) {
+        val item = current ?: return
+        val input = EditText(this).apply {
+            hint = "Sua nota sobre esse trecho (opcional)"
+            minLines = 3
+            gravity = Gravity.TOP
+            setText(existing?.text ?: "")
+        }
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(22), dp(8), dp(22), 0)
+            if (excerpt.isNotEmpty()) {
+                addView(label("“${excerpt.take(400)}${if (excerpt.length > 400) "…" else ""}”", 13f, Palette.muted).apply {
+                    setTypeface(typeface, android.graphics.Typeface.ITALIC)
+                    setPadding(0, 0, 0, dp(8))
+                })
+            }
+            addView(input, FrameLayout.LayoutParams(-1, -2))
+        }
+        val title = if (existing != null) "Editar anotação" else "Salvar anotação · ${viewer?.describe(position) ?: ""}"
+        AlertDialog.Builder(this)
+            .setTitle(title)
             .setView(container)
             .setNegativeButton("Cancelar", null)
-            .setPositiveButton("Ir") { _, _ ->
-                val page = input.text.toString().toIntOrNull()
-                if (page != null) showPage(page - 1)
+            .setPositiveButton("Salvar") { _, _ ->
+                val text = input.text.toString()
+                if (existing != null) {
+                    database.updateNote(existing.id, text)
+                } else {
+                    if (excerpt.isEmpty() && text.isBlank()) {
+                        Toast.makeText(this, "Escreva uma nota para esta página.", Toast.LENGTH_SHORT).show()
+                        return@setPositiveButton
+                    }
+                    database.addNote(item.id, excerpt, text, position)
+                }
+                Toast.makeText(this, "Anotação salva.", Toast.LENGTH_SHORT).show()
             }
             .show()
     }
 
-    /** Ponto da tela (em pixels da área de leitura) e onde ele cai na página, de 0 a 1. */
-    private class Focus(val screenX: Float, val screenY: Float, val fractionX: Float, val fractionY: Float)
-
-    private fun focusAt(screenX: Float, screenY: Float): Focus {
-        val width = pageImage.width.coerceAtLeast(1)
-        val height = pageImage.height.coerceAtLeast(1)
-        val fx = ((pageHScroll.scrollX + screenX) / width).coerceIn(0f, 1f)
-        val fy = ((pageScroll.scrollY + screenY) / height).coerceIn(0f, 1f)
-        return Focus(screenX, screenY, fx, fy)
-    }
-
-    private fun setZoom(newZoom: Float, focus: Focus) {
-        val clamped = newZoom.coerceIn(1f, MAX_ZOOM)
-        if (abs(clamped - zoom) < 0.05f) {
-            pageImage.scaleX = 1f
-            pageImage.scaleY = 1f
-            return
-        }
-        zoom = clamped
-        showPage(pageIndex, focus)
-    }
-
-    /**
-     * Gestos na página: pinça para zoom, toque duplo alterna 100%/200% e deslizar para os lados
-     * (sem zoom) troca de página. Os eventos chegam por [dispatchTouchEvent].
-     */
-    private inner class PdfGestures {
-        private var pinchScale = 1f
-        private var pinchFocusX = 0f
-        private var pinchFocusY = 0f
-        private val minFlingVelocity = dp(500)
-        private val minFlingDistance = dp(60)
-
-        val scale = ScaleGestureDetector(this@ReaderActivity, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
-            override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
-                pinchScale = 1f
-                val (x, y) = toPageCoords(detector.focusX, detector.focusY)
-                pinchFocusX = x
-                pinchFocusY = y
-                // Prévia instantânea: escala a imagem atual em volta do ponto da pinça.
-                pageImage.pivotX = pageHScroll.scrollX + x
-                pageImage.pivotY = pageScroll.scrollY + y
-                return true
-            }
-
-            override fun onScale(detector: ScaleGestureDetector): Boolean {
-                pinchScale = (pinchScale * detector.scaleFactor).coerceIn(1f / zoom, MAX_ZOOM / zoom)
-                pageImage.scaleX = pinchScale
-                pageImage.scaleY = pinchScale
-                return true
-            }
-
-            override fun onScaleEnd(detector: ScaleGestureDetector) {
-                setZoom(zoom * pinchScale, focusAt(pinchFocusX, pinchFocusY))
-            }
-        })
-
-        val tap = GestureDetector(this@ReaderActivity, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onDoubleTap(e: MotionEvent): Boolean {
-                val (x, y) = toPageCoords(e.x, e.y)
-                setZoom(if (zoom > 1.05f) 1f else DOUBLE_TAP_ZOOM, focusAt(x, y))
-                return true
-            }
-
-            override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
-                val start = e1 ?: return false
-                if (zoom > 1.05f || scale.isInProgress) return false
-                val dx = e2.x - start.x
-                val dy = e2.y - start.y
-                if (abs(dx) < minFlingDistance || abs(dx) < abs(dy) * 1.5f || abs(velocityX) < minFlingVelocity) return false
-                showPage(if (dx < 0) pageIndex + 1 else pageIndex - 1)
-                return true
-            }
-        })
-    }
-
-    /** Converte coordenadas da janela para coordenadas visíveis da área de leitura. */
-    private fun toPageCoords(windowX: Float, windowY: Float): Pair<Float, Float> {
-        val location = IntArray(2)
-        pageScroll.getLocationInWindow(location)
-        return Pair(windowX - location[0], windowY - location[1])
-    }
-
-    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
-        val gestures = pdfGestures ?: return super.dispatchTouchEvent(ev)
-        if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
-            val (x, y) = toPageCoords(ev.x, ev.y)
-            touchInPage = x >= 0 && y >= 0 && x < pageScroll.width && y < pageScroll.height
-            pinching = false
-        }
-        if (!touchInPage) return super.dispatchTouchEvent(ev)
-        gestures.scale.onTouchEvent(ev)
-        gestures.tap.onTouchEvent(ev)
-        if (gestures.scale.isInProgress && !pinching) {
-            // Durante a pinça a rolagem fica parada: cancela o gesto que as ScrollViews viram.
-            pinching = true
-            val cancel = MotionEvent.obtain(ev).apply { action = MotionEvent.ACTION_CANCEL }
-            super.dispatchTouchEvent(cancel)
-            cancel.recycle()
-        }
-        if (pinching) {
-            if (ev.actionMasked == MotionEvent.ACTION_UP || ev.actionMasked == MotionEvent.ACTION_CANCEL) pinching = false
-            return true
-        }
-        return super.dispatchTouchEvent(ev)
-    }
-
-    /** Roda na thread worker. */
-    private fun renderPage(index: Int, baseWidth: Int, zoomLevel: Float): Bitmap? {
-        val pdf = renderer ?: return null
-        val page = pdf.openPage(index)
-        try {
-            var scale = baseWidth * zoomLevel / page.width
-            // Limita a memória do bitmap (4 bytes por pixel), inclusive em páginas muito compridas.
-            val pixels = page.width * scale * page.height * scale
-            if (pixels > MAX_BITMAP_PIXELS) scale *= sqrt(MAX_BITMAP_PIXELS / pixels)
-            val width = (page.width * scale).toInt().coerceAtLeast(1)
-            val height = (page.height * scale).toInt().coerceAtLeast(1)
-            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-            bitmap.eraseColor(Color.WHITE)
-            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-            return bitmap
-        } finally {
-            page.close()
-        }
-    }
-
-    /** Roda na thread worker. */
-    private fun closePdf() {
-        try {
-            renderer?.close()
-        } catch (e: Exception) {
-            // Já fechado.
-        }
-        try {
-            descriptor?.close()
-        } catch (e: Exception) {
-            // Já fechado.
-        }
-        renderer = null
-        descriptor = null
-    }
-
-    // ---------- TXT ----------
-
-    private fun buildTextScreen(item: LibraryItem) {
-        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
-        textSizeSp = prefs.getFloat(KEY_TEXT_SIZE, DEFAULT_TEXT_SP)
-        nightMode = prefs.getBoolean(KEY_NIGHT, false)
-
-        textAdapter = ChunkAdapter()
-        textList = ListView(this).apply {
-            adapter = textAdapter
-            divider = null
-            dividerHeight = 0
-            selector = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
-            isVerticalFadingEdgeEnabled = false
-            clipToPadding = false
-            setPadding(0, dp(16), 0, dp(24))
-            setOnScrollListener(object : AbsListView.OnScrollListener {
-                override fun onScrollStateChanged(view: AbsListView, scrollState: Int) = Unit
-                override fun onScroll(view: AbsListView, first: Int, visible: Int, total: Int) {
-                    if (textLoaded) updateProgressLabel()
-                }
-            })
-        }
-        progressLabel = label("Carregando…", 12f, Palette.muted).apply {
-            gravity = Gravity.CENTER
-            setPadding(0, dp(10), 0, dp(10))
-        }
-        val footer = footerBar()
-        footer.addView(progressLabel, LinearLayout.LayoutParams(0, -2, 1f))
-
-        val theme = barButton("◐", Color.WHITE) { toggleNightMode() }.apply { contentDescription = "Alternar tema claro e escuro" }
-        val smaller = barButton("A-", Color.WHITE) { changeTextSize(-1f) }.apply { contentDescription = "Diminuir letra" }
-        val larger = barButton("A+", Color.WHITE) { changeTextSize(1f) }.apply { contentDescription = "Aumentar letra" }
-        setContentView(frame(item.name, textList, footer, listOf(theme, smaller, larger)))
-        applyTextColors()
-
-        val uri = Uri.parse(item.uri)
-        worker.execute {
-            val result = try {
-                readText(uri)
-            } catch (e: Exception) {
-                null
-            } catch (e: OutOfMemoryError) {
-                null
-            }
-            runOnUiThread {
-                if (destroyed) return@runOnUiThread
-                if (result == null) {
-                    fail("Não foi possível abrir este arquivo de texto.")
-                    return@runOnUiThread
-                }
-                if (result.chunks.isEmpty()) {
-                    fail("Este arquivo de texto está vazio.")
-                    return@runOnUiThread
-                }
-                textAdapter.chunks = result.chunks
-                textAdapter.notifyDataSetChanged()
-                textLoaded = true
-                if (result.truncated) {
-                    Toast.makeText(this, "Arquivo muito grande: exibindo só o começo.", Toast.LENGTH_LONG).show()
-                }
-                restoreFraction(item.position)
-            }
-        }
-    }
-
-    private inner class ChunkAdapter : BaseAdapter() {
-        var chunks: List<String> = emptyList()
-
-        override fun getCount() = chunks.size
-        override fun getItem(position: Int) = chunks[position]
-        override fun getItemId(position: Int) = position.toLong()
-        override fun isEnabled(position: Int) = false
-
-        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-            val view = convertView as? TextView ?: TextView(this@ReaderActivity).apply {
-                typeface = Typeface.SERIF
-                setLineSpacing(0f, 1.35f)
-                setPadding(dp(20), 0, dp(20), 0)
-                setTextIsSelectable(true)
-            }
-            view.textSize = textSizeSp
-            view.setTextColor(if (nightMode) NIGHT_TEXT else Palette.ink)
-            view.text = chunks[position]
-            return view
-        }
-    }
-
-    private fun applyTextColors() {
-        textList.setBackgroundColor(if (nightMode) NIGHT_BACKGROUND else Palette.paper)
-        textList.cacheColorHint = if (nightMode) NIGHT_BACKGROUND else Palette.paper
-    }
-
-    private fun toggleNightMode() {
-        nightMode = !nightMode
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(KEY_NIGHT, nightMode).apply()
-        applyTextColors()
-        textAdapter.notifyDataSetChanged()
-    }
-
-    private fun changeTextSize(delta: Float) {
-        val fraction = textFraction()
-        textSizeSp = (textSizeSp + delta).coerceIn(12f, 32f)
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putFloat(KEY_TEXT_SIZE, textSizeSp).apply()
-        textAdapter.notifyDataSetChanged()
-        if (textLoaded) restoreFraction(fraction)
-    }
-
-    /**
-     * Posição de leitura como fração de 0 a 10000: bloco visível no topo mais quanto dele já
-     * passou. Não depende do tamanho da fonte nem da rotação, e é o mesmo formato da versão 0.2.
-     */
-    private fun textFraction(): Int {
-        val count = textAdapter.count
-        if (count == 0 || textList.childCount == 0) return 0
-        if (!textList.canScrollVertically(1)) return 10_000
-        val slot = readingSlot()
-        val child = textList.getChildAt(slot)
-        val passed = ((textList.paddingTop - child.top).toDouble() / child.height.coerceAtLeast(1)).coerceIn(0.0, 1.0)
-        return ((textList.firstVisiblePosition + slot + passed) / count * 10_000).roundToInt().coerceIn(0, 10_000)
-    }
-
-    /**
-     * Filho da lista que está na linha de leitura (logo abaixo do padding do topo). Como o padding
-     * não corta o conteúdo, o bloco anterior pode aparecer nele e ser o primeiro filho visível.
-     */
-    private fun readingSlot(): Int {
-        var slot = 0
-        while (slot < textList.childCount - 1 && textList.getChildAt(slot).bottom <= textList.paddingTop) slot++
-        return slot
-    }
-
-    /**
-     * Leva a lista até [fraction]. Primeiro posiciona o bloco no topo; quando o layout termina e a
-     * altura dele é conhecida, rola o que falta dentro do bloco.
-     */
-    private fun restoreFraction(fraction: Int) {
-        val count = textAdapter.count
-        if (count == 0) return
-        // O epsilon evita que 5000/10000 de 76 blocos vire 37,999… e caia no bloco anterior.
-        val exact = fraction.coerceIn(0, 10_000).toDouble() * count / 10_000 + 1e-6
-        val index = floor(exact).toInt().coerceIn(0, count - 1)
-        val passed = (exact - index).coerceIn(0.0, 1.0)
-        // O deslocamento já é medido a partir do padding do topo.
-        textList.setSelectionFromTop(index, 0)
-
-        textList.viewTreeObserver.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
-            private var layouts = 0
-            override fun onGlobalLayout() {
-                val child = textList.getChildAt(index - textList.firstVisiblePosition)
-                val ready = child != null && index >= textList.firstVisiblePosition
-                if (!ready && ++layouts < MAX_RESTORE_LAYOUTS) return
-                textList.viewTreeObserver.removeOnGlobalLayoutListener(this)
-                if (ready && passed > 0.001) scrollTextBy((passed * child!!.height).toInt())
-                textList.post { updateProgressLabel() }
-            }
-        })
-        textList.requestLayout()
-    }
-
-    /** O ListView limita cada rolagem à própria altura; blocos maiores que a tela pedem vários passos. */
-    private fun scrollTextBy(pixels: Int) {
-        val step = (textList.height - textList.paddingTop - textList.paddingBottom - 2).coerceAtLeast(1)
-        var remaining = pixels
-        while (remaining > 0 && textList.canScrollVertically(1)) {
-            val delta = minOf(step, remaining)
-            textList.scrollListBy(delta)
-            remaining -= delta
-        }
-    }
-
-    private fun updateProgressLabel() {
-        progressLabel.text = "${textFraction() / 100}% lido"
-    }
-
-    private class TextResult(val chunks: List<String>, val truncated: Boolean)
-
-    /** Roda na thread worker. */
-    private fun readText(uri: Uri): TextResult? {
-        val input = contentResolver.openInputStream(uri) ?: return null
-        val buffer = ByteArrayOutputStream()
-        var truncated = false
-        input.use { stream ->
-            val chunk = ByteArray(64 * 1024)
-            while (true) {
-                val read = stream.read(chunk)
-                if (read < 0) break
-                if (buffer.size() + read > MAX_TEXT_BYTES) {
-                    buffer.write(chunk, 0, MAX_TEXT_BYTES - buffer.size())
-                    truncated = true
-                    break
-                }
-                buffer.write(chunk, 0, read)
-            }
-        }
-        val text = TextDecoding.decode(buffer.toByteArray(), truncated)
-        return TextResult(TextChunker.chunk(text), truncated)
-    }
-
     companion object {
         const val EXTRA_ITEM_ID = "item_id"
-        private const val PREFS = "reader"
-        private const val KEY_TEXT_SIZE = "text_size_sp"
-        private const val KEY_NIGHT = "night_mode"
-        private const val DEFAULT_TEXT_SP = 18f
-        private const val MAX_TEXT_BYTES = 8 * 1024 * 1024
-        private const val MAX_RESTORE_LAYOUTS = 5
-        private const val MAX_ZOOM = 3f
-        private const val DOUBLE_TAP_ZOOM = 2f
-        private const val MAX_BITMAP_PIXELS = 8_000_000f
-        private val NIGHT_BACKGROUND = Color.rgb(18, 22, 28)
-        private val NIGHT_TEXT = Color.rgb(214, 208, 196)
+        const val EXTRA_POSITION = "position"
+        private const val MENU_ANNOTATE = 0x414e
     }
 }

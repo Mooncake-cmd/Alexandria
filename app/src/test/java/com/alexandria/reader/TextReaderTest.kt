@@ -37,8 +37,7 @@ class TextReaderTest {
     private fun addText(name: String, content: String): Long {
         val file = File(context.cacheDir, name).apply { writeText(content) }
         LibraryDatabase(context).use { db ->
-            db.add(name, Uri.fromFile(file).toString(), "txt")
-            return db.all().first().id
+            return db.add(name, Uri.fromFile(file).toString(), "txt")!!
         }
     }
 

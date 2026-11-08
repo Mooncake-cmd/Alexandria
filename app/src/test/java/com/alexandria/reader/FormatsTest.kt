@@ -36,4 +36,17 @@ class FormatsTest {
     fun readableFormatsAreSupported() {
         assertTrue(Formats.supported.containsAll(Formats.readable))
     }
+
+    @Test
+    fun aliasesMapToTheSameFormat() {
+        assertEquals("mobi", Formats.detect("livro.azw3", null))
+        assertEquals("djvu", Formats.detect("scan.djv", null))
+    }
+
+    @Test
+    fun zipHeaderDetection() {
+        assertTrue(looksLikeZip(byteArrayOf(0x50, 0x4B, 3, 4)))
+        assertTrue(!looksLikeZip("Rar!".toByteArray()))
+        assertTrue(!looksLikeZip(ByteArray(0)))
+    }
 }

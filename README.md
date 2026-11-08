@@ -1,6 +1,6 @@
 # Alexandria — projeto Android
 
-**Versão:** 0.3.0  
+**Versão:** 0.4.0  
 **Pacote:** `com.alexandria.reader`  
 **Plataforma:** Android 6.0 ou superior (API 23+)  
 **Idioma da interface:** Português (Brasil)
@@ -8,36 +8,62 @@
 ## O que esta versão contém
 
 - Aplicativo Android nativo em Kotlin, sem dependências externas no APK.
-- Biblioteca local em SQLite, com importação de vários documentos de uma vez (Storage Access Framework).
-- Biblioteca ordenada pelo que foi lido ou importado por último.
-- **Leitor de PDF** (renderizador nativo do Android):
-  - zoom por pinça (até 300%) e toque duplo para alternar entre 100% e 200%;
-  - deslizar para os lados troca de página (sem zoom);
-  - toque no número da página para ir direto a outra página.
-- **Leitor de TXT**:
-  - texto dividido em blocos e exibido numa lista, o que mantém a rolagem fluida mesmo em arquivos grandes;
-  - detecção de codificação: UTF-8, UTF-16 (com BOM) ou Windows-1252;
-  - tamanho da fonte ajustável e tema escuro (botão ◐).
-- **Progresso de leitura salvo** por documento. Na biblioteca o PDF mostra "Página 12 de 300 · 4%" e o TXT mostra a porcentagem lida.
-- Importação reconhece o formato pela extensão ou, na falta dela, pelo tipo MIME.
-- Remoção de itens por toque longo, liberando a permissão persistida do arquivo.
-- Layout compatível com Android 15 (barras do sistema não cobrem cabeçalho nem navegação).
-- Notas, Estatísticas e Ajustes continuam como áreas de demonstração.
+- Ícone próprio (farol sobre livros), adaptativo e com versão monocromática para ícones temáticos (Android 13+).
+
+### Biblioteca
+
+- Importação de vários documentos de uma vez (Storage Access Framework), guardados no SQLite local.
+- Cartões com **capa** (PDF, EPUB e CBZ), formato, progresso em texto e barra de progresso.
+- **Lendo agora** e **Estante** (livros concluídos, recolhível), ordenados pelo que foi lido por último.
+- **Prateleiras**: toque longo num livro → mover para prateleira; toque longo no nome da prateleira → renomear.
+- Toque longo também permite marcar como concluído/não concluído e remover (apaga as anotações do livro).
+
+### Leitores
+
+| Formato | Como é exibido | Recursos |
+|---|---|---|
+| PDF | renderizador nativo do Android | zoom por pinça e toque duplo, deslizar para trocar de página, ir para página |
+| CBZ | imagens do ZIP em ordem natural (pág. 2 antes da 10) | os mesmos do PDF |
+| CBR | abre como CBZ quando é um ZIP disfarçado | CBR em RAR de verdade ainda não é suportado |
+| EPUB 2 e 3 | WebView do sistema, capítulo por capítulo | sumário, busca, letra maior/menor, tema escuro |
+| DOCX | texto com títulos, listas, negrito, itálico e sublinhado | busca, letra, tema escuro |
+| TXT | blocos numa lista (fluido mesmo em arquivos grandes) | UTF-8/UTF-16/Windows-1252, busca, letra, tema escuro |
+
+Em todos os formatos:
+
+- **Progresso salvo** por documento.
+- **Anotações**: selecione um trecho e toque em "Anotar" (EPUB, DOCX, TXT); em PDF e CBZ, use 📝 → "Anotar esta página". A lista de anotações do livro leva direto ao trecho.
+- **Busca no livro** (🔍) que ignora maiúsculas e acentos ("acao" encontra "Ação"), com lista de resultados.
+- Ao chegar no fim, aparece **🏁 Concluir livro**, que move o livro para a Estante.
+
+### Notas e Estatísticas
+
+- **Notas**: todas as anotações, agrupadas por livro; tocar abre o livro no trecho anotado.
+- **Estatísticas**: livros na biblioteca, em leitura, concluídos, anotações e contagem por formato.
+- Ajustes continua como área de demonstração.
+
+### Origem dos novos recursos
+
+Os recursos da 0.4.0 vieram da Biblioteca do site RPG Hardcore (HTML/JavaScript), **reescritos em Kotlin**. Nada do código web nem das bibliotecas JavaScript/WASM dele (pdf.js, epub.js, JSZip, mammoth, libarchive, mobi-parser, djvu-rs) entrou no app. O app usa só o que o Android já oferece (`PdfRenderer`, `java.util.zip`, `XmlPullParser`, `WebView`), então não há licenças de terceiros a acompanhar. Ficaram de fora, por serem do site e não da biblioteca: XP ao concluir, cartões SRS, limite diário de quadrinhos e backup.
 
 ## Limitações desta etapa
 
-- EPUB, MOBI, DJVU, DOCX, CBZ e CBR podem ser importados, mas ainda **não têm leitor**. Os cartões desses itens mostram "Leitor em breve".
-- O leitor de PDF não tem busca. A memória de cada página renderizada é limitada (cerca de 8 milhões de pixels), então em páginas muito grandes o zoom máximo pode ser menor que 300%.
+- MOBI/AZW3, DJVU e CBR em RAR podem ser importados, mas ainda **não têm leitor** (precisam de decodificadores próprios).
+- PDF não tem busca nem seleção de texto: o renderizador nativo só entrega imagem. Anotações de PDF são por página.
+- EPUB com DRM não abre. O livro é exibido com o estilo de leitura do app (cores e margens); scripts do livro são bloqueados.
 - Arquivos TXT acima de 8 MB são exibidos só até esse limite.
-- Os gestos do PDF (pinça, toque duplo, deslizar) foram compilados e revisados, mas **só podem ser validados num aparelho real**: o simulador usado nos testes automatizados não renderiza PDF.
+- EPUB, CBZ e DOCX são copiados para o cache do app na primeira leitura (acesso aleatório ao ZIP). Se o Android limpar o cache, a cópia é refeita.
+- Os gestos do PDF/CBZ e a exibição do EPUB no WebView **só podem ser validados num aparelho real**: o simulador dos testes não renderiza PDF, imagens nem páginas web.
 
 ## Testes
 
-Os testes rodam na JVM, sem emulador:
+Os testes rodam na JVM, sem emulador (58 no total):
 
-- `FormatsTest`, `TextDecodingTest`, `TextChunkerTest`, `ReadingStatusTest`: lógica pura.
-- `LibraryDatabaseTest` (Robolectric): migração do banco da versão 0.2 para a 0.3 sem perda de dados, renomeação, ordem e progresso.
-- `TextReaderTest` (Robolectric): abre um TXT grande, confere os blocos, salva a posição, reabre e confere que volta ao mesmo ponto.
+- Lógica pura: `FormatsTest`, `TextDecodingTest`, `TextChunkerTest`, `ReadingStatusTest`, `BookHelpersTest` (ordem natural, busca sem acentos, caminhos em ZIP, preparo do HTML do EPUB, prateleiras, blocos do DOCX).
+- `ZipFormatsTest` (Robolectric): EPUB 2 e 3 (capítulos, sumário, capa), DOCX (títulos com estilos em português, listas, estilos, tabelas, caixas de texto), CBZ.
+- `LibraryDatabaseTest` (Robolectric): migrações 0.2 → 0.4 e 0.3 → 0.4 sem perda de dados, anotações, Estante e prateleiras.
+- `TextReaderTest`, `ReaderFormatsTest` (Robolectric): abre TXT, DOCX e EPUB no leitor, salva e restaura posição, busca, CBR em RAR com erro claro.
+- `MainActivityTest` (Robolectric): biblioteca com prateleiras e Estante, abas Notas e Estatísticas.
 
 ```
 ./gradlew testDebugUnitTest lintDebug assembleDebug
@@ -61,16 +87,19 @@ Os relatórios ficam em `app/build/reports/`.
 
 ## Próximas etapas sugeridas
 
-1. Testar em aparelho real os gestos do PDF, PDFs grandes, PDFs com senha e arquivos vindos do Google Drive.
-2. Integrar leitor EPUB.
-3. Busca no TXT e no PDF.
-4. Implementar anotação, destaques e marcadores (seção Notas).
-5. Estatísticas de leitura a partir do progresso já salvo.
-6. Adicionar os demais formatos com bibliotecas compatíveis e licenças verificadas.
+1. Testar em aparelho real: gestos do PDF/CBZ, EPUBs variados (imagens, notas de rodapé, livros grandes), DOCX com tabelas e arquivos vindos do Google Drive.
+2. Leitor MOBI (o formato antigo, PalmDOC, é viável sem bibliotecas; o AZW3/KF8 é maior).
+3. CBR em RAR e DJVU (precisam de decodificador; avaliar licenças antes).
+4. Exportar/importar backup da biblioteca e das anotações.
+5. Ajustes: tema, tamanho de letra padrão, ordem da biblioteca.
+
+## Ícone
+
+Gerado por `art/gerar_icones.py` a partir de `art/icone-original.jpg` (requer Python com Pillow): o farol é recortado, separado do fundo creme e montado em todas as densidades. O nome "Alexandria" da arte original ficou de fora do ícone, porque fica ilegível no tamanho do ícone e o Android já mostra o nome do app embaixo dele.
 
 ## Privacidade
 
-A aplicação não contém analytics, anúncios, login ou comunicação de rede. Os documentos são selecionados pelo usuário e seus identificadores são armazenados localmente no banco SQLite do aplicativo. O backup automático e a transferência entre aparelhos estão desligados (`allowBackup`, `fullBackupContent` e `dataExtractionRules`), porque as permissões de acesso aos arquivos não são restauradas em outro aparelho.
+A aplicação não contém analytics, anúncios, login ou comunicação de rede. Os documentos são selecionados pelo usuário e seus identificadores são armazenados localmente no banco SQLite do aplicativo. O app não pede permissão de internet: nem o leitor de EPUB consegue acessar a rede. O backup automático e a transferência entre aparelhos estão desligados (`allowBackup`, `fullBackupContent` e `dataExtractionRules`), porque as permissões de acesso aos arquivos não são restauradas em outro aparelho.
 
 ## Alternativa de compilação na nuvem (GitHub Actions)
 

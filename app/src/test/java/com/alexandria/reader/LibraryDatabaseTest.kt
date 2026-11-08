@@ -5,6 +5,7 @@ import android.database.sqlite.SQLiteDatabase
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -57,15 +58,86 @@ class LibraryDatabaseTest {
         assertEquals(41, items[0].position)
         assertEquals(0, items[0].pageCount)
         assertEquals(0L, items[0].openedAt)
+        assertFalse(items[0].finished)
+        assertEquals("", items[0].shelf)
+        // A tabela de anotações também foi criada na migração.
+        database.addNote(items[0].id, "trecho", "nota", 3)
+        assertEquals(1, database.notesFor(items[0].id).size)
+    }
+
+    @Test
+    fun notesAreOrderedByPositionAndDeletedWithTheBook() {
+        database = LibraryDatabase(context)
+        val id = database.add("Livro", "content://n", "txt")!!
+        val other = database.add("Outro", "content://o", "txt")!!
+        database.addNote(id, "  fim  ", "", 9_000)
+        val first = database.addNote(id, "começo", "minha nota", 100)
+        database.addNote(other, "outro livro", "", 50)
+        assertEquals(listOf("começo", "fim"), database.notesFor(id).map { it.excerpt })
+        assertEquals(3, database.allNotes().size)
+
+        database.updateNote(first, " editada ")
+        assertEquals("editada", database.notesFor(id).first().text)
+
+        database.remove(id)
+        assertEquals(listOf("outro livro"), database.allNotes().map { it.excerpt })
+    }
+
+    @Test
+    fun finishedAndShelves() {
+        database = LibraryDatabase(context)
+        val a = database.add("A", "content://a", "pdf")!!
+        val b = database.add("B", "content://b", "pdf")!!
+        database.setFinished(a, true)
+        assertTrue(database.find(a)!!.finished)
+        database.setFinished(a, false)
+        assertFalse(database.find(a)!!.finished)
+
+        database.setShelf(a, " Ficção ")
+        database.setShelf(b, "estudos")
+        assertEquals(listOf("estudos", "Ficção"), database.shelves())
+        database.renameShelf("Ficção", "Romances")
+        assertEquals("Romances", database.find(a)!!.shelf)
+        database.setShelf(b, "")
+        assertEquals(listOf("Romances"), database.shelves())
+    }
+
+    @Test
+    fun upgradeFromVersion3KeepsProgress() {
+        val file = context.getDatabasePath("alexandria.db").apply { parentFile?.mkdirs() }
+        SQLiteDatabase.openOrCreateDatabase(file, null).use { old ->
+            old.execSQL(
+                """
+                CREATE TABLE library_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    uri TEXT NOT NULL UNIQUE,
+                    format TEXT NOT NULL,
+                    added_at INTEGER NOT NULL,
+                    last_position INTEGER NOT NULL DEFAULT 0,
+                    page_count INTEGER NOT NULL DEFAULT 0,
+                    opened_at INTEGER NOT NULL DEFAULT 0
+                )
+                """.trimIndent()
+            )
+            old.execSQL("INSERT INTO library_items (name, uri, format, added_at, last_position, page_count, opened_at) VALUES ('Livro', 'content://a', 'pdf', 10, 41, 300, 99)")
+            old.version = 3
+        }
+        database = LibraryDatabase(context)
+        val item = database.all().single()
+        assertEquals(41, item.position)
+        assertEquals(300, item.pageCount)
+        assertEquals(99L, item.openedAt)
+        assertFalse(item.finished)
     }
 
     @Test
     fun addingTheSameUriTwiceOnlyRenames() {
         database = LibraryDatabase(context)
-        assertTrue(database.add("Antigo", "content://x", "txt"))
+        assertNotNull(database.add("Antigo", "content://x", "txt"))
         val id = database.all().single().id
         database.updateProgress(id, 5_000)
-        assertFalse(database.add("Novo", "content://x", "txt"))
+        assertNull(database.add("Novo", "content://x", "txt"))
         val item = database.all().single()
         assertEquals("Novo", item.name)
         assertEquals(5_000, item.position)
