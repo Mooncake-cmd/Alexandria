@@ -74,6 +74,20 @@ object BookFiles {
         epub
     }
 
+    /** Pasta das imagens extraídas de um DOCX. */
+    fun docxMediaDir(context: Context, id: Long) = File(booksDir(context), "$id.media")
+
+    /** Grava uma entrada do ZIP em [dir] (uma vez) e devolve o arquivo, ou null se não existir. */
+    fun extractEntry(zip: ZipFile, path: String, dir: File): File? {
+        val entry = zip.getEntry(path) ?: return null
+        dir.mkdirs()
+        val target = File(dir, path.replace('/', '_'))
+        if (target.length() != entry.size || entry.size <= 0) {
+            zip.getInputStream(entry).use { input -> FileOutputStream(target).use { input.copyTo(it) } }
+        }
+        return target
+    }
+
     /** Pasta onde as páginas de um CBR em RAR são extraídas sob demanda. */
     fun rarPagesDir(context: Context, id: Long) = File(booksDir(context), "$id.pages")
 

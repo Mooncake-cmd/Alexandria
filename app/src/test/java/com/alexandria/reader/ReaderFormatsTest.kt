@@ -79,6 +79,20 @@ class ReaderFormatsTest {
     }
 
     @Test
+    fun imageOnlyDocxShowsTheImage() {
+        val png = javaClass.getResourceAsStream("/ore/pag1.png")!!.use { it.readBytes() }
+        val file = writeZip(File(context.cacheDir, "Atividades.docx"), SampleBooks.imageOnlyDocx(png))
+        val controller = launch(add(file, "docx"))
+        val list = find<ListView>(controller.get().window.decorView).single()
+        waitUntil { list.adapter.count > 0 || controller.get().isFinishing }
+        assertFalse("DOCX só com imagem não pode ser tratado como vazio", controller.get().isFinishing)
+        assertEquals(1, list.adapter.count)
+        assertTrue(list.adapter.getItem(0) is ImageChunk)
+        assertTrue((list.adapter.getItem(0) as ImageChunk).file.readBytes().contentEquals(png))
+        controller.pause().stop().destroy()
+    }
+
+    @Test
     fun searchFindsTermsIgnoringAccents() {
         val file = File(context.cacheDir, "busca.txt").apply {
             writeText((1..3_000).joinToString("\n") { if (it % 1_000 == 0) "Aqui há uma Ação importante." else "Linha $it comum." })
@@ -110,6 +124,26 @@ class ReaderFormatsTest {
         assertEquals("https://book.alexandria/OEBPS/Text/cap 1.xhtml", loaded.baseUrl)
         assertTrue(loaded.data.contains("Engenho Novo"))
         assertTrue(loaded.data.contains("script-src 'none'"))
+
+        // O próprio capítulo chega ao WebView como "data:": recusá-lo deixava a tela com
+        // "Página da Web não disponível / net::ERR_HTTP_RESPONSE_CODE_FAILURE".
+        val client = shadowOf(web).webViewClient
+        fun request(url: String) = object : android.webkit.WebResourceRequest {
+            override fun getUrl() = Uri.parse(url)
+            override fun isForMainFrame() = true
+            override fun isRedirect() = false
+            override fun hasGesture() = false
+            override fun getMethod() = "GET"
+            override fun getRequestHeaders() = emptyMap<String, String>()
+        }
+        assertEquals(null, client.shouldInterceptRequest(web, request("data:application/xhtml+xml;charset=utf-8;base64,PGh0bWw+")))
+        assertEquals(404, client.shouldInterceptRequest(web, request("https://exemplo.com/rastreio.js"))!!.statusCode)
+        val css = client.shouldInterceptRequest(web, request("https://book.alexandria/OEBPS/style.css"))!!
+        assertEquals(200, css.statusCode)
+        assertEquals("p{}", css.data.readBytes().decodeToString())
+        // HTML do livro pedido diretamente sai com a política de segurança.
+        val html = client.shouldInterceptRequest(web, request("https://book.alexandria/OEBPS/Text/cap2.xhtml"))!!
+        assertTrue(html.data.readBytes().decodeToString().contains("script-src 'none'"))
         controller.pause().stop().destroy()
         // A cópia local do EPUB fica no cache e o total de capítulos é salvo.
         LibraryDatabase(context).use { db -> assertEquals(2, db.all().single().pageCount) }

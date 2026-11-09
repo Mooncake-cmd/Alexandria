@@ -35,6 +35,9 @@ interface PageSource {
     val pageCount: Int
     /** Desenha a página [index] com largura de tela [width] (já multiplicada pelo zoom). */
     fun render(index: Int, width: Int): RenderedPage?
+
+    /** Proporção altura/largura da página [index], para encaixá-la na tela antes de desenhar. */
+    fun aspect(index: Int): Float
     fun close()
 
     companion object {
@@ -67,11 +70,18 @@ class PdfSource(context: Context, uri: Uri) : PageSource {
             val h = (page.height * scale).toInt().coerceAtLeast(1)
             val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
             bitmap.eraseColor(Color.WHITE)
-            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+            // Transformação explícita: página (em pontos) → bitmap, sem deixar o renderizador "encaixar"
+            // por conta própria (o que distorcia páginas com caixa de corte diferente da de mídia).
+            val matrix = android.graphics.Matrix().apply { setScale(w.toFloat() / page.width, h.toFloat() / page.height) }
+            page.render(bitmap, null, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
             return RenderedPage(bitmap, w, h)
         } finally {
             page.close()
         }
+    }
+
+    override fun aspect(index: Int): Float = renderer.openPage(index).use { page ->
+        if (page.width > 0) page.height.toFloat() / page.width else 1.414f
     }
 
     override fun close() {
@@ -109,46 +119,144 @@ class ComicSource(private val zip: ZipFile) : PageSource {
         return RenderedPage(bitmap, width, height)
     }
 
+    override fun aspect(index: Int): Float {
+        val entry = zip.getEntry(pages[index]) ?: return 1.5f
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        zip.getInputStream(entry).use { android.graphics.BitmapFactory.decodeStream(it, null, bounds) }
+        return if (bounds.outWidth > 0) bounds.outHeight.toFloat() / bounds.outWidth else 1.5f
+    }
+
     override fun close() = zip.close()
 }
 
 /**
- * Visualizador de páginas (PDF e CBZ): uma página por vez, na largura da tela.
- * Pinça para zoom, toque duplo alterna 100%/200%, deslizar para os lados (sem zoom) troca de
- * página e tocar no número da página abre "ir para a página".
+ * Página desenhada com zoom e deslocamento próprios, sem ScrollViews (que ignoravam a largura
+ * pedida e esticavam a página). Encaixa a página inteira na área e a centraliza; com zoom, o
+ * dedo arrasta a página.
+ */
+class ZoomPageView(context: Context) : android.view.View(context) {
+    private var bitmap: Bitmap? = null
+    /** Tamanho da página com zoom 1 (inteira na área). */
+    var fitWidth = 0
+        private set
+    var fitHeight = 0
+        private set
+    var zoom = 1f
+        private set
+    private var left = 0f
+    private var top = 0f
+    private val paint = android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG)
+    private val target = android.graphics.RectF()
+    private val scroller = android.widget.OverScroller(context)
+
+    /** Nova página: volta ao zoom 1, centralizada. */
+    fun showPage(page: Bitmap, fitW: Int, fitH: Int) {
+        scroller.forceFinished(true)
+        bitmap = page
+        fitWidth = fitW
+        fitHeight = fitH
+        zoom = 1f
+        clamp(center = true)
+        invalidate()
+    }
+
+    /** Mesma página e geometria, bitmap mais nítido (depois de um zoom). */
+    fun sharpen(page: Bitmap) {
+        bitmap = page
+        invalidate()
+    }
+
+    private fun contentWidth() = fitWidth * zoom
+    private fun contentHeight() = fitHeight * zoom
+
+    /** Centraliza o que é menor que a área e impede arrastar a página para fora dela. */
+    private fun clamp(center: Boolean = false) {
+        val cw = contentWidth()
+        val ch = contentHeight()
+        left = if (cw <= width) (width - cw) / 2 else if (center) (width - cw) / 2 else left.coerceIn(width - cw, 0f)
+        top = if (ch <= height) (height - ch) / 2 else if (center) 0f else top.coerceIn(height - ch, 0f)
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        clamp(center = true)
+    }
+
+    fun panBy(dx: Float, dy: Float) {
+        left -= dx
+        top -= dy
+        clamp()
+        invalidate()
+    }
+
+    fun fling(velocityX: Float, velocityY: Float) {
+        val cw = contentWidth().toInt()
+        val ch = contentHeight().toInt()
+        if (cw <= width && ch <= height) return
+        scroller.fling(
+            left.toInt(), top.toInt(), velocityX.toInt(), velocityY.toInt(),
+            minOf(width - cw, 0), 0, minOf(height - ch, 0), 0
+        )
+        postInvalidateOnAnimation()
+    }
+
+    override fun computeScroll() {
+        if (scroller.computeScrollOffset()) {
+            left = scroller.currX.toFloat()
+            top = scroller.currY.toFloat()
+            clamp()
+            postInvalidateOnAnimation()
+        }
+    }
+
+    /** Zoom mantendo parado o ponto ([focusX], [focusY]) da área. */
+    fun zoomTo(newZoom: Float, focusX: Float, focusY: Float) {
+        val clamped = newZoom.coerceIn(1f, MAX_ZOOM)
+        val px = (focusX - left) / contentWidth().coerceAtLeast(1f)
+        val py = (focusY - top) / contentHeight().coerceAtLeast(1f)
+        zoom = clamped
+        left = focusX - px * contentWidth()
+        top = focusY - py * contentHeight()
+        clamp()
+        invalidate()
+    }
+
+    override fun onDraw(canvas: android.graphics.Canvas) {
+        val page = bitmap ?: return
+        target.set(left, top, left + contentWidth(), top + contentHeight())
+        canvas.drawBitmap(page, null, target, paint)
+    }
+
+    companion object {
+        const val MAX_ZOOM = 4f
+    }
+}
+
+/**
+ * Modo páginas para PDF, DJVU e quadrinhos: uma página por vez, inteira na tela.
+ * Toque duplo na borda direita avança e na esquerda volta; no meio, alterna o zoom (100%/200%).
+ * Pinça também dá zoom, e com zoom o dedo arrasta a página. Tocar no número abre "ir para a página".
  */
 class PageViewer(host: ReaderHost, private val openSource: (LibraryItem) -> PageSource, private val kind: String) : BookViewer(host) {
-    private var source: PageSource? = null // só tocado na thread de fundo, exceto [pageCount] guardado abaixo
+    private var source: PageSource? = null // só tocado na thread de fundo
     private var count = 0
     private var pageIndex = 0
     private var renderToken = 0
-    private var zoom = 1f
     private var touchInPage = false
     private var pinching = false
 
-    private val pageImage = ImageView(context).apply {
-        scaleType = ImageView.ScaleType.FIT_XY
-        setBackgroundColor(Color.WHITE)
-    }
-    private val pageHScroll = HorizontalScrollView(context).apply {
-        isHorizontalScrollBarEnabled = false
-        addView(pageImage, FrameLayout.LayoutParams(-2, -2))
-    }
-    private val pageScroll = ScrollView(context).apply {
-        setBackgroundColor(Palette.paper)
-        addView(pageHScroll, FrameLayout.LayoutParams(-1, -2))
-    }
+    private val pageView = ZoomPageView(context).apply { setBackgroundColor(Palette.paper) }
     private val prevButton = barButton("‹ Anterior", Palette.ink) { goTo(pageIndex - 1) }
     private val nextButton = barButton("Próxima ›", Palette.ink) { goTo(pageIndex + 1) }
     private val pageLabel = context.label("Abrindo…", 13f, Palette.muted).apply {
         gravity = Gravity.CENTER
         minHeight = context.dp(48)
         contentDescription = "Ir para a página"
-        setOnClickListener { askPage() }
+        setOnClickListener { askPage(host.activity, count, pageIndex) { goTo(it) } }
     }
     private val gestures = Gestures()
 
-    override val body = pageScroll
+    override val body = pageView
     override val footer = footerBar().apply {
         addView(prevButton)
         addView(pageLabel, LinearLayout.LayoutParams(0, -2, 1f))
@@ -163,46 +271,19 @@ class PageViewer(host: ReaderHost, private val openSource: (LibraryItem) -> Page
     }
 
     override fun open(item: LibraryItem, start: Int) {
-        host.worker.execute {
-            val opened = try {
-                openSource(item)
-            } catch (e: SecurityException) {
-                onUi { host.fail("Sem permissão para abrir este arquivo. Remova-o e importe de novo.") }
-                return@execute
-            } catch (e: Exception) {
-                onUi { host.fail(openError()) }
-                return@execute
-            } catch (e: OutOfMemoryError) {
-                onUi { host.fail(openError()) }
-                return@execute
-            }
-            source = opened
-            val total = opened.pageCount
-            onUi {
-                if (total == 0) {
-                    host.fail("Este documento não tem páginas.")
-                } else {
-                    count = total
-                    // Espera o layout para saber a largura real da área de leitura.
-                    pageScroll.post { showPage(start, null) }
-                }
-            }
+        openPageSource(host, openSource, item, kind) { opened ->
+            source = opened.first
+            count = opened.second
+            pageView.post { showPage(start) }
         }
-    }
-
-    private fun openError() = when (kind) {
-        "pdf" -> "Não foi possível abrir este PDF. Ele pode estar protegido por senha, danificado ou indisponível."
-        "djvu" -> "Não foi possível abrir este DJVU. O arquivo pode estar danificado."
-        else -> "Não foi possível abrir este quadrinho. O arquivo pode estar danificado ou sem imagens."
     }
 
     override fun position() = pageIndex
     override fun pageCount() = count
-    override fun goTo(position: Int) = showPage(position, null)
+    override fun goTo(position: Int) = showPage(position)
     override fun atEnd() = count > 0 && pageIndex >= count - 1
     override fun describe(position: Int) = "Pág. ${position + 1}"
-
-    override fun menuActions() = listOf("Ir para a página…" to { askPage() })
+    override fun menuActions() = listOf("Ir para a página…" to { askPage(context, count, pageIndex) { goTo(it) } })
 
     override fun close() {
         host.worker.execute {
@@ -211,17 +292,44 @@ class PageViewer(host: ReaderHost, private val openSource: (LibraryItem) -> Page
         }
     }
 
-    /** Muda de página (ou só re-renderiza, com outro zoom). [focus] mantém um ponto da tela parado no zoom. */
-    private fun showPage(index: Int, focus: Focus?) {
+    private fun showPage(index: Int) {
         if (count == 0) return
         val target = index.coerceIn(0, count - 1)
-        val changedPage = target != pageIndex
         pageIndex = target
-        updateControls()
+        updateControls(1f)
         host.onPositionChanged()
         val token = ++renderToken
-        val baseWidth = if (pageScroll.width > 0) pageScroll.width else context.resources.displayMetrics.widthPixels
-        val width = (baseWidth * zoom).toInt()
+        val areaW = pageView.width.takeIf { it > 0 } ?: context.resources.displayMetrics.widthPixels
+        val areaH = pageView.height.takeIf { it > 0 } ?: context.resources.displayMetrics.heightPixels
+        host.worker.execute {
+            val result = try {
+                val opened = source ?: return@execute
+                val (fitW, fitH) = PageTurn.fitPage(areaW, areaH, opened.aspect(target))
+                opened.render(target, fitW)?.let { Triple(it, fitW, fitH) }
+            } catch (e: Exception) {
+                null
+            } catch (e: OutOfMemoryError) {
+                null
+            }
+            onUi {
+                if (token != renderToken) return@onUi
+                if (result == null) {
+                    Toast.makeText(context, "Não foi possível exibir esta página.", Toast.LENGTH_SHORT).show()
+                    return@onUi
+                }
+                pageView.showPage(result.first.bitmap, result.second, result.third)
+            }
+        }
+    }
+
+    /** Depois de um zoom, desenha de novo na resolução nova (a prévia é só a imagem ampliada). */
+    private fun sharpen() {
+        val zoom = pageView.zoom
+        updateControls(zoom)
+        if (zoom <= 1.01f) return
+        val token = ++renderToken
+        val target = pageIndex
+        val width = (pageView.fitWidth * zoom).toInt()
         host.worker.execute {
             val page = try {
                 source?.render(target, width)
@@ -230,172 +338,304 @@ class PageViewer(host: ReaderHost, private val openSource: (LibraryItem) -> Page
             } catch (e: OutOfMemoryError) {
                 null
             }
-            onUi {
-                if (token != renderToken) return@onUi
-                pageImage.scaleX = 1f
-                pageImage.scaleY = 1f
-                if (page == null) {
-                    Toast.makeText(context, "Não foi possível exibir esta página.", Toast.LENGTH_SHORT).show()
-                    return@onUi
-                }
-                // O limite de memória pode ter reduzido o zoom pedido.
-                zoom = page.width.toFloat() / baseWidth
-                updateControls()
-                pageImage.layoutParams = FrameLayout.LayoutParams(page.width, page.height)
-                pageImage.setImageBitmap(page.bitmap)
-                pageScroll.post {
-                    if (focus != null && !changedPage) {
-                        pageHScroll.scrollTo((focus.fractionX * page.width - focus.screenX).toInt(), 0)
-                        pageScroll.scrollTo(0, (focus.fractionY * page.height - focus.screenY).toInt())
-                    } else {
-                        pageHScroll.scrollTo(0, 0)
-                        pageScroll.scrollTo(0, 0)
-                    }
-                }
-            }
+            onUi { if (token == renderToken && page != null) pageView.sharpen(page.bitmap) }
         }
     }
 
-    private fun updateControls() {
+    private fun updateControls(zoom: Float) {
         val zoomText = if (zoom > 1.05f) " · ${(zoom * 100).toInt()}%" else ""
         pageLabel.text = "Página ${pageIndex + 1} de $count$zoomText"
         setEnabledLook(prevButton, pageIndex > 0)
         setEnabledLook(nextButton, pageIndex < count - 1)
     }
 
-    private fun askPage() {
-        if (count == 0) return
-        val input = EditText(context).apply {
-            inputType = InputType.TYPE_CLASS_NUMBER
-            hint = "1 a $count"
-            setText((pageIndex + 1).toString())
-            selectAll()
-        }
-        val container = FrameLayout(context).apply {
-            setPadding(context.dp(22), context.dp(8), context.dp(22), 0)
-            addView(input)
-        }
-        AlertDialog.Builder(context)
-            .setTitle("Ir para a página")
-            .setView(container)
-            .setNegativeButton("Cancelar", null)
-            .setPositiveButton("Ir") { _, _ -> input.text.toString().toIntOrNull()?.let { goTo(it - 1) } }
-            .show()
-    }
+    private fun local(event: MotionEvent): Pair<Float, Float> = local(event.x, event.y)
 
-    // ---------- zoom e gestos ----------
-
-    /** Ponto da tela (em pixels da área de leitura) e onde ele cai na página, de 0 a 1. */
-    private class Focus(val screenX: Float, val screenY: Float, val fractionX: Float, val fractionY: Float)
-
-    private fun focusAt(screenX: Float, screenY: Float): Focus {
-        val fx = ((pageHScroll.scrollX + screenX) / pageImage.width.coerceAtLeast(1)).coerceIn(0f, 1f)
-        val fy = ((pageScroll.scrollY + screenY) / pageImage.height.coerceAtLeast(1)).coerceIn(0f, 1f)
-        return Focus(screenX, screenY, fx, fy)
-    }
-
-    private fun setZoom(newZoom: Float, focus: Focus) {
-        val clamped = newZoom.coerceIn(1f, MAX_ZOOM)
-        if (abs(clamped - zoom) < 0.05f) {
-            pageImage.scaleX = 1f
-            pageImage.scaleY = 1f
-            return
-        }
-        zoom = clamped
-        showPage(pageIndex, focus)
-    }
-
-    /** Converte coordenadas da janela para coordenadas visíveis da área de leitura. */
-    private fun toPageCoords(windowX: Float, windowY: Float): Pair<Float, Float> {
+    private fun local(windowX: Float, windowY: Float): Pair<Float, Float> {
         val location = IntArray(2)
-        pageScroll.getLocationInWindow(location)
+        pageView.getLocationInWindow(location)
         return Pair(windowX - location[0], windowY - location[1])
     }
 
-    /** Recebe os eventos de toque da janela inteira, antes das ScrollViews. */
+    /** Todos os toques na página são tratados aqui: zoom, arrastar e toque duplo. */
     override fun dispatchTouch(event: MotionEvent): Boolean? {
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-            val (x, y) = toPageCoords(event.x, event.y)
-            touchInPage = x >= 0 && y >= 0 && x < pageScroll.width && y < pageScroll.height
+            val (x, y) = local(event)
+            touchInPage = x >= 0 && y >= 0 && x < pageView.width && y < pageView.height
             pinching = false
         }
         if (!touchInPage || count == 0) return null
         gestures.scale.onTouchEvent(event)
-        gestures.tap.onTouchEvent(event)
-        if (gestures.scale.isInProgress && !pinching) {
-            // Durante a pinça a rolagem fica parada: cancela o gesto que as ScrollViews viram.
-            pinching = true
-            val cancel = MotionEvent.obtain(event).apply { action = MotionEvent.ACTION_CANCEL }
-            context.window.superDispatchTouchEvent(cancel)
-            cancel.recycle()
+        if (gestures.scale.isInProgress) pinching = true
+        if (!pinching) gestures.tap.onTouchEvent(event)
+        if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
+            if (pinching) sharpen()
+            pinching = false
         }
-        if (pinching) {
-            if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) pinching = false
-            return true
-        }
-        return null
+        return true
     }
 
     private inner class Gestures {
-        private var pinchScale = 1f
-        private var pinchFocusX = 0f
-        private var pinchFocusY = 0f
-        private val minFlingVelocity = context.dp(500)
-        private val minFlingDistance = context.dp(60)
-
         val scale = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
-            override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
-                pinchScale = 1f
-                val (x, y) = toPageCoords(detector.focusX, detector.focusY)
-                pinchFocusX = x
-                pinchFocusY = y
-                // Prévia instantânea: escala a imagem atual em volta do ponto da pinça.
-                pageImage.pivotX = pageHScroll.scrollX + x
-                pageImage.pivotY = pageScroll.scrollY + y
-                return true
-            }
-
             override fun onScale(detector: ScaleGestureDetector): Boolean {
-                pinchScale = (pinchScale * detector.scaleFactor).coerceIn(1f / zoom, MAX_ZOOM / zoom)
-                pageImage.scaleX = pinchScale
-                pageImage.scaleY = pinchScale
+                val (x, y) = local(detector.focusX, detector.focusY)
+                pageView.zoomTo(pageView.zoom * detector.scaleFactor, x, y)
                 return true
-            }
-
-            override fun onScaleEnd(detector: ScaleGestureDetector) {
-                setZoom(zoom * pinchScale, focusAt(pinchFocusX, pinchFocusY))
             }
         })
 
         val tap = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onDoubleTap(e: MotionEvent): Boolean {
-                val (x, y) = toPageCoords(e.x, e.y)
-                setZoom(if (zoom > 1.05f) 1f else DOUBLE_TAP_ZOOM, focusAt(x, y))
+            override fun onDown(e: MotionEvent) = true
+
+            override fun onScroll(e1: MotionEvent?, e2: MotionEvent, distanceX: Float, distanceY: Float): Boolean {
+                pageView.panBy(distanceX, distanceY)
                 return true
             }
 
             override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
-                val start = e1 ?: return false
-                if (zoom > 1.05f || scale.isInProgress) return false
-                val dx = e2.x - start.x
-                val dy = e2.y - start.y
-                if (abs(dx) < minFlingDistance || abs(dx) < abs(dy) * 1.5f || abs(velocityX) < minFlingVelocity) return false
-                goTo(if (dx < 0) pageIndex + 1 else pageIndex - 1)
+                pageView.fling(velocityX, velocityY)
+                return true
+            }
+
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                val (x, y) = local(e)
+                when (PageTurn.direction(x, pageView.width.toFloat())) {
+                    1 -> goTo(pageIndex + 1)
+                    -1 -> goTo(pageIndex - 1)
+                    else -> {
+                        pageView.zoomTo(if (pageView.zoom > 1.05f) 1f else DOUBLE_TAP_ZOOM, x, y)
+                        sharpen()
+                        if (pageView.zoom <= 1.01f) updateControls(1f)
+                    }
+                }
                 return true
             }
         })
     }
 
     companion object {
-        private const val MAX_ZOOM = 3f
         private const val DOUBLE_TAP_ZOOM = 2f
 
-        fun pdf(host: ReaderHost) = PageViewer(host, { item -> PdfSource(host.activity, Uri.parse(item.uri)) }, "pdf")
+        private fun create(host: ReaderHost, kind: String, open: (LibraryItem) -> PageSource): BookViewer =
+            if (ReadingPrefs.paged(host.activity)) PageViewer(host, open, kind) else PageScrollViewer(host, open, kind)
+
+        fun pdf(host: ReaderHost) = create(host, "pdf") { item -> PdfSource(host.activity, Uri.parse(item.uri)) }
 
         /** CBZ, ou CBR (ZIP disfarçado ou RAR de verdade, este pelo motor EraComic). */
-        fun comic(host: ReaderHost) = PageViewer(host, { item -> BookFiles.comicSource(host.activity, item) }, "cbz")
+        fun comic(host: ReaderHost) = create(host, "cbz") { item -> BookFiles.comicSource(host.activity, item) }
 
         /** DJVU pelo motor EraDjVu. */
-        fun djvu(host: ReaderHost) = PageViewer(host, { item -> BookFiles.djvuSource(host.activity, item) }, "djvu")
+        fun djvu(host: ReaderHost) = create(host, "djvu") { item -> BookFiles.djvuSource(host.activity, item) }
+    }
+}
+
+/** Abre a fonte de páginas na thread de fundo e devolve (fonte, total) na thread principal. */
+internal fun BookViewer.openPageSource(
+    host: ReaderHost,
+    openSource: (LibraryItem) -> PageSource,
+    item: LibraryItem,
+    kind: String,
+    done: (Pair<PageSource, Int>) -> Unit
+) {
+    val error = when (kind) {
+        "pdf" -> "Não foi possível abrir este PDF. Ele pode estar protegido por senha, danificado ou indisponível."
+        "djvu" -> "Não foi possível abrir este DJVU. O arquivo pode estar danificado."
+        else -> "Não foi possível abrir este quadrinho. O arquivo pode estar danificado ou sem imagens."
+    }
+    host.worker.execute {
+        val opened = try {
+            openSource(item)
+        } catch (e: SecurityException) {
+            host.activity.runOnUiThread { if (!host.closed) host.fail("Sem permissão para abrir este arquivo. Remova-o e importe de novo.") }
+            return@execute
+        } catch (e: Exception) {
+            host.activity.runOnUiThread { if (!host.closed) host.fail(error) }
+            return@execute
+        } catch (e: OutOfMemoryError) {
+            host.activity.runOnUiThread { if (!host.closed) host.fail(error) }
+            return@execute
+        }
+        val total = opened.pageCount
+        host.activity.runOnUiThread {
+            if (host.closed) {
+                host.worker.execute { opened.close() }
+            } else if (total == 0) {
+                host.fail("Este documento não tem páginas.")
+            } else {
+                done(opened to total)
+            }
+        }
+    }
+}
+
+/** Diálogo "Ir para a página" (recebe e devolve índice começando em 0). */
+internal fun askPage(context: android.app.Activity, count: Int, current: Int, go: (Int) -> Unit) {
+    if (count == 0) return
+    val input = EditText(context).apply {
+        inputType = InputType.TYPE_CLASS_NUMBER
+        hint = "1 a $count"
+        setText((current + 1).toString())
+        selectAll()
+    }
+    val container = FrameLayout(context).apply {
+        setPadding(context.dp(22), context.dp(8), context.dp(22), 0)
+        addView(input)
+    }
+    AlertDialog.Builder(context)
+        .setTitle("Ir para a página")
+        .setView(container)
+        .setNegativeButton("Cancelar", null)
+        .setPositiveButton("Ir") { _, _ -> input.text.toString().toIntOrNull()?.let { go(it - 1) } }
+        .show()
+}
+
+/**
+ * Modo rolagem contínua para PDF, DJVU e quadrinhos: as páginas, na largura da tela, uma embaixo
+ * da outra. Cada página é desenhada quando aparece e guardada num cache limitado.
+ */
+class PageScrollViewer(host: ReaderHost, private val openSource: (LibraryItem) -> PageSource, private val kind: String) : BookViewer(host) {
+    private var source: PageSource? = null // só tocado na thread de fundo
+    private var count = 0
+    private val aspects = HashMap<Int, Float>()
+    private var defaultAspect = 1.414f
+    private val requested = HashSet<Int>()
+    @Volatile
+    private var visibleRange = 0..0
+    private val bitmaps = object : android.util.LruCache<Int, Bitmap>(
+        (Runtime.getRuntime().maxMemory() / 6).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+    ) {
+        override fun sizeOf(key: Int, value: Bitmap) = value.byteCount
+    }
+
+    private val adapter = object : android.widget.BaseAdapter() {
+        override fun getCount(): Int = this@PageScrollViewer.count
+        override fun getItem(position: Int): Any = position
+        override fun getItemId(position: Int): Long = position.toLong()
+
+        override fun getView(position: Int, convertView: android.view.View?, parent: android.view.ViewGroup): android.view.View {
+            val view = convertView as? ImageView ?: ImageView(context).apply {
+                scaleType = ImageView.ScaleType.FIT_XY
+                setBackgroundColor(Color.WHITE)
+            }
+            val width = parent.width.takeIf { it > 0 } ?: context.resources.displayMetrics.widthPixels
+            val height = (width * (aspects[position] ?: defaultAspect)).toInt().coerceAtLeast(1)
+            view.layoutParams = android.widget.AbsListView.LayoutParams(width, height)
+            val bitmap = bitmaps.get(position)
+            view.setImageBitmap(bitmap)
+            if (bitmap == null) request(position, width)
+            return view
+        }
+    }
+
+    private val list = android.widget.ListView(context).apply {
+        adapter = this@PageScrollViewer.adapter
+        divider = android.graphics.drawable.ColorDrawable(Palette.paper)
+        dividerHeight = context.dp(8)
+        setBackgroundColor(Palette.paper)
+        selector = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
+        setOnScrollListener(object : android.widget.AbsListView.OnScrollListener {
+            override fun onScrollStateChanged(view: android.widget.AbsListView, state: Int) = Unit
+            override fun onScroll(view: android.widget.AbsListView, first: Int, visible: Int, total: Int) {
+                visibleRange = (first - 1)..(first + visible + 1)
+                if (count > 0) {
+                    updateLabel()
+                    host.onPositionChanged()
+                }
+            }
+        })
+    }
+    private val pageLabel = context.label("Abrindo…", 13f, Palette.muted).apply {
+        gravity = Gravity.CENTER
+        minHeight = context.dp(48)
+        contentDescription = "Ir para a página"
+        setOnClickListener { askPage(host.activity, count, position()) { goTo(it) } }
+    }
+
+    override val body = list
+    override val footer = footerBar().apply { addView(pageLabel, LinearLayout.LayoutParams(0, -2, 1f)) }
+    override val loaded get() = count > 0
+    override val annotatesPages = true
+
+    override fun open(item: LibraryItem, start: Int) {
+        openPageSource(host, openSource, item, kind) { (opened, total) ->
+            source = opened
+            host.worker.execute {
+                val first = try {
+                    opened.aspect(0)
+                } catch (e: Exception) {
+                    1.414f
+                }
+                onUi {
+                    defaultAspect = first
+                    count = total
+                    adapter.notifyDataSetChanged()
+                    goTo(start)
+                }
+            }
+        }
+    }
+
+    private fun request(index: Int, width: Int) {
+        if (!requested.add(index)) return
+        host.worker.execute {
+            // A página já saiu da tela enquanto esperava: não gasta tempo desenhando.
+            if (index !in visibleRange) {
+                onUi { requested.remove(index) }
+                return@execute
+            }
+            val result = try {
+                val opened = source ?: return@execute
+                val aspect = opened.aspect(index)
+                aspect to opened.render(index, width)
+            } catch (e: Exception) {
+                null
+            } catch (e: OutOfMemoryError) {
+                null
+            }
+            onUi {
+                requested.remove(index)
+                if (result == null) return@onUi
+                val changed = aspects[index] != result.first
+                aspects[index] = result.first
+                result.second?.let { bitmaps.put(index, it.bitmap) }
+                if (changed || index in list.firstVisiblePosition..list.lastVisiblePosition) adapter.notifyDataSetChanged()
+            }
+        }
+    }
+
+    override fun position(): Int {
+        if (list.childCount == 0) return list.firstVisiblePosition
+        // A página que ocupa o meio da tela é a "atual".
+        val middle = list.height / 2
+        for (i in 0 until list.childCount) {
+            val child = list.getChildAt(i)
+            if (child.bottom >= middle) return (list.firstVisiblePosition + i).coerceIn(0, (count - 1).coerceAtLeast(0))
+        }
+        return list.lastVisiblePosition
+    }
+
+    override fun pageCount() = count
+    override fun goTo(position: Int) {
+        if (count == 0) return
+        list.setSelectionFromTop(position.coerceIn(0, count - 1), 0)
+        list.post {
+            updateLabel()
+            host.onPositionChanged()
+        }
+    }
+
+    override fun atEnd() = count > 0 && !list.canScrollVertically(1)
+    override fun describe(position: Int) = "Pág. ${position + 1}"
+    override fun menuActions() = listOf("Ir para a página…" to { askPage(context, count, position()) { goTo(it) } })
+
+    private fun updateLabel() {
+        pageLabel.text = "Página ${position() + 1} de $count"
+    }
+
+    override fun close() {
+        host.worker.execute {
+            source?.close()
+            source = null
+        }
     }
 }

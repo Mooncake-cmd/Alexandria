@@ -1,6 +1,6 @@
 # Alexandria — projeto Android
 
-**Versão:** 0.5.0  
+**Versão:** 0.6.0  
 **Pacote:** `com.alexandria.reader`  
 **Plataforma:** Android 6.0 ou superior (API 23+)  
 **Idioma da interface:** Português (Brasil)
@@ -8,6 +8,7 @@
 ## O que esta versão contém
 
 - Aplicativo Android nativo em Kotlin, sem dependências externas no APK.
+- Abas com ícones: livro (Biblioteca), caneta pena (Notas), ábaco (Estatísticas) e bússola (Ajustes).
 - Ícone próprio (farol sobre livros), adaptativo e com versão monocromática para ícones temáticos (Android 13+).
 
 ### Biblioteca
@@ -28,10 +29,18 @@
 | DJVU | motor **EraDjVu** (DjVuLibre) | os mesmos do PDF |
 | EPUB 2 e 3 | WebView do sistema, capítulo por capítulo | sumário, busca, letra maior/menor, tema escuro |
 | MOBI, AZW, AZW3 | convertido em EPUB pelo motor **EraMOBI** (libmobi) na primeira leitura | os mesmos do EPUB |
-| DOCX | texto com títulos, listas, negrito, itálico e sublinhado | busca, letra, tema escuro |
+| DOCX | texto com títulos, listas, negrito, itálico, sublinhado e **imagens** | busca, letra, tema escuro |
 | TXT | blocos numa lista (fluido mesmo em arquivos grandes) | UTF-8/UTF-16/Windows-1252, busca, letra, tema escuro |
 
 Em todos os formatos:
+
+- **Modo de leitura** (menu ⋮), lembrado entre as leituras:
+  - **Páginas**: uma página (ou uma tela de texto) por vez. **Toque duas vezes na borda direita** para avançar e na
+    **esquerda** para voltar; deslizar não vira a página. Em PDF, DJVU e quadrinhos a página aparece **inteira** na
+    tela; toque duplo no meio ou pinça dão zoom, e com zoom o dedo arrasta a página.
+  - **Rolagem contínua**: o texto corre livremente; em PDF, DJVU e quadrinhos as páginas ficam uma embaixo da outra.
+- **Régua de leitura** (menu ⋮): faixa clara sobre a linha lida, com o resto levemente escurecido; arraste pela alça
+  dourada à direita. Liga/desliga e posição são lembradas.
 
 - **Progresso salvo** por documento.
 - **Anotações**: selecione um trecho e toque em "Anotar" (EPUB, DOCX, TXT); em PDF e CBZ, use 📝 → "Anotar esta página". A lista de anotações do livro leva direto ao trecho.
@@ -69,17 +78,20 @@ Os recursos da 0.4.0 vieram da Biblioteca do site RPG Hardcore (HTML/JavaScript)
 - Arquivos TXT acima de 8 MB são exibidos só até esse limite.
 - EPUB, CBZ e DOCX são copiados para o cache do app na primeira leitura (acesso aleatório ao ZIP). Se o Android limpar o cache, a cópia é refeita.
 - Os gestos do PDF/CBZ e a exibição do EPUB no WebView **só podem ser validados num aparelho real**: o simulador dos testes não renderiza PDF, imagens nem páginas web.
+- Zoom só existe no modo páginas (na rolagem contínua, as páginas ficam na largura da tela).
 - Os motores foram testados de verdade, mas no Linux (veja Testes). Rodar no Android depende de o aparelho permitir executar os programas instalados com o app, o que o Android permite para arquivos `lib*.so` extraídos; ainda assim, **teste num aparelho real** antes de distribuir.
 
 ## Testes
 
-Os testes rodam na JVM, sem emulador (66 no total):
+Os testes rodam na JVM, sem emulador (76 no total):
 
 - Lógica pura: `FormatsTest`, `TextDecodingTest`, `TextChunkerTest`, `ReadingStatusTest`, `BookHelpersTest` (ordem natural, busca sem acentos, caminhos em ZIP, preparo do HTML do EPUB, prateleiras, blocos do DOCX).
 - `ZipFormatsTest` (Robolectric): EPUB 2 e 3 (capítulos, sumário, capa), DOCX (títulos com estilos em português, listas, estilos, tabelas, caixas de texto), CBZ.
 - `LibraryDatabaseTest` (Robolectric): migrações 0.2 → 0.4 e 0.3 → 0.4 sem perda de dados, anotações, Estante e prateleiras.
 - `TextReaderTest`, `ReaderFormatsTest` (Robolectric): abre TXT, DOCX e EPUB no leitor, salva e restaura posição, busca, CBR em RAR com erro claro.
 - `MainActivityTest` (Robolectric): biblioteca com prateleiras e Estante, abas Notas, Estatísticas e Ajustes.
+- `ReadingModesTest`, `PageTurnTest`: toque duplo nas bordas vira a página (DJVU pelo motor real e TXT), no meio dá
+  zoom; rolagem contínua lista todas as páginas; página inteira na tela; régua de leitura.
 - `OreEnginesTest` e parte do `ReaderFormatsTest`: os **motores de verdade**, compilados para Linux a partir das mesmas
   fontes (`app/src/test/native/build_host_engines.py`), conversam com o app pelo mesmo protocolo: MOBI vira EPUB legível
   (inclusive com compressão HUFF/CDIC), DJVU é desenhado com as cores certas, páginas de um CBR RAR5 saem idênticas às

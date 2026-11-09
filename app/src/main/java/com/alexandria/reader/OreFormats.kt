@@ -84,6 +84,12 @@ class RarComicSource(
         return target
     }
 
+    override fun aspect(index: Int): Float {
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeFile(extract(index).path, bounds)
+        return if (bounds.outWidth > 0) bounds.outHeight.toFloat() / bounds.outWidth else 1.5f
+    }
+
     override fun render(index: Int, width: Int): RenderedPage? {
         val file = extract(index)
         val bitmap = BookFiles.decodeScaled({ file.inputStream() }, width, PageSource.MAX_PIXELS) ?: return null
@@ -135,6 +141,8 @@ class DjvuSource(private val engine: OreEngine, file: File) : PageSource {
         if (pixels.size != width * height * 4) throw OreException("Tamanho de página inesperado")
         return pixels
     }
+
+    override fun aspect(index: Int): Float = pageSize(index).let { (w, h) -> h / w }
 
     override fun render(index: Int, width: Int): RenderedPage {
         val (pageWidth, pageHeight) = pageSize(index)

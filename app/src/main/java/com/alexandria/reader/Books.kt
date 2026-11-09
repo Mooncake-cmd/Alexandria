@@ -290,7 +290,13 @@ class EpubPackage(
 }
 
 /** Parágrafo de um DOCX já convertido para texto, com os trechos em negrito/itálico/sublinhado. */
-data class DocxParagraph(val text: String, val kind: Kind, val styles: List<StyleRange>) {
+data class DocxParagraph(
+    val text: String,
+    val kind: Kind,
+    val styles: List<StyleRange>,
+    /** Imagens do parágrafo, como caminhos dentro do ZIP (ex.: "word/media/image1.png"). */
+    val images: List<String> = emptyList()
+) {
     enum class Kind { TITLE, HEADING1, HEADING2, HEADING3, LIST_ITEM, NORMAL }
 
     data class StyleRange(val start: Int, val end: Int, val bold: Boolean, val italic: Boolean, val underline: Boolean)
@@ -303,6 +309,8 @@ data class DocxParagraph(val text: String, val kind: Kind, val styles: List<Styl
 object DocxReader {
     private const val W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
+    private const val R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+
     fun read(zip: ZipFile): List<DocxParagraph> {
         val styles = zip.getEntry("word/styles.xml")?.let { entry ->
             try {
@@ -311,8 +319,32 @@ object DocxReader {
                 emptyMap()
             }
         } ?: emptyMap()
+        val relations = zip.getEntry("word/_rels/document.xml.rels")?.let { entry ->
+            try {
+                zip.getInputStream(entry).use { relationships(it, "word") }
+            } catch (e: Exception) {
+                emptyMap()
+            }
+        } ?: emptyMap()
         val document = zip.getEntry("word/document.xml") ?: throw IllegalArgumentException("DOCX sem word/document.xml")
-        return zip.getInputStream(document).use { paragraphs(it, styles) }
+        return zip.getInputStream(document).use { paragraphs(it, styles, relations) }
+            .map { p -> p.copy(images = p.images.filter { zip.getEntry(it) != null }) }
+            .filter { it.text.isNotBlank() || it.images.isNotEmpty() }
+    }
+
+    /** Id da relação → caminho no ZIP (as imagens ficam em word/media e são citadas por id). */
+    internal fun relationships(input: InputStream, baseDir: String): Map<String, String> {
+        val parser = newParser(input)
+        val result = HashMap<String, String>()
+        while (parser.next() != XmlPullParser.END_DOCUMENT) {
+            if (parser.eventType == XmlPullParser.START_TAG && parser.name == "Relationship") {
+                val id = parser.getAttributeValue(null, "Id") ?: continue
+                val target = parser.getAttributeValue(null, "Target") ?: continue
+                if (parser.getAttributeValue(null, "TargetMode") == "External") continue
+                result[id] = ZipPaths.resolve(baseDir, target)
+            }
+        }
+        return result
     }
 
     /**
@@ -344,7 +376,12 @@ object DocxReader {
         return result
     }
 
-    internal fun paragraphs(input: InputStream, headingLevels: Map<String, Int> = emptyMap()): List<DocxParagraph> {
+    internal fun paragraphs(
+        input: InputStream,
+        headingLevels: Map<String, Int> = emptyMap(),
+        relations: Map<String, String> = emptyMap()
+    ): List<DocxParagraph> {
+        val images = mutableListOf<String>()
         val parser = newParser(input)
         val result = mutableListOf<DocxParagraph>()
         val text = StringBuilder()
@@ -366,12 +403,19 @@ object DocxReader {
         }
 
         while (parser.next() != XmlPullParser.END_DOCUMENT) {
+            if (parser.eventType == XmlPullParser.START_TAG && paragraphDepth > 0 && (parser.name == "blip" || parser.name == "imagedata")) {
+                // Figura do Word (DrawingML "blip" ou VML "imagedata"), citada pelo id da relação.
+                val id = parser.getAttributeValue(R, "embed") ?: parser.getAttributeValue(R, "id")
+                relations[id]?.let { if (it !in images) images += it }
+                continue
+            }
             when (parser.eventType) {
                 XmlPullParser.START_TAG -> if (parser.namespace == W) when (parser.name) {
                     "p" -> {
                         if (paragraphDepth == 0) {
                             text.setLength(0)
                             ranges.clear()
+                            images.clear()
                             level = null
                             list = false
                         } else if (text.isNotEmpty() && text.last() != '\n') {
@@ -422,7 +466,9 @@ object DocxReader {
                             list -> DocxParagraph.Kind.LIST_ITEM
                             else -> DocxParagraph.Kind.NORMAL
                         }
-                        if (text.isNotBlank()) result += DocxParagraph(text.toString(), kind, ranges.toList())
+                        if (text.isNotBlank() || images.isNotEmpty()) {
+                            result += DocxParagraph(if (text.isBlank()) "" else text.toString(), kind, ranges.toList(), images.toList())
+                        }
                     }
                 }
             }

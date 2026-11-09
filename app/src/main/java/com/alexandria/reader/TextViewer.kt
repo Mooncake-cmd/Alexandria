@@ -17,6 +17,7 @@ import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import android.widget.AbsListView
 import android.widget.BaseAdapter
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
@@ -28,6 +29,14 @@ import kotlin.math.roundToInt
 
 /** Conteúdo de texto já dividido em blocos para a lista do leitor. */
 class TextContent(val chunks: List<CharSequence>, val truncated: Boolean = false)
+
+/**
+ * Bloco que é uma imagem (figura de um DOCX). Como texto ele é vazio, então busca e seleção o
+ * ignoram; a lista mostra a imagem, decodificada sob demanda a partir de [file].
+ */
+class ImageChunk(val file: java.io.File) : CharSequence by "" {
+    override fun toString() = ""
+}
 
 /**
  * Visualizador de texto corrido (TXT e DOCX). O texto fica em blocos numa lista, que mede e
@@ -93,7 +102,7 @@ class TextViewer(host: ReaderHost, private val load: (LibraryItem) -> TextConten
             onUi {
                 when {
                     content == null -> host.fail("Não foi possível abrir este documento.")
-                    content.chunks.isEmpty() -> host.fail("Este documento não tem texto.")
+                    content.chunks.isEmpty() -> host.fail("Este documento está vazio.")
                     else -> {
                         chunks = content.chunks
                         adapter.notifyDataSetChanged()
@@ -115,14 +124,35 @@ class TextViewer(host: ReaderHost, private val load: (LibraryItem) -> TextConten
 
     override fun menuActions() = listOf("Tema claro/escuro" to { toggleNight() })
 
+    // ---------- modo páginas ----------
+
+    private val paged = ReadingPrefs.paged(context)
+    private val edgeTaps = EdgeTaps(context, list, { paged }) { turnPage(it) }
+
+    override fun dispatchTouch(event: android.view.MotionEvent): Boolean? = if (paged && ready) edgeTaps.dispatch(event) else null
+
+    /** "Vira a página": rola uma tela, deixando uma linha e meia da tela anterior como contexto. */
+    private fun turnPage(direction: Int) {
+        val visible = list.height - list.paddingTop - list.paddingBottom
+        val line = (textSizeSp * context.resources.displayMetrics.scaledDensity * 1.35f).toInt()
+        val step = PageTurn.scrollStep(visible, (line * 1.5f).toInt())
+        if (!list.canScrollVertically(direction)) return
+        scrollByAny(step * direction)
+        flash(list)
+    }
+
     // ---------- aparência ----------
 
     private inner class ChunkAdapter : BaseAdapter() {
         override fun getCount() = chunks.size
         override fun getItem(position: Int) = chunks[position]
         override fun getItemId(position: Int) = position.toLong()
+        override fun getViewTypeCount() = 2
+        override fun getItemViewType(position: Int) = if (chunks[position] is ImageChunk) 1 else 0
 
         override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+            val chunk = chunks[position]
+            if (chunk is ImageChunk) return imageView(chunk, convertView as? ImageView)
             val view = convertView as? TextView ?: TextView(context).apply {
                 typeface = Typeface.SERIF
                 setLineSpacing(0f, 1.35f)
@@ -133,13 +163,73 @@ class TextViewer(host: ReaderHost, private val load: (LibraryItem) -> TextConten
             view.setTextColor(if (night) ReadingPrefs.NIGHT_TEXT else Palette.ink)
             val mark = highlight
             view.text = if (mark != null && mark.first == position) {
-                SpannableString(chunks[position]).apply {
+                SpannableString(chunk).apply {
                     setSpan(BackgroundColorSpan(HIGHLIGHT), mark.second, mark.third, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                 }
             } else {
-                chunks[position]
+                chunk
             }
             return view
+        }
+    }
+
+    // ---------- imagens (DOCX) ----------
+
+    /** Bitmaps decodificados recentemente, limitados a ~1/8 da memória do app. */
+    private val images = object : android.util.LruCache<String, android.graphics.Bitmap>(
+        (Runtime.getRuntime().maxMemory() / 8).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+    ) {
+        override fun sizeOf(key: String, value: android.graphics.Bitmap) = value.byteCount
+    }
+    private val decoding = mutableSetOf<String>()
+
+    private fun imageView(chunk: ImageChunk, recycled: ImageView?): ImageView {
+        val view = recycled ?: ImageView(context).apply {
+            adjustViewBounds = true
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setPadding(context.dp(12), context.dp(8), context.dp(12), context.dp(8))
+            contentDescription = "Imagem do documento"
+        }
+        val key = chunk.file.path
+        view.tag = key
+        val cached = images.get(key)
+        if (cached != null) {
+            view.minimumHeight = 0
+            view.setImageBitmap(cached)
+        } else {
+            view.setImageDrawable(null)
+            // Reserva espaço enquanto decodifica, para a rolagem não "pular".
+            view.minimumHeight = context.resources.displayMetrics.heightPixels / 2
+            decode(chunk)
+        }
+        return view
+    }
+
+    private fun decode(chunk: ImageChunk) {
+        val key = chunk.file.path
+        if (!decoding.add(key)) return
+        val width = context.resources.displayMetrics.widthPixels
+        host.worker.execute {
+            val bitmap = try {
+                BookFiles.decodeScaled({ chunk.file.inputStream() }, width, PageSource.MAX_PIXELS / 2)
+            } catch (e: Exception) {
+                null
+            } catch (e: OutOfMemoryError) {
+                null
+            }
+            onUi {
+                decoding.remove(key)
+                if (bitmap != null) {
+                    images.put(key, bitmap)
+                    for (i in 0 until list.childCount) {
+                        val child = list.getChildAt(i) as? ImageView ?: continue
+                        if (child.tag == key) {
+                            child.minimumHeight = 0
+                            child.setImageBitmap(bitmap)
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -205,13 +295,13 @@ class TextViewer(host: ReaderHost, private val load: (LibraryItem) -> TextConten
      * Posiciona o bloco [index] no topo; quando o layout termina (e a altura dele é conhecida),
      * rola mais [extra] pixels dentro dele.
      */
-    private fun scrollToChunk(index: Int, extra: (TextView) -> Int) {
+    private fun scrollToChunk(index: Int, extra: (View) -> Int) {
         // O deslocamento já é medido a partir do padding do topo.
         list.setSelectionFromTop(index, 0)
         list.viewTreeObserver.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
             private var layouts = 0
             override fun onGlobalLayout() {
-                val child = list.getChildAt(index - list.firstVisiblePosition) as? TextView
+                val child = list.getChildAt(index - list.firstVisiblePosition)
                 val placed = child != null && index >= list.firstVisiblePosition
                 if (!placed && ++layouts < MAX_RESTORE_LAYOUTS) return
                 list.viewTreeObserver.removeOnGlobalLayoutListener(this)
@@ -226,6 +316,18 @@ class TextViewer(host: ReaderHost, private val load: (LibraryItem) -> TextConten
             }
         })
         list.requestLayout()
+    }
+
+    /** Rola para baixo (positivo) ou para cima (negativo), em passos que o ListView aceita. */
+    private fun scrollByAny(pixels: Int) {
+        val step = (list.height - list.paddingTop - list.paddingBottom - 2).coerceAtLeast(1)
+        var remaining = pixels
+        val direction = if (pixels > 0) 1 else -1
+        while (remaining != 0 && list.canScrollVertically(direction)) {
+            val delta = if (direction > 0) minOf(step, remaining) else maxOf(-step, remaining)
+            list.scrollListBy(delta)
+            remaining -= delta
+        }
     }
 
     /** O ListView limita cada rolagem à própria altura; blocos maiores que a tela pedem vários passos. */
@@ -280,7 +382,7 @@ class TextViewer(host: ReaderHost, private val load: (LibraryItem) -> TextConten
         highlight = Triple(hit.chunk, hit.offset, (hit.offset + hit.length).coerceAtMost(chunks[hit.chunk].length))
         adapter.notifyDataSetChanged()
         scrollToChunk(hit.chunk) { child ->
-            val layout = child.layout ?: return@scrollToChunk 0
+            val layout = (child as? TextView)?.layout ?: return@scrollToChunk 0
             // Deixa umas linhas de contexto acima do trecho encontrado.
             (layout.getLineTop(layout.getLineForOffset(hit.offset)) - context.dp(48)).coerceAtLeast(0)
         }
@@ -307,8 +409,11 @@ class TextViewer(host: ReaderHost, private val load: (LibraryItem) -> TextConten
         fun txt(host: ReaderHost) = TextViewer(host) { item -> readTxt(host, Uri.parse(item.uri)) }
 
         fun docx(host: ReaderHost) = TextViewer(host) { item ->
-            val paragraphs = ZipFile(BookFiles.localCopy(host.activity, item)).use { DocxReader.read(it) }
-            TextContent(DocxLayout.group(paragraphs).map { DocxLayout.styled(it) })
+            val mediaDir = BookFiles.docxMediaDir(host.activity, item.id)
+            val chunks = ZipFile(BookFiles.localCopy(host.activity, item)).use { zip ->
+                DocxLayout.chunks(DocxReader.read(zip)) { path -> BookFiles.extractEntry(zip, path, mediaDir) }
+            }
+            TextContent(chunks)
         }
 
         /** Roda na thread de fundo. */
@@ -357,6 +462,28 @@ object DocxLayout {
         }
         if (current.isNotEmpty()) groups += current
         return groups
+    }
+
+    /**
+     * Blocos prontos para a lista: texto formatado agrupado e cada imagem num bloco próprio, na
+     * ordem do documento. [extract] grava a imagem (caminho no ZIP) num arquivo e o devolve.
+     */
+    fun chunks(paragraphs: List<DocxParagraph>, extract: (String) -> java.io.File?): List<CharSequence> {
+        val result = mutableListOf<CharSequence>()
+        val text = mutableListOf<DocxParagraph>()
+        fun flush() {
+            if (text.isNotEmpty()) group(text).forEach { result += styled(it) }
+            text.clear()
+        }
+        for (paragraph in paragraphs) {
+            if (paragraph.text.isNotBlank()) text += paragraph.copy(images = emptyList())
+            if (paragraph.images.isNotEmpty()) {
+                flush()
+                paragraph.images.mapNotNull(extract).forEach { result += ImageChunk(it) }
+            }
+        }
+        flush()
+        return result
     }
 
     /** Texto de um bloco, sem estilos: o mesmo que [styled] mostra. */

@@ -43,6 +43,8 @@ class EpubViewer(
     private var pendingFind: Pair<String, Int>? = null
     private var pendingAnchor: String? = null
     private var loadToken = 0
+    @Volatile
+    private var cssSnapshot = ""
     private var chapterReady = false
     private var textSizeSp = ReadingPrefs.textSize(context)
     private var night = ReadingPrefs.night(context)
@@ -145,6 +147,30 @@ class EpubViewer(
         return "Cap. ${index + 1} · ${position / 100}%"
     }
 
+    // ---------- modo páginas ----------
+
+    private val paged = ReadingPrefs.paged(context)
+    private val edgeTaps = EdgeTaps(context, web, { paged }) { turnPage(it) }
+
+    override fun dispatchTouch(event: android.view.MotionEvent): Boolean? = if (paged && book != null) edgeTaps.dispatch(event) else null
+
+    /** Rola uma tela; no fim (ou começo) do capítulo, passa para o próximo (ou o anterior, já no fim). */
+    private fun turnPage(direction: Int) {
+        if (!chapterReady) return
+        val line = (textSizeSp * context.resources.displayMetrics.scaledDensity * 1.55f).toInt()
+        val step = PageTurn.scrollStep(web.height, (line * 1.5f).toInt())
+        when {
+            web.canScrollVertically(direction) -> {
+                val target = (web.scrollY + step * direction).coerceIn(0, web.scrollableHeight())
+                web.scrollTo(0, target)
+            }
+            direction > 0 && chapter < pageCount() - 1 -> openChapter(chapter + 1, 0.0)
+            direction < 0 && chapter > 0 -> openChapter(chapter - 1, 1.0)
+            else -> return
+        }
+        flash(web)
+    }
+
     override fun menuActions() = listOf(
         "Sumário" to { showContents() },
         "Letra menor" to { changeTextSize(-1f) },
@@ -171,6 +197,7 @@ class EpubViewer(
         updateLabel()
         val path = chapters[index]
         val css = readerCss()
+        cssSnapshot = css
         host.worker.execute {
             val html = try {
                 file.getEntry(path)?.let { entry -> file.getInputStream(entry).use { prepareHtml(it.readBytes(), css) } }
@@ -346,8 +373,15 @@ class EpubViewer(
     // ---------- conteúdo servido de dentro do ZIP ----------
 
     private inner class Client : WebViewClient() {
-        override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse =
-            serve(request.url.toString())
+        // null = o WebView carrega sozinho. Isso vale para o próprio capítulo, que entra como
+        // "data:" pelo loadDataWithBaseURL: recusar esse endereço deixava a página em branco
+        // com "net::ERR_HTTP_RESPONSE_CODE_FAILURE".
+        override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
+            when (route(request.url.toString())) {
+                Route.PASS -> null
+                Route.BOOK -> serve(request.url.toString())
+                Route.BLOCK -> notFound()
+            }
 
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             val url = request.url.toString()
@@ -363,18 +397,21 @@ class EpubViewer(
         }
     }
 
-    /** Imagens, CSS e fontes do capítulo. Roda numa thread do WebView; nada sai para fora do livro. */
+    /** Arquivos de dentro do livro (imagens, CSS, fontes). Roda numa thread do WebView. */
     private fun serve(url: String): WebResourceResponse {
-        val file = zip
-        if (!url.startsWith(BASE) || file == null) return notFound()
+        val file = zip ?: return notFound()
         val path = ZipPaths.resolve("", url.removePrefix(BASE))
         val entry = file.getEntry(path) ?: return notFound()
         val type = mimeType(path)
-        // Um capítulo só entra por openChapter, já preparado; HTML pedido por fora (ex.: iframe) é recusado.
-        if (type == "text/html" || type == "application/xhtml+xml") return notFound()
         return try {
+            val stream = if (type == "text/html" || type == "application/xhtml+xml") {
+                // HTML do livro pedido diretamente (ex.: iframe): sai já com a política de segurança.
+                ByteArrayInputStream(prepareHtml(file.getInputStream(entry).use { it.readBytes() }, cssSnapshot).toByteArray())
+            } else {
+                file.getInputStream(entry)
+            }
             val charset = if (type.startsWith("text/") || type.endsWith("xml")) "utf-8" else null
-            WebResourceResponse(type, charset, 200, "OK", mapOf("Cache-Control" to "no-store"), file.getInputStream(entry))
+            WebResourceResponse(type, charset, 200, "OK", mapOf("Cache-Control" to "no-store"), stream)
         } catch (e: Exception) {
             notFound()
         }
@@ -389,8 +426,20 @@ class EpubViewer(
 
     private fun notFound() = WebResourceResponse("text/plain", "utf-8", 404, "Not Found", emptyMap(), ByteArrayInputStream(ByteArray(0)))
 
+    enum class Route { PASS, BOOK, BLOCK }
+
     companion object {
         private const val BASE = "https://book.alexandria/"
+
+        /**
+         * O que fazer com um pedido do WebView: endereços sem rede (data:, about:, blob:) seguem
+         * normalmente; os do livro são servidos de dentro do ZIP; qualquer outro é recusado.
+         */
+        fun route(url: String): Route = when {
+            url.startsWith(BASE) -> Route.BOOK
+            url.startsWith("data:") || url.startsWith("about:") || url.startsWith("blob:") -> Route.PASS
+            else -> Route.BLOCK
+        }
 
         fun mimeType(path: String): String = when (path.substringAfterLast('.', "").lowercase()) {
             "xhtml", "xht" -> "application/xhtml+xml"

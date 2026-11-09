@@ -40,6 +40,7 @@ class ReaderActivity : Activity(), ReaderHost {
     private lateinit var searchInput: EditText
     private lateinit var searchInfo: TextView
     private lateinit var finishBanner: LinearLayout
+    private var ruler: ReadingRuler? = null
     private var hits: List<SearchHit> = emptyList()
     private var hitIndex = -1
     private var searchTerm = ""
@@ -98,8 +99,20 @@ class ReaderActivity : Activity(), ReaderHost {
         if (view.loaded) database.updateProgress(item.id, view.position(), view.pageCount())
     }
 
-    override fun dispatchTouchEvent(ev: MotionEvent): Boolean =
-        viewer?.dispatchTouch(ev) ?: super.dispatchTouchEvent(ev)
+    /** O dedo começou na alça da régua: o gesto inteiro é dela, não do livro. */
+    private var rulerGesture = false
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
+            rulerGesture = ruler?.let { r ->
+                val location = IntArray(2)
+                r.getLocationInWindow(location)
+                r.visibility == View.VISIBLE && r.hitsHandle(ev.x - location[0], ev.y - location[1])
+            } ?: false
+        }
+        if (rulerGesture) return super.dispatchTouchEvent(ev)
+        return viewer?.dispatchTouch(ev) ?: super.dispatchTouchEvent(ev)
+    }
 
     // ---------- moldura ----------
 
@@ -143,7 +156,14 @@ class ReaderActivity : Activity(), ReaderHost {
 
         searchBar = buildSearchBar()
         root.addView(searchBar)
-        root.addView(viewer.body, LinearLayout.LayoutParams(-1, 0, 1f))
+        // A régua fica por cima do conteúdo do livro.
+        val bodyFrame = FrameLayout(this)
+        bodyFrame.addView(viewer.body, FrameLayout.LayoutParams(-1, -1))
+        ruler = ReadingRuler(this, ReadingPrefs.rulerY(this)) { ReadingPrefs.setRulerY(this, it) }.apply {
+            visibility = if (ReadingPrefs.ruler(this@ReaderActivity)) View.VISIBLE else View.GONE
+        }
+        bodyFrame.addView(ruler, FrameLayout.LayoutParams(-1, -1))
+        root.addView(bodyFrame, LinearLayout.LayoutParams(-1, 0, 1f))
 
         finishBanner = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -186,6 +206,10 @@ class ReaderActivity : Activity(), ReaderHost {
         val item = current ?: return
         val actions = mutableListOf<Pair<String, () -> Unit>>()
         actions += view.menuActions()
+        val paged = ReadingPrefs.paged(this)
+        actions += (if (paged) "Modo: rolagem contínua" else "Modo: páginas (toque duplo na borda)") to { switchMode(!paged) }
+        val rulerOn = ruler?.visibility == View.VISIBLE
+        actions += (if (rulerOn) "Esconder régua de leitura" else "Mostrar régua de leitura") to { toggleRuler() }
         actions += if (item.finished) {
             "Voltar para \"Lendo agora\"" to { markFinished(false) }
         } else {
@@ -198,6 +222,26 @@ class ReaderActivity : Activity(), ReaderHost {
             true
         }
         popup.show()
+    }
+
+    /** Troca o modo de leitura: salva o ponto e reabre a tela já no modo novo. */
+    private fun switchMode(paged: Boolean) {
+        ReadingPrefs.setPaged(this, paged)
+        Toast.makeText(
+            this,
+            if (paged) "Modo páginas: toque duas vezes na borda direita para avançar e na esquerda para voltar."
+            else "Modo rolagem contínua.",
+            Toast.LENGTH_LONG
+        ).show()
+        recreate()
+    }
+
+    private fun toggleRuler() {
+        val r = ruler ?: return
+        val on = r.visibility != View.VISIBLE
+        r.visibility = if (on) View.VISIBLE else View.GONE
+        ReadingPrefs.setRuler(this, on)
+        if (on) Toast.makeText(this, "Arraste a alça dourada à direita para mover a régua.", Toast.LENGTH_SHORT).show()
     }
 
     /** Concluir move o livro para a Estante, como o botão "Finalizar" do leitor web. */

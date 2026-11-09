@@ -70,4 +70,14 @@ class BookHelpersTest {
         assertEquals(listOf(listOf("Título", "a".repeat(30)), listOf("b".repeat(30)), listOf("Seção", "item")), groups.map { g -> g.map { it.text } })
         assertEquals("Seção\n\n•  item", DocxLayout.plain(groups.last()))
     }
+
+    @Test
+    fun epubRequestRouting() {
+        assertEquals(EpubViewer.Route.PASS, EpubViewer.route("data:application/xhtml+xml;base64,AAAA"))
+        assertEquals(EpubViewer.Route.PASS, EpubViewer.route("about:blank"))
+        assertEquals(EpubViewer.Route.BOOK, EpubViewer.route("https://book.alexandria/OEBPS/a.png"))
+        assertEquals(EpubViewer.Route.BLOCK, EpubViewer.route("https://exemplo.com/x.js"))
+        assertEquals(EpubViewer.Route.BLOCK, EpubViewer.route("file:///data/data/x"))
+        assertEquals(EpubViewer.Route.BLOCK, EpubViewer.route("content://x/y"))
+    }
 }

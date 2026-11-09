@@ -14,12 +14,12 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
 
-/** Cria um ZIP de teste com os arquivos dados (nome → conteúdo). */
-fun writeZip(file: File, entries: Map<String, String>): File {
+/** Cria um ZIP de teste com os arquivos dados (nome → texto, ou bytes para binários). */
+fun writeZip(file: File, entries: Map<String, Any>): File {
     ZipOutputStream(FileOutputStream(file)).use { zip ->
         for ((name, body) in entries) {
             zip.putNextEntry(ZipEntry(name))
-            zip.write(body.toByteArray(Charsets.UTF_8))
+            zip.write(if (body is ByteArray) body else body.toString().toByteArray(Charsets.UTF_8))
             zip.closeEntry()
         }
     }
@@ -27,6 +27,28 @@ fun writeZip(file: File, entries: Map<String, String>): File {
 }
 
 object SampleBooks {
+    /** DOCX só com uma figura, sem texto (como uma página escaneada colada no Word). */
+    fun imageOnlyDocx(png: ByteArray): Map<String, Any> = mapOf(
+        "[Content_Types].xml" to "<Types/>",
+        "word/_rels/document.xml.rels" to """<?xml version="1.0"?>
+            <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+              <Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/>
+              <Relationship Id="rId9" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://exemplo.com" TargetMode="External"/>
+            </Relationships>""",
+        "word/document.xml" to """<?xml version="1.0"?>
+            <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+                xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+                xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+                xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"
+                xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>
+              <w:p><w:pPr><w:pStyle w:val="NormalWeb"/></w:pPr><w:r><w:drawing><wp:inline><a:graphic><a:graphicData>
+                <pic:pic><pic:blipFill><a:blip r:embed="rId4"/></pic:blipFill></pic:pic>
+              </a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>
+              <w:sectPr/>
+            </w:body></w:document>""",
+        "word/media/image1.png" to png
+    )
+
     val epub3 = mapOf(
         "mimetype" to "application/epub+zip",
         "META-INF/container.xml" to """<?xml version="1.0"?>
@@ -147,6 +169,31 @@ class ZipFormatsTest {
         assertEquals("negrito", paragraphs[2].text.substring(styles[0].start, styles[0].end))
         assertTrue(styles[0].bold && !styles[0].italic)
         assertTrue(!styles[1].bold && styles[1].italic)
+    }
+
+    @Test
+    fun docxImagesAreFoundThroughRelationships() {
+        val png = javaClass.getResourceAsStream("/ore/pag1.png")!!.use { it.readBytes() }
+        val entries = SampleBooks.imageOnlyDocx(png).toMutableMap()
+        // Também uma figura no meio do texto, no formato antigo (VML).
+        entries["word/document.xml"] = (entries["word/document.xml"] as String).replace("<w:sectPr/>", """
+            <w:p><w:r><w:t>Antes</w:t></w:r><w:r><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml"><v:imagedata r:id="rId4"/></v:shape></w:pict></w:r><w:r><w:t> depois</w:t></w:r></w:p>
+            <w:p><w:r><w:drawing><a:blip r:embed="rIdQueNaoExiste"/></w:drawing></w:r></w:p>
+            <w:sectPr/>""")
+        val paragraphs = ZipFile(writeZip(folder.newFile("img.docx"), entries)).use { DocxReader.read(it) }
+        assertEquals(2, paragraphs.size)
+        assertEquals("", paragraphs[0].text)
+        assertEquals(listOf("word/media/image1.png"), paragraphs[0].images)
+        assertEquals("Antes depois", paragraphs[1].text)
+        assertEquals(listOf("word/media/image1.png"), paragraphs[1].images)
+
+        val extracted = mutableListOf<String>()
+        val chunks = DocxLayout.chunks(paragraphs) { path -> extracted += path; File(folder.root, path.replace('/', '_')) }
+        assertEquals(3, chunks.size)
+        assertTrue(chunks[0] is ImageChunk)
+        assertEquals("Antes depois", chunks[1].toString())
+        assertTrue(chunks[2] is ImageChunk)
+        assertEquals("", chunks[0].toString())
     }
 
     @Test

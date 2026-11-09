@@ -97,6 +97,13 @@ abstract class BookViewer(protected val host: ReaderHost) {
         view.alpha = if (enabled) 1f else 0.35f
     }
 
+    /** Pequeno esmaecimento ao virar a página, para o olho perceber a troca. */
+    protected fun flash(view: View) {
+        view.animate().cancel()
+        view.alpha = 0.55f
+        view.animate().alpha(1f).setDuration(160).start()
+    }
+
     /** Executa na thread principal, a menos que a tela já tenha fechado. */
     protected fun onUi(block: () -> Unit) = context.runOnUiThread { if (!host.closed) block() }
 }
@@ -117,4 +124,98 @@ object ReadingPrefs {
     fun night(context: Activity) = context.getSharedPreferences(PREFS, Activity.MODE_PRIVATE).getBoolean(KEY_NIGHT, false)
     fun setNight(context: Activity, value: Boolean) =
         context.getSharedPreferences(PREFS, Activity.MODE_PRIVATE).edit().putBoolean(KEY_NIGHT, value).apply()
+
+    private const val KEY_PAGED = "paged_mode"
+    private const val KEY_RULER = "ruler_on"
+    private const val KEY_RULER_Y = "ruler_y"
+
+    /**
+     * Modo de leitura: true = páginas (uma tela por vez, vira com toque duplo na borda);
+     * false = rolagem contínua.
+     */
+    fun paged(context: Activity) = context.getSharedPreferences(PREFS, Activity.MODE_PRIVATE).getBoolean(KEY_PAGED, true)
+    fun setPaged(context: Activity, value: Boolean) =
+        context.getSharedPreferences(PREFS, Activity.MODE_PRIVATE).edit().putBoolean(KEY_PAGED, value).apply()
+
+    /** Régua de leitura ligada e sua posição (fração da altura da área de leitura). */
+    fun ruler(context: Activity) = context.getSharedPreferences(PREFS, Activity.MODE_PRIVATE).getBoolean(KEY_RULER, false)
+    fun setRuler(context: Activity, value: Boolean) =
+        context.getSharedPreferences(PREFS, Activity.MODE_PRIVATE).edit().putBoolean(KEY_RULER, value).apply()
+    fun rulerY(context: Activity) = context.getSharedPreferences(PREFS, Activity.MODE_PRIVATE).getFloat(KEY_RULER_Y, 0.4f)
+    fun setRulerY(context: Activity, value: Float) =
+        context.getSharedPreferences(PREFS, Activity.MODE_PRIVATE).edit().putFloat(KEY_RULER_Y, value).apply()
+}
+
+/**
+ * Toque duplo nas bordas da área de leitura: borda direita avança, esquerda volta (como virar a
+ * página). Com [blockScroll], arrastar o dedo não rola o conteúdo (modo páginas dos textos).
+ */
+class EdgeTaps(
+    context: Activity,
+    private val area: View,
+    private val blockScroll: () -> Boolean,
+    private val onTurn: (direction: Int) -> Unit
+) {
+    private var inside = false
+    private var swallowing = false
+
+    private val detector = android.view.GestureDetector(context, object : android.view.GestureDetector.SimpleOnGestureListener() {
+        override fun onDoubleTap(e: MotionEvent): Boolean {
+            val direction = PageTurn.direction(local(e).first, area.width.toFloat())
+            if (direction == 0) return false
+            onTurn(direction)
+            // O segundo toque não chega ao texto: assim ele não seleciona uma palavra.
+            swallowing = true
+            return true
+        }
+    })
+
+    private fun local(event: MotionEvent): Pair<Float, Float> {
+        val location = IntArray(2)
+        area.getLocationInWindow(location)
+        return Pair(event.x - location[0], event.y - location[1])
+    }
+
+    /** Recebe os toques da janela. true = consumido; null = segue o caminho normal. */
+    fun dispatch(event: MotionEvent): Boolean? {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            val (x, y) = local(event)
+            inside = x >= 0 && y >= 0 && x < area.width && y < area.height
+            swallowing = false
+        }
+        if (!inside) return null
+        detector.onTouchEvent(event)
+        if (swallowing) {
+            if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) swallowing = false
+            return true
+        }
+        if (event.actionMasked == MotionEvent.ACTION_MOVE && blockScroll()) return true
+        return null
+    }
+}
+
+/** Regras do toque nas bordas. Kotlin puro, coberto por testes. */
+object PageTurn {
+    /** Fração da largura, em cada lado, que conta como borda. */
+    const val EDGE = 0.3f
+
+    /** -1 (borda esquerda: voltar), 1 (borda direita: avançar) ou 0 (meio). */
+    fun direction(x: Float, width: Float): Int = when {
+        width <= 0f -> 0
+        x < width * EDGE -> -1
+        x > width * (1 - EDGE) -> 1
+        else -> 0
+    }
+
+    /** Quanto rolar para "virar a página" num texto: a altura visível menos uma sobra de contexto. */
+    fun scrollStep(visibleHeight: Int, overlap: Int): Int = (visibleHeight - overlap).coerceAtLeast(visibleHeight / 2).coerceAtLeast(1)
+
+    /** Tamanho da página para caber inteira na área (largura e altura), dada a proporção altura/largura. */
+    fun fitPage(areaWidth: Int, areaHeight: Int, aspect: Float): Pair<Int, Int> {
+        if (areaWidth <= 0 || areaHeight <= 0 || aspect <= 0f) return Pair(areaWidth.coerceAtLeast(1), areaHeight.coerceAtLeast(1))
+        val byWidth = areaWidth.toFloat()
+        val byHeight = areaHeight / aspect
+        val width = minOf(byWidth, byHeight)
+        return Pair(width.toInt().coerceAtLeast(1), (width * aspect).toInt().coerceAtLeast(1))
+    }
 }

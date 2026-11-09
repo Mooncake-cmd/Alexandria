@@ -120,13 +120,21 @@ class MainActivity : Activity() {
         }
         NAV_ITEMS.forEach { name ->
             val active = name == selected
+            val color = if (active) gold else muted
+            val icon = getDrawable(NAV_ICONS.getValue(name))?.mutate()?.apply {
+                setTint(color)
+                setBounds(0, 0, dp(24), dp(24))
+            }
             val entry = TextView(this).apply {
                 text = name
-                textSize = 12f
+                textSize = 11f
                 gravity = Gravity.CENTER
-                minHeight = dp(48)
-                setTextColor(if (active) gold else muted)
+                minHeight = dp(56)
+                setCompoundDrawables(null, icon, null, null)
+                compoundDrawablePadding = dp(3)
+                setTextColor(color)
                 if (active) setTypeface(typeface, Typeface.BOLD)
+                contentDescription = name
                 setOnClickListener { showSection(name) }
             }
             nav.addView(entry, LinearLayout.LayoutParams(0, -2, 1f))
@@ -703,6 +711,14 @@ class MainActivity : Activity() {
         private const val SECTION_STATS = "Estatísticas"
         private const val SECTION_SETTINGS = "Ajustes"
         private val NAV_ITEMS = listOf(SECTION_LIBRARY, SECTION_NOTES, SECTION_STATS, SECTION_SETTINGS)
+
+        /** Livro, caneta pena, ábaco e bússola. */
+        private val NAV_ICONS = mapOf(
+            SECTION_LIBRARY to R.drawable.ic_tab_library,
+            SECTION_NOTES to R.drawable.ic_tab_notes,
+            SECTION_STATS to R.drawable.ic_tab_stats,
+            SECTION_SETTINGS to R.drawable.ic_tab_settings
+        )
         private val LICENSES = listOf(
             "EraMOBI e EraDjVu — GNU AGPL 3.0" to "AGPL-3.0.txt",
             "EraComic — GNU GPL 2.0" to "GPL-2.0.txt",
