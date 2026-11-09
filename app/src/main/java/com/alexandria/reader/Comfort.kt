@@ -177,6 +177,9 @@ data class Comfort(
                 $family
                 * { color: inherit; background-color: transparent; }
                 a { color: ${css(t.link)} !important; }
+                html, body, p, span, div, li { -webkit-user-select: text !important; user-select: text !important; }
+                .alx-term { text-decoration: underline dotted ${css(t.link)} !important; text-decoration-thickness: 2px !important;
+                            text-underline-offset: 3px; -webkit-text-decoration: underline dotted ${css(t.link)}; }
                 img, svg, video { max-width: 100% !important; height: auto !important; }
                 pre, table { max-width: 100%; overflow-x: auto; }
             """.trimIndent()

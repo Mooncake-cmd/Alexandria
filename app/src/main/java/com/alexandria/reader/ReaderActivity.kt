@@ -71,14 +71,63 @@ class ReaderActivity : Activity(), ReaderHost {
         viewer = created
         setContentView(withComfortLayers(frame(item, created)))
         applyComfort(ComfortStore.load(this))
+        bookSecondsAtOpen = item.readingSeconds
+        reloadGlossary()
         // Uma anotação aberta pela aba Notas leva direto ao ponto dela.
         val start = intent.getIntExtra(EXTRA_POSITION, -1).takeIf { it >= 0 } ?: item.position
         created.open(item, start)
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (current == null) return
+        clock.start(System.currentTimeMillis())
+        timerHandler.removeCallbacks(timerTick)
+        timerHandler.post(timerTick)
+    }
+
     override fun onPause() {
         super.onPause()
         saveProgress()
+        timerHandler.removeCallbacks(timerTick)
+        val now = System.currentTimeMillis()
+        clock.stop(now, Days.today(now))
+        flushReadingTime()
+    }
+
+    // ---------- tempo de leitura ----------
+
+    /** Conta o tempo com o livro aberto; para sozinho depois de 5 minutos sem toque. */
+    private val clock = ReadingClock()
+    private val timerHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private lateinit var timerLabel: TextView
+    private var bookSecondsAtOpen = 0L
+    private var savedSessionSeconds = 0L
+    private var ticks = 0
+
+    private val timerTick = object : Runnable {
+        override fun run() {
+            val now = System.currentTimeMillis()
+            clock.tick(now, Days.today(now))
+            if (++ticks % 30 == 0) flushReadingTime()
+            updateTimerLabel(now)
+            timerHandler.postDelayed(this, 1000)
+        }
+    }
+
+    private fun flushReadingTime() {
+        val item = current ?: return
+        for ((day, seconds) in clock.drain()) {
+            database.addReadingTime(item.id, day, seconds)
+            savedSessionSeconds += seconds
+        }
+    }
+
+    private fun updateTimerLabel(now: Long) {
+        val session = clock.sessionMs / 1000
+        val total = bookSecondsAtOpen + session
+        val paused = if (clock.isIdle(now)) " · pausado" else ""
+        timerLabel.text = "⏱ ${ReadingTime.clock(session)} · ${ReadingTime.format(total)} neste livro$paused"
     }
 
     override fun onDestroy() {
@@ -104,6 +153,7 @@ class ReaderActivity : Activity(), ReaderHost {
     private var rulerGesture = false
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN) clock.interaction(System.currentTimeMillis())
         if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
             rulerGesture = ruler?.let { r ->
                 val location = IntArray(2)
@@ -142,11 +192,20 @@ class ReaderActivity : Activity(), ReaderHost {
             setPadding(dp(8), dp(6), dp(8), dp(6))
         }
         bar.addView(barButton("‹", "Voltar") { finish() })
+        timerLabel = label("⏱ 0:00", 11f, Color.rgb(202, 207, 214)).apply {
+            maxLines = 1
+            setPadding(dp(4), dp(1), dp(8), 0)
+            contentDescription = "Tempo de leitura"
+        }
         bar.addView(
-            label(item.name, 15f, Color.WHITE, true).apply {
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-                setPadding(dp(4), 0, dp(8), 0)
+            LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(label(item.name, 15f, Color.WHITE, true).apply {
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                    setPadding(dp(4), 0, dp(8), 0)
+                })
+                addView(timerLabel)
             },
             LinearLayout.LayoutParams(0, -2, 1f)
         )
@@ -233,6 +292,7 @@ class ReaderActivity : Activity(), ReaderHost {
     }
 
     override fun onPositionChanged() {
+        clock.interaction(System.currentTimeMillis())
         val view = viewer ?: return
         val item = current ?: return
         val show = view.loaded && view.atEnd() && !item.finished
@@ -249,6 +309,7 @@ class ReaderActivity : Activity(), ReaderHost {
         val rulerOn = ruler?.visibility == View.VISIBLE
         actions += (if (rulerOn) "Esconder régua de leitura" else "Mostrar régua de leitura") to { toggleRuler() }
         actions.add(0, "Conforto visual…" to { showComfort() })
+        actions.add(1, "Glossário do livro" to { showGlossary() })
         actions += if (item.finished) {
             "Voltar para \"Lendo agora\"" to { markFinished(false) }
         } else {
@@ -412,6 +473,18 @@ class ReaderActivity : Activity(), ReaderHost {
         super.onActionModeStarted(mode)
         val view = viewer ?: return
         if (view.annotatesPages || currentFocus == searchInput) return
+        mode.menu.add(Menu.NONE, MENU_TERM, 0, "Definir termo").setOnMenuItemClickListener {
+            val found = view.selection { excerpt, _ ->
+                mode.finish()
+                if (excerpt.isNotBlank()) editTerm(null, excerpt.trim().take(80))
+                else Toast.makeText(this, "Selecione a palavra que quer definir.", Toast.LENGTH_SHORT).show()
+            }
+            if (!found) {
+                mode.finish()
+                Toast.makeText(this, "Selecione a palavra que quer definir.", Toast.LENGTH_SHORT).show()
+            }
+            true
+        }
         mode.menu.add(Menu.NONE, MENU_ANNOTATE, 0, "Anotar").setOnMenuItemClickListener {
             // A seleção do EPUB é lida de forma assíncrona: o menu só fecha depois da leitura.
             val found = view.selection { excerpt, position ->
@@ -425,6 +498,91 @@ class ReaderActivity : Activity(), ReaderHost {
             }
             true
         }
+    }
+
+    // ---------- glossário ----------
+
+    private var terms: List<GlossaryTerm> = emptyList()
+
+    private fun reloadGlossary() {
+        val item = current ?: return
+        terms = database.termsFor(item.id)
+        viewer?.setGlossary(terms) { showTerm(it) }
+    }
+
+    /** Cartão da definição, aberto ao tocar numa palavra sublinhada. */
+    private fun showTerm(term: GlossaryTerm) {
+        AlertDialog.Builder(this)
+            .setTitle(term.term)
+            .setMessage(term.definition.ifBlank { "(sem definição)" })
+            .setPositiveButton("Fechar", null)
+            .setNeutralButton("Editar") { _, _ -> editTerm(term, term.term) }
+            .setNegativeButton("Remover") { _, _ ->
+                database.removeTerm(term.id)
+                reloadGlossary()
+                Toast.makeText(this, "\"${term.term}\" removido do glossário.", Toast.LENGTH_SHORT).show()
+            }
+            .show()
+    }
+
+    /** Cria ([existing] nulo) ou edita um termo. Se o termo já existe no livro, abre a definição dele. */
+    private fun editTerm(existing: GlossaryTerm?, initial: String) {
+        val item = current ?: return
+        val known = existing ?: terms.firstOrNull { TextSearch.fold(it.term) == TextSearch.fold(initial) }
+        val termInput = EditText(this).apply {
+            hint = "Palavra ou expressão"
+            maxLines = 1
+            setText(known?.term ?: initial)
+        }
+        val definitionInput = EditText(this).apply {
+            hint = "O que significa (ex.: planeta do deserto)"
+            minLines = 3
+            gravity = Gravity.TOP
+            setText(known?.definition ?: "")
+        }
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(22), dp(8), dp(22), 0)
+            addView(termInput, LinearLayout.LayoutParams(-1, -2))
+            addView(definitionInput, LinearLayout.LayoutParams(-1, -2))
+            addView(label("As próximas vezes em que aparecer no livro, a palavra fica sublinhada: toque nela para ver a definição.", 11f, Palette.muted).apply {
+                setPadding(0, dp(6), 0, 0)
+            })
+        }
+        AlertDialog.Builder(this)
+            .setTitle(if (known != null) "Editar termo" else "Definir termo")
+            .setView(container)
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Salvar") { _, _ ->
+                val term = termInput.text.toString().trim()
+                if (term.isEmpty()) {
+                    Toast.makeText(this, "Escreva a palavra.", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                // Renomeou um termo existente: a versão antiga sai.
+                if (known != null && TextSearch.fold(known.term) != TextSearch.fold(term)) database.removeTerm(known.id)
+                database.saveTerm(item.id, term, definitionInput.text.toString())
+                reloadGlossary()
+                Toast.makeText(this, "\"$term\" salvo no glossário.", Toast.LENGTH_SHORT).show()
+            }
+            .show()
+    }
+
+    private fun showGlossary() {
+        val list = terms
+        val builder = AlertDialog.Builder(this)
+            .setTitle(if (list.isEmpty()) "Glossário do livro" else "Glossário do livro (${list.size})")
+            .setNegativeButton("Fechar", null)
+            .setPositiveButton("Novo termo") { _, _ -> editTerm(null, "") }
+        if (list.isEmpty()) {
+            builder.setMessage(
+                if (viewer?.annotatesPages == true) "Nenhum termo ainda. Neste formato o texto não é selecionável: use \"Novo termo\" e digite a palavra."
+                else "Nenhum termo ainda. Selecione uma palavra no texto e toque em \"Definir termo\"."
+            )
+        } else {
+            builder.setItems(list.map { "${it.term} — ${it.definition.take(80)}" }.toTypedArray()) { _, which -> showTerm(list[which]) }
+        }
+        builder.show()
     }
 
     private fun showNotes() {
@@ -522,5 +680,6 @@ class ReaderActivity : Activity(), ReaderHost {
         const val EXTRA_ITEM_ID = "item_id"
         const val EXTRA_POSITION = "position"
         private const val MENU_ANNOTATE = 0x414e
+        private const val MENU_TERM = 0x5445
     }
 }

@@ -171,6 +171,15 @@ class MainActivity : Activity() {
     private fun showLibrary() {
         setContentView(baseScreen(SECTION_LIBRARY))
         sectionTitle("Minha biblioteca", "Seus documentos ficam organizados neste dispositivo.")
+        val streak = Streak.summary(database.readingDays(), Days.today())
+        if (streak.current > 0 || streak.todaySeconds > 0) {
+            val days = if (streak.current == 1) "1 dia seguido" else "${streak.current} dias seguidos"
+            val today = if (streak.readToday) "hoje ✓" else "leia ${ReadingTime.format(Streak.MIN_SECONDS)} hoje para manter"
+            content.addView(label("🔥 $days · $today", 13f, gold, true).apply {
+                setPadding(0, 0, 0, dp(12))
+                setOnClickListener { showSection(SECTION_STATS) }
+            })
+        }
 
         val importButton = Button(this).apply {
             text = "＋  Importar documentos"
@@ -273,7 +282,8 @@ class MainActivity : Activity() {
             ellipsize = TextUtils.TruncateAt.END
         })
         info.addView(label(entry.format.uppercase(), 10f, gold, true).apply { setPadding(0, dp(4), 0, 0) })
-        val status = if (entry.finished) "Concluído em ${dateFormat.format(Date(entry.finishedAt))}" else ReadingStatus.describe(entry)
+        val base = if (entry.finished) "Concluído em ${dateFormat.format(Date(entry.finishedAt))}" else ReadingStatus.describe(entry)
+        val status = if (entry.readingSeconds >= 60) "$base · ⏱ ${ReadingTime.format(entry.readingSeconds)}" else base
         info.addView(label(status, 11f, muted).apply { setPadding(0, dp(3), 0, dp(6)) })
         if (entry.format in Formats.readable) info.addView(progressBar(ReadingStatus.progress(entry)), LinearLayout.LayoutParams(-1, dp(4)))
         card.addView(info, LinearLayout.LayoutParams(0, -2, 1f))
@@ -516,6 +526,7 @@ class MainActivity : Activity() {
         val notes = database.allNotes()
         val items = database.all().associateBy { it.id }
         sectionTitle("Minhas anotações", "${notes.size} anotação(ões) em ${notes.map { it.itemId }.distinct().size} livro(s)")
+        addGlossaries(items)
         if (notes.isEmpty()) {
             content.addView(
                 emptyPanel(
@@ -536,6 +547,50 @@ class MainActivity : Activity() {
         spacer(8)
         content.addView(label("Toque para abrir o livro no trecho. Mantenha pressionado para remover.", 11f, muted))
     }
+
+    /** Glossários dos livros (termos definidos durante a leitura), recolhidos por livro. */
+    private fun addGlossaries(items: Map<Long, LibraryItem>) {
+        val terms = database.allTerms().filter { it.itemId in items }
+        if (terms.isEmpty()) return
+        content.addView(label("GLOSSÁRIOS", 10f, muted, true).apply { setPadding(0, dp(4), 0, dp(6)) })
+        for ((itemId, bookTerms) in terms.groupBy { it.itemId }) {
+            val item = items.getValue(itemId)
+            val open = itemId in openGlossaries
+            content.addView(label("${if (open) "▼" else "▶"}  📖 ${displayTitle(item.name)} (${bookTerms.size})", 14f, ink, true).apply {
+                minHeight = dp(44)
+                gravity = Gravity.CENTER_VERTICAL
+                setOnClickListener {
+                    if (!openGlossaries.remove(itemId)) openGlossaries += itemId
+                    showNotes()
+                }
+            })
+            if (!open) continue
+            bookTerms.forEach { term ->
+                val card = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(15), dp(10), dp(15), dp(10))
+                    background = rounded(Color.WHITE, 12)
+                    setOnLongClickListener {
+                        AlertDialog.Builder(this@MainActivity)
+                            .setTitle("Remover \"${term.term}\" do glossário?")
+                            .setNegativeButton("Cancelar", null)
+                            .setPositiveButton("Remover") { _, _ ->
+                                database.removeTerm(term.id)
+                                showNotes()
+                            }
+                            .show()
+                        true
+                    }
+                }
+                card.addView(label(term.term, 14f, ink, true))
+                if (term.definition.isNotBlank()) card.addView(label(term.definition, 13f, muted).apply { setPadding(0, dp(3), 0, 0) })
+                content.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(6) })
+            }
+        }
+        spacer(14)
+    }
+
+    private val openGlossaries = mutableSetOf<Long>()
 
     private fun addNoteCard(item: LibraryItem, note: Note) {
         val card = LinearLayout(this).apply {
@@ -574,12 +629,47 @@ class MainActivity : Activity() {
         val items = database.all()
         val notes = database.allNotes()
         sectionTitle("Estatísticas", "Um resumo da sua biblioteca.")
+        val readingDays = database.readingDays()
+        val today = Days.today()
+        val streak = Streak.summary(readingDays, today)
+        statTiles(listOf(
+            "🔥 ${streak.current}" to (if (streak.current == 1) "dia seguido" else "dias seguidos"),
+            "${streak.best}" to "melhor sequência",
+            ReadingTime.format(streak.todaySeconds) to "lidos hoje",
+            ReadingTime.format(readingDays.values.sum()) to "no total"
+        ))
+        content.addView(label("Um dia conta para a sequência a partir de ${ReadingTime.format(Streak.MIN_SECONDS)} de leitura. O tempo para de contar se o livro fica aberto 5 minutos sem nenhum toque.", 11f, muted).apply {
+            setPadding(0, 0, 0, dp(10))
+        })
+        addMonthCalendar(readingDays, today)
+        content.addView(label("BIBLIOTECA", 10f, muted, true).apply { setPadding(0, dp(16), 0, dp(6)) })
         val tiles = listOf(
             items.size.toString() to "na biblioteca",
             items.count { !it.finished && (it.openedAt > 0) }.toString() to "em leitura",
             items.count { it.finished }.toString() to "concluídos",
             notes.size.toString() to "anotações"
         )
+        statTiles(tiles)
+        val reading = items.filter { it.readingSeconds >= 60 }.sortedByDescending { it.readingSeconds }.take(5)
+        if (reading.isNotEmpty()) {
+            content.addView(label("MAIS TEMPO DE LEITURA", 10f, muted, true).apply { setPadding(0, dp(14), 0, dp(6)) })
+            reading.forEach { item ->
+                content.addView(label("${displayTitle(item.name)}  ·  ${ReadingTime.format(item.readingSeconds)}", 13f, ink).apply {
+                    setPadding(0, dp(2), 0, dp(2))
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                })
+            }
+        }
+        if (items.isNotEmpty()) {
+            content.addView(label("POR FORMATO", 10f, muted, true).apply { setPadding(0, dp(14), 0, dp(6)) })
+            items.groupingBy { it.format }.eachCount().entries.sortedByDescending { it.value }.forEach { (format, count) ->
+                content.addView(label("${format.uppercase()}  ·  $count", 13f, ink).apply { setPadding(0, dp(2), 0, dp(2)) })
+            }
+        }
+    }
+
+    private fun statTiles(tiles: List<Pair<String, String>>) {
         tiles.chunked(2).forEach { row ->
             val line = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             row.forEachIndexed { i, (value, caption) ->
@@ -594,12 +684,63 @@ class MainActivity : Activity() {
             }
             content.addView(line, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(9) })
         }
-        if (items.isNotEmpty()) {
-            content.addView(label("POR FORMATO", 10f, muted, true).apply { setPadding(0, dp(14), 0, dp(6)) })
-            items.groupingBy { it.format }.eachCount().entries.sortedByDescending { it.value }.forEach { (format, count) ->
-                content.addView(label("${format.uppercase()}  ·  $count", 13f, ink).apply { setPadding(0, dp(2), 0, dp(2)) })
+    }
+
+    /** Calendário do mês: dias com leitura (a partir de 5 min) marcados em dourado. */
+    private fun addMonthCalendar(days: Map<String, Long>, today: String) {
+        val todayEpoch = Days.parse(today) ?: return
+        val (year, month) = today.split('-').let { it[0].toInt() to it[1].toInt() }
+        val first = Days.epoch(year, month, 1)
+        val next = if (month == 12) Days.epoch(year + 1, 1, 1) else Days.epoch(year, month + 1, 1)
+        val monthNames = listOf("janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro")
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            background = rounded(Color.WHITE, 14)
+        }
+        panel.addView(label("${monthNames[month - 1].replaceFirstChar { it.uppercase() }} de $year", 14f, ink, true).apply {
+            setPadding(dp(4), 0, 0, dp(8))
+        })
+        val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        listOf("D", "S", "T", "Q", "Q", "S", "S").forEach { d ->
+            header.addView(label(d, 11f, muted, true).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(0, -2, 1f))
+        }
+        panel.addView(header)
+        // 1970-01-01 foi quinta-feira: (dia + 4) % 7 dá 0 = domingo.
+        val offset = ((first + 4) % 7).toInt()
+        var row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        repeat(offset) { row.addView(View(this), LinearLayout.LayoutParams(0, dp(34), 1f)) }
+        var column = offset
+        for (day in first until next) {
+            val seconds = days[Days.format(day)] ?: 0
+            val read = seconds >= Streak.MIN_SECONDS
+            val isToday = day == todayEpoch
+            row.addView(TextView(this).apply {
+                text = (day - first + 1).toString()
+                textSize = 12f
+                gravity = Gravity.CENTER
+                setTextColor(if (read) Color.WHITE else if (day > todayEpoch) Color.rgb(190, 190, 190) else ink)
+                if (read || isToday) {
+                    background = android.graphics.drawable.GradientDrawable().apply {
+                        shape = android.graphics.drawable.GradientDrawable.OVAL
+                        if (read) setColor(gold)
+                        if (isToday) setStroke(dp(2), ink)
+                    }
+                }
+                contentDescription = "Dia ${day - first + 1}" + if (read) ", leu ${ReadingTime.format(seconds)}" else ""
+            }, LinearLayout.LayoutParams(0, dp(34), 1f).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) })
+            column++
+            if (column == 7) {
+                panel.addView(row)
+                row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                column = 0
             }
         }
+        if (column > 0) {
+            repeat(7 - column) { row.addView(View(this), LinearLayout.LayoutParams(0, dp(34), 1f)) }
+            panel.addView(row)
+        }
+        content.addView(panel, LinearLayout.LayoutParams(-1, -2))
     }
 
     // ---------- Ajustes ----------

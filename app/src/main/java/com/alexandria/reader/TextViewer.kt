@@ -34,6 +34,9 @@ class TextContent(val chunks: List<CharSequence>, val truncated: Boolean = false
  * Bloco que é uma imagem (figura de um DOCX). Como texto ele é vazio, então busca e seleção o
  * ignoram; a lista mostra a imagem, decodificada sob demanda a partir de [file].
  */
+/** Sublinhado de um termo do glossário; guarda o id para mostrar a definição ao tocar. */
+class GlossarySpan(val termId: Long) : android.text.style.UnderlineSpan()
+
 class ImageChunk(val file: java.io.File) : CharSequence by "" {
     override fun toString() = ""
 }
@@ -129,7 +132,50 @@ class TextViewer(host: ReaderHost, private val load: (LibraryItem) -> TextConten
     private val paged = ReadingPrefs.paged(context)
     private val edgeTaps = EdgeTaps(context, list, { paged }) { turnPage(it) }
 
-    override fun dispatchTouch(event: android.view.MotionEvent): Boolean? = if (paged && ready) edgeTaps.dispatch(event) else null
+    override fun dispatchTouch(event: android.view.MotionEvent): Boolean? {
+        if (!ready) return null
+        termTaps.onTouchEvent(event)
+        return if (paged) edgeTaps.dispatch(event) else null
+    }
+
+    // ---------- glossário ----------
+
+    private var glossary: List<GlossaryTerm> = emptyList()
+    private var onTermTap: (GlossaryTerm) -> Unit = {}
+
+    override fun setGlossary(terms: List<GlossaryTerm>, onTap: (GlossaryTerm) -> Unit) {
+        glossary = terms
+        onTermTap = onTap
+        adapter.notifyDataSetChanged()
+    }
+
+    /** Toque simples numa palavra sublinhada mostra a definição (não atrapalha rolar nem selecionar). */
+    private val termTaps = android.view.GestureDetector(context, object : android.view.GestureDetector.SimpleOnGestureListener() {
+        override fun onSingleTapConfirmed(e: android.view.MotionEvent): Boolean {
+            termAt(e.rawX, e.rawY)?.let { id -> glossary.firstOrNull { it.id == id }?.let(onTermTap) }
+            return false
+        }
+    })
+
+    /** Id do termo sob o ponto da tela, se houver. */
+    private fun termAt(screenX: Float, screenY: Float): Long? {
+        if (glossary.isEmpty()) return null
+        val location = IntArray(2)
+        for (i in 0 until list.childCount) {
+            val view = list.getChildAt(i) as? TextView ?: continue
+            view.getLocationOnScreen(location)
+            val x = screenX - location[0] - view.totalPaddingLeft
+            val y = screenY - location[1] - view.totalPaddingTop
+            if (y < 0 || y > view.height) continue
+            val layout = view.layout ?: return null
+            val line = layout.getLineForVertical(y.toInt())
+            if (x < layout.getLineLeft(line) || x > layout.getLineRight(line)) return null
+            val offset = layout.getOffsetForHorizontal(line, x)
+            val text = view.text as? Spanned ?: return null
+            return text.getSpans(offset, offset, GlossarySpan::class.java).firstOrNull()?.termId
+        }
+        return null
+    }
 
     /** "Vira a página": rola uma tela, deixando uma linha e meia da tela anterior como contexto. */
     private fun turnPage(direction: Int) {
@@ -156,9 +202,13 @@ class TextViewer(host: ReaderHost, private val load: (LibraryItem) -> TextConten
             val view = convertView as? TextView ?: TextView(context).apply { setTextIsSelectable(true) }
             styleText(view, parent.width)
             val mark = highlight
-            view.text = if (mark != null && mark.first == position) {
+            val matches = Glossary.find(chunk, glossary)
+            view.text = if ((mark != null && mark.first == position) || matches.isNotEmpty()) {
                 SpannableString(chunk).apply {
-                    setSpan(BackgroundColorSpan(HIGHLIGHT), mark.second, mark.third, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    for (m in matches) setSpan(GlossarySpan(m.termId), m.start, m.end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    if (mark != null && mark.first == position) {
+                        setSpan(BackgroundColorSpan(HIGHLIGHT), mark.second, mark.third, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    }
                 }
             } else {
                 chunk

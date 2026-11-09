@@ -1,6 +1,6 @@
 # Alexandria — projeto Android
 
-**Versão:** 0.7.0  
+**Versão:** 0.8.0  
 **Pacote:** `com.alexandria.reader`  
 **Plataforma:** Android 6.0 ou superior (API 23+)  
 **Idioma da interface:** Português (Brasil)
@@ -43,6 +43,18 @@ Em todos os formatos:
   os lados e a rolagem vertical continua normal.
 - **Régua de leitura** (menu ⋮): faixa sobre a linha lida; arraste pela alça à direita. Espessura (1, 2 ou 3 linhas),
   cor, opacidade e "escurecer o resto da página" são escolhidos no Conforto visual.
+- **Glossário do livro**: selecione uma palavra ou expressão ("Arrakis", "Casa Atreides") e toque em **"Definir termo"**.
+  Nas próximas vezes em que ela aparecer no livro, fica **sublinhada**: um toque mostra a definição (com editar e remover).
+  Vale sem diferenciar maiúsculas e acentos, só para palavras inteiras, e cada livro tem o seu glossário (menu ⋮ →
+  "Glossário do livro"; todos aparecem também na aba Notas). Em PDF, DJVU e quadrinhos o texto é imagem: dá para
+  cadastrar termos pelo menu, mas não há sublinhado.
+- **Tempo de leitura**: o cronômetro aparece embaixo do título ao abrir o livro. Para quando o app sai da tela ou depois
+  de 5 minutos sem nenhum toque. O total de cada livro aparece no cartão da biblioteca.
+- **Sequência de dias**: um dia conta a partir de 5 minutos de leitura. A biblioteca mostra "🔥 N dias seguidos" e a aba
+  Estatísticas mostra sequência atual, melhor sequência, tempo de hoje, tempo total, livros com mais tempo e um
+  calendário do mês com os dias lidos.
+- **Seleção de texto**: funciona em EPUB, MOBI, DOCX e TXT (inclusive em livros cujo CSS tentava bloquear a seleção).
+  Em PDF, DJVU e quadrinhos a página é uma imagem, sem texto selecionável.
 - **Conforto visual** (menu ⋮ ou Ajustes), com efeito ao vivo enquanto se ajusta:
   - **Cor da página**: Claro, Sépia, Cinza suave, Escuro suave e Escuro. Vale também para PDF, DJVU e quadrinhos: nos
     temas claros o papel ganha a cor escolhida; nos escuros a luminosidade é invertida mantendo o matiz das imagens.
@@ -91,13 +103,16 @@ Os recursos da 0.4.0 vieram da Biblioteca do site RPG Hardcore (HTML/JavaScript)
 
 ## Testes
 
-Os testes rodam na JVM, sem emulador (88 no total):
+Os testes rodam na JVM, sem emulador (100 no total):
 
 - Lógica pura: `FormatsTest`, `TextDecodingTest`, `TextChunkerTest`, `ReadingStatusTest`, `BookHelpersTest` (ordem natural, busca sem acentos, caminhos em ZIP, preparo do HTML do EPUB, prateleiras, blocos do DOCX).
 - `ZipFormatsTest` (Robolectric): EPUB 2 e 3 (capítulos, sumário, capa), DOCX (títulos com estilos em português, listas, estilos, tabelas, caixas de texto), CBZ.
 - `LibraryDatabaseTest` (Robolectric): migrações 0.2 → 0.4 e 0.3 → 0.4 sem perda de dados, anotações, Estante e prateleiras.
 - `TextReaderTest`, `ReaderFormatsTest` (Robolectric): abre TXT, DOCX e EPUB no leitor, salva e restaura posição, busca, CBR em RAR com erro claro.
 - `MainActivityTest` (Robolectric): biblioteca com prateleiras e Estante, abas Notas, Estatísticas e Ajustes.
+- `ReadingLogicTest`, `GlossaryAndTimeTest`: sequência de dias, cronômetro com pausa por inatividade e virada de dia,
+  migração para o banco v5, glossário (palavras inteiras, sem acentos, HTML), termo sublinhado e tocado no TXT (com
+  medida de texto real), termos marcados no EPUB, tempo salvo no livro e no dia, sequência na biblioteca e estatísticas.
 - `ComfortMathTest`, `ComfortTest`: cores dos temas (papel sépia, escuro mantendo o matiz), brilho abaixo do mínimo,
   CSS do EPUB, fonte servida de dentro do app, tema/fonte/espaçamento no TXT, estilo da régua, painel e zoom na rolagem.
 - `ReadingModesTest`, `PageTurnTest`: toque duplo nas bordas vira a página (DJVU pelo motor real e TXT), no meio dá

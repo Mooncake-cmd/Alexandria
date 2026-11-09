@@ -65,6 +65,12 @@ abstract class BookViewer(protected val host: ReaderHost) {
     /** Ações extras do menu ⋮ (tamanho de letra, tema, sumário…). */
     open fun menuActions(): List<Pair<String, () -> Unit>> = emptyList()
 
+    /**
+     * Termos do glossário deste livro: as ocorrências no texto ficam sublinhadas e, ao tocar,
+     * [onTap] mostra a definição. Formatos sem texto (PDF, DJVU, quadrinhos) ignoram.
+     */
+    open fun setGlossary(terms: List<GlossaryTerm>, onTap: (GlossaryTerm) -> Unit) = Unit
+
     /** Aplica cores, tipografia etc. do painel "Conforto visual" (chamado também enquanto se ajusta). */
     open fun applyComfort(comfort: Comfort) = Unit
 

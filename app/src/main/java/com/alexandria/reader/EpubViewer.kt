@@ -152,7 +152,44 @@ class EpubViewer(
     private val paged = ReadingPrefs.paged(context)
     private val edgeTaps = EdgeTaps(context, web, { paged }) { turnPage(it) }
 
-    override fun dispatchTouch(event: android.view.MotionEvent): Boolean? = if (paged && book != null) edgeTaps.dispatch(event) else null
+    override fun dispatchTouch(event: android.view.MotionEvent): Boolean? {
+        if (book == null) return null
+        termTaps.onTouchEvent(event)
+        return if (paged) edgeTaps.dispatch(event) else null
+    }
+
+    // ---------- glossário ----------
+
+    @Volatile
+    private var glossary: List<GlossaryTerm> = emptyList()
+    private var onTermTap: (GlossaryTerm) -> Unit = {}
+
+    override fun setGlossary(terms: List<GlossaryTerm>, onTap: (GlossaryTerm) -> Unit) {
+        val changed = terms != glossary
+        glossary = terms
+        onTermTap = onTap
+        // O capítulo é marcado ao carregar: com termos novos, recarrega no mesmo ponto.
+        if (changed && book != null) goTo(position())
+    }
+
+    /** Toque simples numa palavra sublinhada: pergunta à página qual termo está sob o dedo. */
+    private val termTaps = android.view.GestureDetector(context, object : android.view.GestureDetector.SimpleOnGestureListener() {
+        override fun onSingleTapConfirmed(e: android.view.MotionEvent): Boolean {
+            if (glossary.isEmpty() || !chapterReady) return false
+            val location = IntArray(2)
+            web.getLocationOnScreen(location)
+            val density = context.resources.displayMetrics.density
+            val x = (e.rawX - location[0]) / density
+            val y = (e.rawY - location[1]) / density
+            web.evaluateJavascript(
+                "(function(){var e=document.elementFromPoint($x,$y);e=e&&e.closest?e.closest('.alx-term'):null;return e?e.getAttribute('data-term'):'';})()"
+            ) { raw ->
+                val id = raw?.trim('"')?.toLongOrNull() ?: return@evaluateJavascript
+                glossary.firstOrNull { it.id == id }?.let(onTermTap)
+            }
+            return false
+        }
+    })
 
     /** Rola uma tela; no fim (ou começo) do capítulo, passa para o próximo (ou o anterior, já no fim). */
     private fun turnPage(direction: Int) {
@@ -195,11 +232,18 @@ class EpubViewer(
         val token = ++loadToken
         updateLabel()
         val path = chapters[index]
+        val terms = glossary
         val css = readerCss()
         cssSnapshot = css
         host.worker.execute {
             val html = try {
-                file.getEntry(path)?.let { entry -> file.getInputStream(entry).use { prepareHtml(it.readBytes(), css) } }
+                file.getEntry(path)?.let { entry ->
+                    file.getInputStream(entry).use { input ->
+                        // Termos do glossário viram <span class="alx-term"> antes do preparo do HTML.
+                        val marked = Glossary.markHtml(String(input.readBytes(), Charsets.UTF_8), terms)
+                        EpubHtml.prepare(marked, css)
+                    }
+                }
             } catch (e: Exception) {
                 null
             }
