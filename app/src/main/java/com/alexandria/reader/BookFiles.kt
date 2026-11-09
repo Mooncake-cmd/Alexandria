@@ -27,6 +27,20 @@ object BookFiles {
     private inline fun <T> locked(id: Long, block: () -> T): T = synchronized(locks.getOrPut(id) { Any() }) { block() }
 
     private fun booksDir(context: Context) = File(context.cacheDir, "books").apply { mkdirs() }
+
+    /**
+     * Livros recebidos de outros apps ("Abrir com", "Compartilhar"). Ficam guardados no app (não no
+     * cache), porque a permissão que o outro app dá é temporária.
+     */
+    fun libraryDir(context: Context) = File(context.filesDir, "library").apply { mkdirs() }
+
+    /** O arquivo é uma cópia guardada pelo próprio app (e não um arquivo do celular). */
+    fun isOwnedCopy(context: Context, uri: String): Boolean {
+        val parsed = Uri.parse(uri)
+        if (parsed.scheme != "file") return false
+        val path = File(parsed.path ?: return false).canonicalPath
+        return path.startsWith(libraryDir(context).canonicalPath + File.separator)
+    }
     private fun coversDir(context: Context) = File(context.filesDir, "covers").apply { mkdirs() }
 
     fun coverFile(context: Context, id: Long) = File(coversDir(context), "$id.jpg")
@@ -52,6 +66,8 @@ object BookFiles {
 
     /** Cópia local do documento. Roda em thread de fundo: pode levar alguns segundos. */
     fun localCopy(context: Context, item: LibraryItem): File = locked(item.id) {
+        // Arquivo que já está no app (recebido de outro app): usa direto, sem copiar de novo.
+        if (isOwnedCopy(context, item.uri)) return@locked File(Uri.parse(item.uri).path!!)
         val target = File(booksDir(context), "${item.id}.${item.format}")
         if (target.length() > 0) return@locked target
         val partial = File(target.path + ".part")
@@ -101,6 +117,11 @@ object BookFiles {
 
     fun djvuSource(context: Context, item: LibraryItem): PageSource =
         DjvuSource(OreEngine.start(context, "eradjvu"), localCopy(context, item))
+
+    /** Apaga só as cópias e conversões em cache de um livro (a capa fica). */
+    fun deleteCaches(context: Context, id: Long) {
+        booksDir(context).listFiles()?.filter { it.name.startsWith("$id.") }?.forEach { it.deleteRecursively() }
+    }
 
     /** Apaga cópia local, capa e marcadores de um documento removido da biblioteca. */
     fun delete(context: Context, id: Long) {

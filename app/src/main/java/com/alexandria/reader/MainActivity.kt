@@ -63,8 +63,8 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        // Ao voltar do leitor, atualiza progresso, Estante e anotações.
-        if (refreshOnResume) {
+        // Ao voltar (do leitor ou de um livro aberto por outro app), atualiza a tela.
+        if (refreshOnResume || section != SECTION_SETTINGS) {
             refreshOnResume = false
             showSection(section)
         }
@@ -282,7 +282,11 @@ class MainActivity : Activity() {
             ellipsize = TextUtils.TruncateAt.END
         })
         info.addView(label(entry.format.uppercase(), 10f, gold, true).apply { setPadding(0, dp(4), 0, 0) })
-        val base = if (entry.finished) "Concluído em ${dateFormat.format(Date(entry.finishedAt))}" else ReadingStatus.describe(entry)
+        val base = when {
+            entry.archived -> "Concluído em ${dateFormat.format(Date(entry.finishedAt))} · arquivo removido"
+            entry.finished -> "Concluído em ${dateFormat.format(Date(entry.finishedAt))}"
+            else -> ReadingStatus.describe(entry)
+        }
         val status = if (entry.readingSeconds >= 60) "$base · ⏱ ${ReadingTime.format(entry.readingSeconds)}" else base
         info.addView(label(status, 11f, muted).apply { setPadding(0, dp(3), 0, dp(6)) })
         if (entry.format in Formats.readable) info.addView(progressBar(ReadingStatus.progress(entry)), LinearLayout.LayoutParams(-1, dp(4)))
@@ -322,18 +326,65 @@ class MainActivity : Activity() {
     }
 
     private fun itemOptions(entry: LibraryItem) {
-        val options = listOf(
-            (if (entry.shelf.isEmpty()) "Mover para prateleira…" else "Prateleira: ${entry.shelf}…") to { chooseShelf(entry) },
-            (if (entry.finished) "Voltar para \"Lendo agora\"" else "Marcar como concluído") to {
+        val options = mutableListOf<Pair<String, () -> Unit>>()
+        options += (if (entry.shelf.isEmpty()) "Mover para prateleira…" else "Prateleira: ${entry.shelf}…") to { chooseShelf(entry) }
+        if (!entry.archived) {
+            options += (if (entry.finished) "Voltar para \"Lendo agora\"" else "Marcar como concluído") to {
                 database.setFinished(entry.id, !entry.finished)
                 showLibrary()
-            },
-            "Remover da biblioteca" to { confirmRemove(entry) }
-        )
+            }
+        }
+        if (entry.finished && !entry.archived) options += "Liberar espaço (manter na Estante)…" to { confirmFreeSpace(entry) }
+        options += (if (entry.archived) "Remover da Estante" else "Remover da biblioteca") to { confirmRemove(entry) }
         AlertDialog.Builder(this)
             .setTitle(displayTitle(entry.name))
             .setItems(options.map { it.first }.toTypedArray()) { _, which -> options[which].second() }
             .setNegativeButton("Cancelar", null)
+            .show()
+    }
+
+    /**
+     * Livro concluído: apaga o arquivo para liberar espaço e mantém capa, nome, datas, tempo,
+     * anotações e glossário na Estante.
+     */
+    private fun confirmFreeSpace(entry: LibraryItem) {
+        val owned = BookFiles.isOwnedCopy(this, entry.uri)
+        val deleteOriginal = android.widget.CheckBox(this).apply {
+            text = "Apagar também o arquivo do celular"
+            isChecked = true
+            setTextColor(ink)
+        }
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(22), dp(8), dp(22), 0)
+            addView(label("\"${displayTitle(entry.name)}\" continua na Estante com a capa, o nome, as datas, as anotações e o glossário, mas o arquivo é apagado e o livro não abre mais.", 13f, muted))
+            addView(label(
+                if (owned) "O arquivo guardado no app será apagado."
+                else "Para ler de novo, é só importar ou abrir o arquivo outra vez: ele volta para o mesmo lugar.",
+                12f, muted
+            ).apply { setPadding(0, dp(8), 0, dp(4)) })
+            if (!owned) addView(deleteOriginal)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Liberar espaço?")
+            .setView(body)
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Liberar espaço") { _, _ ->
+                val wantsOriginal = owned || deleteOriginal.isChecked
+                background.execute {
+                    val result = IncomingBooks.freeSpace(applicationContext, database, entry, wantsOriginal)
+                    runOnUiThread {
+                        if (destroyed) return@runOnUiThread
+                        val message = when (result) {
+                            IncomingBooks.Freed.FILE_DELETED -> "Arquivo apagado. \"${displayTitle(entry.name)}\" continua na Estante."
+                            IncomingBooks.Freed.ORIGINAL_KEPT -> "Removido do app; o arquivo continua no celular. O livro segue na Estante."
+                            IncomingBooks.Freed.ORIGINAL_NOT_ALLOWED -> "O livro segue na Estante, mas o app não tem permissão para apagar o arquivo do celular (importado antes desta versão). Apague \"${entry.name}\" pelo app Arquivos."
+                        }
+                        AlertDialog.Builder(this).setMessage(message).setPositiveButton("OK", null).show()
+                        showLibrary()
+                    }
+                }
+            }
             .show()
     }
 
@@ -424,7 +475,8 @@ class MainActivity : Activity() {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "*/*"
             putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+            // Escrita também: permite apagar o arquivo depois, ao liberar espaço de um livro concluído.
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
         }
         try {
             startActivityForResult(intent, REQUEST_DOCUMENT)
@@ -448,20 +500,34 @@ class MainActivity : Activity() {
 
         var added = 0
         var rejected = 0
+        var restored = 0
         uris.forEach { uri ->
-            val name = queryDisplayName(uri) ?: "Documento importado"
+            val (described, size) = IncomingBooks.describe(this, uri)
+            val name = queryDisplayName(uri) ?: described
             var format = Formats.detect(name, contentResolver.getType(uri))
             if (format == null) {
                 rejected++
                 return@forEach
             }
             if (format == "cbr" && isZip(uri)) format = "cbz" // CBR que é ZIP por dentro abre como CBZ
-            try {
-                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            } catch (e: SecurityException) {
-                // Nem todo provedor oferece permissão persistente; o item entra mesmo assim.
+            keepPermission(uri)
+            val same = database.findByNameAndSize(name, size)
+            when {
+                // Livro arquivado na Estante: o arquivo importado de novo o traz de volta, no mesmo lugar.
+                same != null && same.archived -> {
+                    try {
+                        database.relink(same.id, uri.toString(), format, size)
+                        restored++
+                    } catch (e: Exception) {
+                        // Mesmo endereço já em outro registro: segue como "já está na biblioteca".
+                    }
+                }
+                same != null -> Unit
+                database.add(name, uri.toString(), format, size) != null -> added++
             }
-            if (database.add(name, uri.toString(), format) != null) added++
+        }
+        if (restored > 0) {
+            Toast.makeText(this, "$restored livro(s) da Estante voltaram a ter arquivo.", Toast.LENGTH_LONG).show()
         }
         showLibrary()
 
@@ -472,6 +538,19 @@ class MainActivity : Activity() {
             else -> "Esse documento já está na biblioteca."
         }
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+    }
+
+    /** Guarda a permissão (leitura e, se o provedor deu, escrita) para abrir o livro depois. */
+    private fun keepPermission(uri: Uri) {
+        try {
+            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        } catch (e: SecurityException) {
+            try {
+                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            } catch (ignored: SecurityException) {
+                // Nem todo provedor oferece permissão persistente; o item entra mesmo assim.
+            }
+        }
     }
 
     private fun isZip(uri: Uri): Boolean = try {
@@ -495,6 +574,15 @@ class MainActivity : Activity() {
     }
 
     private fun openItem(entry: LibraryItem, position: Int? = null) {
+        if (entry.archived) {
+            AlertDialog.Builder(this)
+                .setTitle(displayTitle(entry.name))
+                .setMessage("O arquivo deste livro foi apagado para liberar espaço. Para ler de novo, importe ou abra o arquivo outra vez: ele volta para o mesmo lugar, com as anotações e o glossário.")
+                .setPositiveButton("Importar", { _, _ -> chooseDocument() })
+                .setNegativeButton("Fechar", null)
+                .show()
+            return
+        }
         if (entry.format in Formats.readable) {
             refreshOnResume = true
             val intent = Intent(this, ReaderActivity::class.java).putExtra(ReaderActivity.EXTRA_ITEM_ID, entry.id)
@@ -514,8 +602,12 @@ class MainActivity : Activity() {
         } catch (e: Exception) {
             // Sem permissão persistida para liberar; segue com a remoção.
         }
+        val owned = if (BookFiles.isOwnedCopy(this, entry.uri)) File(Uri.parse(entry.uri).path!!) else null
         database.remove(entry.id)
-        background.execute { BookFiles.delete(applicationContext, entry.id) }
+        background.execute {
+            BookFiles.delete(applicationContext, entry.id)
+            owned?.delete() // cópia recebida de outro app: o arquivo é do Alexandria
+        }
         showLibrary()
     }
 
@@ -642,6 +734,13 @@ class MainActivity : Activity() {
             setPadding(0, 0, 0, dp(10))
         })
         addMonthCalendar(readingDays, today)
+        if (readingDays.isNotEmpty() || items.any { it.readingSeconds > 0 }) {
+            content.addView(label("Limpar estatísticas…", 13f, gold, true).apply {
+                minHeight = dp(44)
+                gravity = Gravity.CENTER_VERTICAL
+                setOnClickListener { confirmClearStatistics() }
+            })
+        }
         content.addView(label("BIBLIOTECA", 10f, muted, true).apply { setPadding(0, dp(16), 0, dp(6)) })
         val tiles = listOf(
             items.size.toString() to "na biblioteca",
@@ -667,6 +766,19 @@ class MainActivity : Activity() {
                 content.addView(label("${format.uppercase()}  ·  $count", 13f, ink).apply { setPadding(0, dp(2), 0, dp(2)) })
             }
         }
+    }
+
+    private fun confirmClearStatistics() {
+        AlertDialog.Builder(this)
+            .setTitle("Limpar estatísticas?")
+            .setMessage("Zera o tempo de leitura (de todos os livros) e a sequência de dias. Livros, progresso, Estante, anotações e glossário não são afetados. Não dá para desfazer.")
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Limpar") { _, _ ->
+                database.clearStatistics()
+                Toast.makeText(this, "Estatísticas zeradas.", Toast.LENGTH_SHORT).show()
+                showStats()
+            }
+            .show()
     }
 
     private fun statTiles(tiles: List<Pair<String, String>>) {

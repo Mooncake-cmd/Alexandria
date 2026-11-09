@@ -26,9 +26,14 @@ data class LibraryItem(
     val finishedAt: Long = 0,
     val shelf: String = "",
     /** Tempo total de leitura deste livro, em segundos. */
-    val readingSeconds: Long = 0
+    val readingSeconds: Long = 0,
+    /** Tamanho do arquivo em bytes (0 se desconhecido); junto com o nome, reconhece o mesmo livro aberto de novo. */
+    val fileSize: Long = 0,
+    /** Quando o arquivo foi apagado para liberar espaço (0 = ainda tem arquivo). Capa e nome continuam na Estante. */
+    val archivedAt: Long = 0
 ) {
     val finished: Boolean get() = finishedAt > 0
+    val archived: Boolean get() = archivedAt > 0
 }
 
 /**
@@ -51,7 +56,7 @@ data class Note(
     val createdAt: Long
 )
 
-class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.db", null, 5) {
+class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.db", null, 6) {
     override fun onConfigure(db: SQLiteDatabase) {
         db.setForeignKeyConstraintsEnabled(true)
     }
@@ -69,7 +74,9 @@ class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.
                 opened_at INTEGER NOT NULL DEFAULT 0,
                 finished_at INTEGER NOT NULL DEFAULT 0,
                 shelf TEXT NOT NULL DEFAULT '',
-                reading_seconds INTEGER NOT NULL DEFAULT 0
+                reading_seconds INTEGER NOT NULL DEFAULT 0,
+                file_size INTEGER NOT NULL DEFAULT 0,
+                archived_at INTEGER NOT NULL DEFAULT 0
             )
         """.trimIndent())
         createNotesTable(db)
@@ -93,6 +100,10 @@ class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.
         if (oldVersion < 5) {
             db.execSQL("ALTER TABLE library_items ADD COLUMN reading_seconds INTEGER NOT NULL DEFAULT 0")
             createReadingTables(db)
+        }
+        if (oldVersion < 6) {
+            db.execSQL("ALTER TABLE library_items ADD COLUMN file_size INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE library_items ADD COLUMN archived_at INTEGER NOT NULL DEFAULT 0")
         }
     }
 
@@ -130,13 +141,14 @@ class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.
      * Adiciona o documento. Se o mesmo URI já existir, mantém o registro (id, data e posição de
      * leitura) e só atualiza o nome. Retorna o id do novo documento, ou null se ele já existia.
      */
-    fun add(name: String, uri: String, format: String): Long? {
+    fun add(name: String, uri: String, format: String, fileSize: Long = 0): Long? {
         val db = writableDatabase
         val values = ContentValues().apply {
             put("name", name)
             put("uri", uri)
             put("format", format)
             put("added_at", System.currentTimeMillis())
+            put("file_size", fileSize)
         }
         val id = db.insertWithOnConflict("library_items", null, values, SQLiteDatabase.CONFLICT_IGNORE)
         if (id != -1L) return id
@@ -193,6 +205,48 @@ class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.
     fun shelves(): List<String> = all().map { it.shelf }.filter { it.isNotEmpty() }.distinct().sortedWith(Shelves.order)
 
     /** Remove o documento e, junto, as anotações dele. */
+    /** O mesmo livro já na biblioteca: mesmo nome e mesmo tamanho (quando o tamanho é conhecido). */
+    fun findByNameAndSize(name: String, fileSize: Long): LibraryItem? {
+        if (fileSize <= 0) return null
+        return readableDatabase.rawQuery("$SELECT WHERE name = ? AND file_size = ? ORDER BY id LIMIT 1", arrayOf(name, fileSize.toString())).use { c ->
+            if (c.moveToFirst()) c.toItem() else null
+        }
+    }
+
+    /** Liga o livro a um novo arquivo (ex.: reaberto de outro app ou reimportado depois de arquivado). */
+    fun relink(id: Long, uri: String, format: String, fileSize: Long) {
+        update(id, ContentValues().apply {
+            put("uri", uri)
+            put("format", format)
+            if (fileSize > 0) put("file_size", fileSize)
+            put("archived_at", 0L)
+        })
+    }
+
+    /**
+     * Livro concluído que teve o arquivo apagado: continua na Estante com capa, nome, datas,
+     * anotações e glossário, mas não abre mais (o endereço vira um marcador único).
+     */
+    fun archive(id: Long) {
+        update(id, ContentValues().apply {
+            put("archived_at", System.currentTimeMillis())
+            put("uri", "archived:$id")
+        })
+    }
+
+    /** Zera tempo de leitura e sequência de dias. Livros, progresso, anotações e glossário ficam. */
+    fun clearStatistics() {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.execSQL("DELETE FROM reading_days")
+            db.execSQL("UPDATE library_items SET reading_seconds = 0")
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
     fun remove(id: Long) {
         writableDatabase.delete("library_items", "id = ?", arrayOf(id.toString()))
     }
@@ -306,12 +360,12 @@ class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.
 
     private fun Cursor.toItem() = LibraryItem(
         getLong(0), getString(1), getString(2), getString(3), getLong(4), getInt(5), getInt(6), getLong(7),
-        getLong(8), getString(9), getLong(10)
+        getLong(8), getString(9), getLong(10), getLong(11), getLong(12)
     )
 
     private companion object {
         const val SELECT = "SELECT id, name, uri, format, added_at, last_position, page_count, opened_at, " +
-            "finished_at, shelf, reading_seconds FROM library_items"
+            "finished_at, shelf, reading_seconds, file_size, archived_at FROM library_items"
     }
 }
 

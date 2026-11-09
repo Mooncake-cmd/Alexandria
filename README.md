@@ -1,6 +1,6 @@
 # Alexandria — projeto Android
 
-**Versão:** 0.9.0  
+**Versão:** 0.10.0  
 **Pacote:** `com.alexandria.reader`  
 **Plataforma:** Android 6.0 ou superior (API 23+)  
 **Idioma da interface:** Português (Brasil)
@@ -12,6 +12,15 @@
 - Ícone próprio (farol sobre livros), adaptativo e com versão monocromática para ícones temáticos (Android 13+).
 
 ### Biblioteca
+
+- **Abrir com / Compartilhar**: o Alexandria aparece na lista ao abrir ou compartilhar PDF, EPUB, MOBI/AZW3, DJVU,
+  CBZ/CBR e DOCX em outros apps (WhatsApp, Gmail, Arquivos, Drive…). O arquivo é copiado para o app (a permissão do
+  outro app é temporária), entra na biblioteca e abre na hora. O mesmo livro (mesmo nome e tamanho) aberto de novo
+  volta ao ponto onde parou, sem duplicar. TXT ficou de fora para o app não aparecer em qualquer arquivo de texto.
+- **Liberar espaço de um livro concluído** (toque longo → "Liberar espaço (manter na Estante)"): o arquivo é apagado,
+  mas capa, nome, datas, tempo, anotações e glossário ficam na Estante. Importar ou abrir o arquivo de novo traz o
+  livro de volta ao mesmo lugar. O arquivo do celular só é apagado se o app tiver permissão de escrita nele (a
+  importação pede essa permissão desde a 0.10.0; para livros importados antes, o app avisa para apagar pelo Arquivos).
 
 - Importação de vários documentos de uma vez (Storage Access Framework), guardados no SQLite local.
 - Cartões com **capa** (PDF, EPUB e CBZ), formato, progresso em texto e barra de progresso.
@@ -50,6 +59,8 @@ Em todos os formatos:
   imagem: dá para cadastrar termos pelo menu, mas não há sublinhado.
 - **Tempo de leitura**: o cronômetro aparece embaixo do título ao abrir o livro. Para quando o app sai da tela ou depois
   de 5 minutos sem nenhum toque. O total de cada livro aparece no cartão da biblioteca.
+- **Limpar estatísticas** (aba Estatísticas): zera tempo de leitura e sequência, sem mexer em livros, progresso,
+  Estante, anotações e glossário.
 - **Sequência de dias**: um dia conta a partir de 5 minutos de leitura. A biblioteca mostra "🔥 N dias seguidos" e a aba
   Estatísticas mostra sequência atual, melhor sequência, tempo de hoje, tempo total, livros com mais tempo e um
   calendário do mês com os dias lidos.
@@ -107,13 +118,16 @@ Os recursos da 0.4.0 vieram da Biblioteca do site RPG Hardcore (HTML/JavaScript)
 
 ## Testes
 
-Os testes rodam na JVM, sem emulador (106 no total):
+Os testes rodam na JVM, sem emulador (115 no total):
 
 - Lógica pura: `FormatsTest`, `TextDecodingTest`, `TextChunkerTest`, `ReadingStatusTest`, `BookHelpersTest` (ordem natural, busca sem acentos, caminhos em ZIP, preparo do HTML do EPUB, prateleiras, blocos do DOCX).
 - `ZipFormatsTest` (Robolectric): EPUB 2 e 3 (capítulos, sumário, capa), DOCX (títulos com estilos em português, listas, estilos, tabelas, caixas de texto), CBZ.
 - `LibraryDatabaseTest` (Robolectric): migrações 0.2 → 0.4 e 0.3 → 0.4 sem perda de dados, anotações, Estante e prateleiras.
 - `TextReaderTest`, `ReaderFormatsTest` (Robolectric): abre TXT, DOCX e EPUB no leitor, salva e restaura posição, busca, CBR em RAR com erro claro.
 - `MainActivityTest` (Robolectric): biblioteca com prateleiras e Estante, abas Notas, Estatísticas e Ajustes.
+- `IncomingBooksTest`: migração para o banco v6, "Abrir com" e "Compartilhar" oferecidos para os formatos certos (e
+  não para TXT), livro repetido reaproveitado, liberar espaço mantendo na Estante, livro arquivado voltando com
+  anotações e glossário, limpar estatísticas.
 - `PageTextModelTest`, `PdfTextTest`: texto do PDF por caractere com posição (EraPDF real, com acentos), toque longo
   selecionando palavras nos dois modos, termo do glossário tocado no PDF e busca sem acentos.
 - `ReadingLogicTest`, `GlossaryAndTimeTest`: sequência de dias, cronômetro com pausa por inatividade e virada de dia,
