@@ -16,7 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ENGINES = ["eramobi", "eradjvu", "eracomic"]
+ENGINES = ["eramobi", "eradjvu", "eracomic", "erapdf"]
 HERE = Path(__file__).resolve().parent
 
 # Mesmas exceções do Application.mk: o código foi escrito para o NDK r20.

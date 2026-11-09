@@ -101,7 +101,8 @@ class MainActivityTest {
         val shown = texts(activity.window.decorView)
         assertTrue(shown.any { it.startsWith("Versão ") })
         assertTrue(shown.any { it.startsWith("Cópias e conversões em cache:") })
-        assertTrue(shown.contains("›  EraMOBI e EraDjVu — GNU AGPL 3.0"))
+        assertTrue(shown.contains("›  EraPDF (MuPDF), EraMOBI e EraDjVu — GNU AGPL 3.0"))
+        assertTrue(shown.contains("›  Fonte Atkinson Hyperlegible — SIL OFL 1.1"))
         assertTrue(shown.contains("›  EraComic — GNU GPL 2.0"))
         // Todos os textos de licença listados existem nos assets do app.
         for (file in listOf("AGPL-3.0.txt", "GPL-2.0.txt", "LGPL-3.0.txt", "GPL-3.0.txt", "Apache-2.0.txt", "terceiros.txt")) {

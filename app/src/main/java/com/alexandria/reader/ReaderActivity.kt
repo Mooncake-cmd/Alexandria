@@ -472,7 +472,7 @@ class ReaderActivity : Activity(), ReaderHost {
     override fun onActionModeStarted(mode: ActionMode) {
         super.onActionModeStarted(mode)
         val view = viewer ?: return
-        if (view.annotatesPages || currentFocus == searchInput) return
+        if (!view.selectsText || currentFocus == searchInput) return
         mode.menu.add(Menu.NONE, MENU_TERM, 0, "Definir termo").setOnMenuItemClickListener {
             val found = view.selection { excerpt, _ ->
                 mode.finish()

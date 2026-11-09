@@ -801,7 +801,7 @@ class MainActivity : Activity() {
         }
 
         settingsPanel("Licenças de código aberto") {
-            addView(label("MOBI/AZW3, DJVU e CBR são lidos pelos motores EraMOBI, EraDjVu e EraComic do projeto OpenReadEra (ReadEra), que são software livre. O código-fonte deles acompanha o código do Alexandria.", 12f, muted).apply {
+            addView(label("PDF, MOBI/AZW3, DJVU e CBR são lidos pelos motores EraPDF, EraMOBI, EraDjVu e EraComic do projeto OpenReadEra (ReadEra), que são software livre. O código-fonte deles acompanha o código do Alexandria.", 12f, muted).apply {
                 setPadding(0, 0, 0, dp(8))
             })
             LICENSES.forEach { (title, file) ->
@@ -874,12 +874,12 @@ class MainActivity : Activity() {
             SECTION_SETTINGS to R.drawable.ic_tab_settings
         )
         private val LICENSES = listOf(
-            "EraMOBI e EraDjVu — GNU AGPL 3.0" to "AGPL-3.0.txt",
+            "EraPDF (MuPDF), EraMOBI e EraDjVu — GNU AGPL 3.0" to "AGPL-3.0.txt",
             "EraComic — GNU GPL 2.0" to "GPL-2.0.txt",
             "libmobi — GNU LGPL 3.0" to "LGPL-3.0.txt",
             "GNU GPL 3.0 (base da LGPL 3.0)" to "GPL-3.0.txt",
             "Common CLI viewer interface — Apache 2.0" to "Apache-2.0.txt",
-            "libjpeg-turbo, libpng, libwebp, MiniZip, EasyBMP" to "terceiros.txt",
+            "libjpeg-turbo, libpng, libwebp, MiniZip, EasyBMP, FreeType, OpenJPEG" to "terceiros.txt",
             "Fonte Atkinson Hyperlegible — SIL OFL 1.1" to "OFL-1.1-Atkinson.txt"
         )
         private val COVER_FORMATS = setOf("pdf", "cbz", "cbr", "epub", "mobi", "djvu")

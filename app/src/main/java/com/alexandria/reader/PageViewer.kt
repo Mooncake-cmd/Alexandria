@@ -38,6 +38,9 @@ interface PageSource {
 
     /** Proporção altura/largura da página [index], para encaixá-la na tela antes de desenhar. */
     fun aspect(index: Int): Float
+
+    /** Texto da página com posição (só o EraPDF tem; os demais devolvem null). */
+    fun text(index: Int): PageText? = null
     fun close()
 
     companion object {
@@ -228,10 +231,21 @@ class ZoomPageView(context: Context) : android.view.View(context) {
         invalidate()
     }
 
+    /** Desenha por cima da página (seleção, glossário, busca), recebendo o retângulo da página. */
+    var overlay: ((android.graphics.Canvas, android.graphics.RectF) -> Unit)? = null
+
+    /** Retângulo ocupado pela página agora, em pixels da view. */
+    fun pageRect() = android.graphics.RectF(left, top, left + contentWidth(), top + contentHeight())
+
+    /** Ponto da view em frações da página (pode sair de 0..1 fora dela). */
+    fun toPage(x: Float, y: Float): Pair<Float, Float> =
+        Pair((x - left) / contentWidth().coerceAtLeast(1f), (y - top) / contentHeight().coerceAtLeast(1f))
+
     override fun onDraw(canvas: android.graphics.Canvas) {
         val page = bitmap ?: return
         target.set(left, top, left + contentWidth(), top + contentHeight())
         canvas.drawBitmap(page, null, target, paint)
+        overlay?.invoke(canvas, target)
     }
 
     companion object {
@@ -263,6 +277,14 @@ class PageViewer(host: ReaderHost, private val openSource: (LibraryItem) -> Page
     }
     private val gestures = Gestures()
 
+    /** Seleção, glossário e busca no PDF (quando a fonte tem texto). */
+    private val textLayer = PageTextLayer(host, { page -> source?.text(page) }) { pageView.invalidate() }
+    private var draggingSelection = 0
+
+    init {
+        pageView.overlay = { canvas, rect -> if (count > 0) textLayer.draw(canvas, pageIndex, rect) }
+    }
+
     override val body = pageView
     override val footer = footerBar().apply {
         addView(prevButton)
@@ -271,11 +293,33 @@ class PageViewer(host: ReaderHost, private val openSource: (LibraryItem) -> Page
     }
     override val loaded get() = count > 0
     override val annotatesPages = true
+    override val selectsText get() = kind == "pdf"
+    override val searchable get() = kind == "pdf"
 
     init {
         setEnabledLook(prevButton, false)
         setEnabledLook(nextButton, false)
     }
+
+    override fun setGlossary(terms: List<GlossaryTerm>, onTap: (GlossaryTerm) -> Unit) = textLayer.setGlossary(terms, onTap)
+
+    override fun selection(done: (excerpt: String, position: Int) -> Unit): Boolean {
+        val text = textLayer.selectedText() ?: return false
+        done(text, textLayer.selection?.page ?: pageIndex)
+        return true
+    }
+
+    override fun search(term: String, done: (List<SearchHit>) -> Unit) = searchPages(host, count, { source?.text(it) }, term, done)
+
+    override fun showHit(hit: SearchHit, term: String) {
+        textLayer.setSearchMark(hit.chunk, hit.offset, hit.offset + hit.length)
+        if (hit.chunk != pageIndex) goTo(hit.chunk)
+    }
+
+    override fun clearSearch() = textLayer.clearSearchMark()
+
+    private fun showSelectionActions() =
+        textLayer.showActions(pageView) { textLayer.selectionBounds(pageIndex, pageView.pageRect()) }
 
     override fun open(item: LibraryItem, start: Int) {
         openPageSource(host, openSource, item, kind) { opened ->
@@ -304,7 +348,9 @@ class PageViewer(host: ReaderHost, private val openSource: (LibraryItem) -> Page
     private fun showPage(index: Int) {
         if (count == 0) return
         val target = index.coerceIn(0, count - 1)
+        if (target != pageIndex) textLayer.clearSelection()
         pageIndex = target
+        textLayer.ensure(target)
         updateControls(1f)
         host.onPositionChanged()
         val token = ++renderToken
@@ -374,6 +420,23 @@ class PageViewer(host: ReaderHost, private val openSource: (LibraryItem) -> Page
             pinching = false
         }
         if (!touchInPage || count == 0) return null
+        // Arrastar uma alça da seleção (ou o dedo logo depois do toque longo) não move a página.
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            val (x, y) = local(event)
+            draggingSelection = textLayer.grabHandle(pageIndex, x, y, pageView.pageRect())
+        }
+        if (draggingSelection != 0) {
+            val (x, y) = local(event)
+            val (nx, ny) = pageView.toPage(x, y)
+            when (event.actionMasked) {
+                MotionEvent.ACTION_MOVE -> textLayer.dragTo(pageIndex, nx, ny)
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    draggingSelection = 0
+                    showSelectionActions()
+                }
+            }
+            return true
+        }
         gestures.scale.onTouchEvent(event)
         if (gestures.scale.isInProgress) pinching = true
         if (!pinching) gestures.tap.onTouchEvent(event)
@@ -401,6 +464,22 @@ class PageViewer(host: ReaderHost, private val openSource: (LibraryItem) -> Page
                 return true
             }
 
+            override fun onLongPress(e: MotionEvent) {
+                val (x, y) = local(e)
+                val (nx, ny) = pageView.toPage(x, y)
+                if (textLayer.selectWordAt(pageIndex, nx, ny)) {
+                    pageView.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                    // Continuar arrastando o dedo estende a seleção.
+                    draggingSelection = 1
+                }
+            }
+
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                val (x, y) = local(e)
+                val (nx, ny) = pageView.toPage(x, y)
+                return textLayer.tap(pageIndex, nx, ny)
+            }
+
             override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
                 pageView.fling(velocityX, velocityY)
                 return true
@@ -408,6 +487,7 @@ class PageViewer(host: ReaderHost, private val openSource: (LibraryItem) -> Page
 
             override fun onDoubleTap(e: MotionEvent): Boolean {
                 val (x, y) = local(e)
+                textLayer.clearSelection()
                 when (PageTurn.direction(x, pageView.width.toFloat())) {
                     1 -> goTo(pageIndex + 1)
                     -1 -> goTo(pageIndex - 1)
@@ -428,7 +508,19 @@ class PageViewer(host: ReaderHost, private val openSource: (LibraryItem) -> Page
         private fun create(host: ReaderHost, kind: String, open: (LibraryItem) -> PageSource): BookViewer =
             if (ReadingPrefs.paged(host.activity)) PageViewer(host, open, kind) else PageScrollViewer(host, open, kind)
 
-        fun pdf(host: ReaderHost) = create(host, "pdf") { item -> PdfSource(host.activity, Uri.parse(item.uri)) }
+        /**
+         * PDF pelo EraPDF (texto selecionável, glossário, busca). Se o motor não abrir neste aparelho,
+         * cai para o renderizador do Android, que só desenha as páginas.
+         */
+        fun pdf(host: ReaderHost) = create(host, "pdf") { item ->
+            try {
+                EraPdfSource(OreEngine.start(host.activity, "erapdf"), BookFiles.localCopy(host.activity, item))
+            } catch (e: PdfPasswordException) {
+                throw e
+            } catch (e: Exception) {
+                PdfSource(host.activity, Uri.parse(item.uri))
+            }
+        }
 
         /** CBZ, ou CBR (ZIP disfarçado ou RAR de verdade, este pelo motor EraComic). */
         fun comic(host: ReaderHost) = create(host, "cbz") { item -> BookFiles.comicSource(host.activity, item) }
@@ -457,6 +549,9 @@ internal fun BookViewer.openPageSource(
         } catch (e: SecurityException) {
             host.activity.runOnUiThread { if (!host.closed) host.fail("Sem permissão para abrir este arquivo. Remova-o e importe de novo.") }
             return@execute
+        } catch (e: PdfPasswordException) {
+            host.activity.runOnUiThread { if (!host.closed) host.fail("Este PDF é protegido por senha, o que o app ainda não suporta.") }
+            return@execute
         } catch (e: Exception) {
             host.activity.runOnUiThread { if (!host.closed) host.fail(error) }
             return@execute
@@ -474,6 +569,30 @@ internal fun BookViewer.openPageSource(
                 done(opened to total)
             }
         }
+    }
+}
+
+/**
+ * Busca em todas as páginas de um PDF com texto. Roda na thread de fundo; cada resultado guarda a
+ * página em [SearchHit.chunk] e o trecho em [SearchHit.offset]/[SearchHit.length].
+ */
+internal fun BookViewer.searchPages(host: ReaderHost, count: Int, text: (Int) -> PageText?, term: String, done: (List<SearchHit>) -> Unit) {
+    host.worker.execute {
+        val hits = mutableListOf<SearchHit>()
+        val length = term.trim().length
+        for (page in 0 until count) {
+            val pageText = try {
+                text(page)
+            } catch (e: Exception) {
+                null
+            } ?: continue
+            for (offset in TextSearch.findAll(pageText.string, term)) {
+                hits += SearchHit(page, "Pág. ${page + 1}: " + TextViewer.excerpt(pageText.string, offset, length), page, offset, length)
+                if (hits.size >= 500) break
+            }
+            if (hits.size >= 500) break
+        }
+        host.activity.runOnUiThread { if (!host.closed) done(hits) }
     }
 }
 
@@ -525,16 +644,19 @@ class PageScrollViewer(host: ReaderHost, private val openSource: (LibraryItem) -
         override fun sizeOf(key: Int, value: Bitmap) = value.byteCount
     }
 
-    private val adapter = object : android.widget.BaseAdapter() {
+    private val adapter: android.widget.BaseAdapter = object : android.widget.BaseAdapter() {
         override fun getCount(): Int = this@PageScrollViewer.count
         override fun getItem(position: Int): Any = position
         override fun getItemId(position: Int): Long = position.toLong()
 
         override fun getView(position: Int, convertView: android.view.View?, parent: android.view.ViewGroup): android.view.View {
-            val view = convertView as? ImageView ?: ImageView(context).apply {
+            val view = convertView as? PageItemView ?: PageItemView(context).apply {
                 scaleType = ImageView.ScaleType.FIT_XY
                 setBackgroundColor(Color.WHITE)
+                overlay = { canvas, page, rect -> textLayer.draw(canvas, page, rect) }
             }
+            view.page = position
+            textLayer.ensure(position)
             view.colorFilter = pageFilter
             val width = parent.width.takeIf { it > 0 } ?: context.resources.displayMetrics.widthPixels
             val height = (width * (aspects[position] ?: defaultAspect)).toInt().coerceAtLeast(1)
@@ -548,7 +670,7 @@ class PageScrollViewer(host: ReaderHost, private val openSource: (LibraryItem) -
         }
     }
 
-    private val list = android.widget.ListView(context).apply {
+    private val list: android.widget.ListView = android.widget.ListView(context).apply {
         adapter = this@PageScrollViewer.adapter
         dividerHeight = context.dp(8)
         selector = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
@@ -580,6 +702,60 @@ class PageScrollViewer(host: ReaderHost, private val openSource: (LibraryItem) -
         contentDescription = "Ir para a página"
         setOnClickListener { askPage(host.activity, count, position()) { goTo(it) } }
     }
+
+    // ---------- texto: seleção, glossário e busca ----------
+
+    private val textLayer: PageTextLayer = PageTextLayer(host, { page -> source?.text(page) }) {
+        for (i in 0 until list.childCount) list.getChildAt(i).invalidate()
+    }
+    private var draggingSelection = 0
+
+    /** Página e ponto (frações da página) sob o ponto da moldura, considerando zoom e deslocamento. */
+    private fun pageAt(frameX: Float, frameY: Float): Triple<PageItemView, Float, Float>? {
+        val lx = (frameX - list.translationX) / zoom
+        val ly = frameY / zoom
+        for (i in 0 until list.childCount) {
+            val child = list.getChildAt(i) as? PageItemView ?: continue
+            if (ly >= child.top && ly < child.bottom) {
+                return Triple(child, (lx - child.left) / child.width.coerceAtLeast(1), (ly - child.top) / child.height.coerceAtLeast(1))
+            }
+        }
+        return null
+    }
+
+    /** Retângulo da página [child] em pixels da moldura. */
+    private fun frameRectOf(child: PageItemView) = android.graphics.RectF(
+        list.translationX + child.left * zoom, child.top * zoom,
+        list.translationX + child.right * zoom, child.bottom * zoom
+    )
+
+    private fun showSelectionActions() {
+        val page = textLayer.selection?.page ?: return
+        textLayer.showActions(frame) {
+            val child = (0 until list.childCount).map { list.getChildAt(it) }.filterIsInstance<PageItemView>().firstOrNull { it.page == page }
+            child?.let { textLayer.selectionBounds(page, frameRectOf(it)) }
+        }
+    }
+
+    override val selectsText get() = kind == "pdf"
+    override val searchable get() = kind == "pdf"
+
+    override fun setGlossary(terms: List<GlossaryTerm>, onTap: (GlossaryTerm) -> Unit) = textLayer.setGlossary(terms, onTap)
+
+    override fun selection(done: (excerpt: String, position: Int) -> Unit): Boolean {
+        val text = textLayer.selectedText() ?: return false
+        done(text, textLayer.selection?.page ?: position())
+        return true
+    }
+
+    override fun search(term: String, done: (List<SearchHit>) -> Unit) = searchPages(host, count, { source?.text(it) }, term, done)
+
+    override fun showHit(hit: SearchHit, term: String) {
+        textLayer.setSearchMark(hit.chunk, hit.offset, hit.offset + hit.length)
+        goTo(hit.chunk)
+    }
+
+    override fun clearSearch() = textLayer.clearSearchMark()
 
     override val body = frame
     override val footer = footerBar().apply { addView(pageLabel, LinearLayout.LayoutParams(0, -2, 1f)) }
@@ -714,9 +890,29 @@ class PageScrollViewer(host: ReaderHost, private val openSource: (LibraryItem) -
 
         override fun onDoubleTap(e: MotionEvent): Boolean {
             val (x, y) = local(e.x, e.y)
+            textLayer.clearSelection()
             setZoom(if (zoom > 1.05f) 1f else DOUBLE_TAP_ZOOM, x, y)
             sharpen()
             return true
+        }
+
+        override fun onLongPress(e: MotionEvent) {
+            val (x, y) = local(e.x, e.y)
+            val (child, nx, ny) = pageAt(x, y) ?: return
+            if (textLayer.selectWordAt(child.page, nx, ny)) {
+                frame.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                draggingSelection = 1
+                // A lista não deve rolar enquanto o dedo estende a seleção.
+                val cancel = MotionEvent.obtain(e).apply { action = MotionEvent.ACTION_CANCEL }
+                list.dispatchTouchEvent(cancel)
+                cancel.recycle()
+            }
+        }
+
+        override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+            val (x, y) = local(e.x, e.y)
+            val (child, nx, ny) = pageAt(x, y) ?: return false
+            return textLayer.tap(child.page, nx, ny)
         }
     })
 
@@ -727,6 +923,25 @@ class PageScrollViewer(host: ReaderHost, private val openSource: (LibraryItem) -
             pinching = false
         }
         if (!touchInside || count == 0) return null
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            val (x, y) = local(event.x, event.y)
+            val sel = textLayer.selection
+            val child = sel?.let { s -> (0 until list.childCount).map { list.getChildAt(it) }.filterIsInstance<PageItemView>().firstOrNull { it.page == s.page } }
+            draggingSelection = if (sel != null && child != null) textLayer.grabHandle(sel.page, x, y, frameRectOf(child)) else 0
+        }
+        if (draggingSelection != 0) {
+            val (x, y) = local(event.x, event.y)
+            val sel = textLayer.selection
+            when (event.actionMasked) {
+                MotionEvent.ACTION_MOVE -> pageAt(x, y)?.let { (child, nx, ny) -> if (sel != null && child.page == sel.page) textLayer.dragTo(sel.page, nx, ny) }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    draggingSelection = 0
+                    showSelectionActions()
+                }
+            }
+            if (event.actionMasked != MotionEvent.ACTION_DOWN) tapDetector.onTouchEvent(event)
+            return true
+        }
         scaleDetector.onTouchEvent(event)
         if (scaleDetector.isInProgress && !pinching) {
             // Durante a pinça a lista não rola: cancela o gesto que ela estava vendo.
@@ -787,5 +1002,19 @@ class PageScrollViewer(host: ReaderHost, private val openSource: (LibraryItem) -
     companion object {
         private const val MAX_ZOOM = 4f
         private const val DOUBLE_TAP_ZOOM = 2f
+    }
+}
+
+/** Página da rolagem contínua: a imagem e, por cima, a camada de texto da página [page]. */
+@android.annotation.SuppressLint("ViewConstructor", "AppCompatCustomView")
+class PageItemView(context: Context) : ImageView(context) {
+    var page = -1
+    var overlay: ((android.graphics.Canvas, Int, android.graphics.RectF) -> Unit)? = null
+    private val bounds = android.graphics.RectF()
+
+    override fun onDraw(canvas: android.graphics.Canvas) {
+        super.onDraw(canvas)
+        bounds.set(0f, 0f, width.toFloat(), height.toFloat())
+        overlay?.invoke(canvas, page, bounds)
     }
 }

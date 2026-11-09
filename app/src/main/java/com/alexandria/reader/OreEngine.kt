@@ -178,6 +178,7 @@ class OreEngine private constructor(
         const val CMD_REQ_QUIT = 4
         const val CMD_REQ_PAGE_INFO = 6
         const val CMD_REQ_PAGE_RENDER = 10
+        const val CMD_REQ_PAGE_TEXT = 14
         const val CMD_REQ_PAGE_FREE = 12
         const val CMD_REQ_CONVERT = 34
         const val CMD_REQ_VERSION = 36
@@ -185,6 +186,7 @@ class OreEngine private constructor(
         const val CMD_REQ_COMIC_RAR_EXTRACT = 76
 
         const val FORMAT_EPUB = 1
+        const val FORMAT_PDF = 3
         const val FORMAT_MOBI = 4
         const val FORMAT_DJVU = 5
 

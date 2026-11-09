@@ -1,15 +1,16 @@
 # Componentes de terceiros
 
-O Alexandria lê MOBI/AZW/AZW3, DJVU e CBR (RAR) com três motores do **OpenReadEra**, o projeto de código aberto
+O Alexandria lê PDF, MOBI/AZW/AZW3, DJVU e CBR (RAR) com quatro motores do **OpenReadEra**, o projeto de código aberto
 publicado pela equipe do ReadEra. Eles são programas separados, compilados a partir das fontes que estão em
 [`app/src/main/cpp/openreadera`](app/src/main/cpp/openreadera) e empacotados no APK como `liberamobi.so`,
-`liberadjvu.so` e `liberacomic.so`. O app os executa e conversa com eles por pipes nomeados, sem ligar o código
+`liberadjvu.so`, `liberacomic.so` e `liberapdf.so`. O app os executa e conversa com eles por pipes nomeados, sem ligar o código
 deles ao próprio código.
 
 | Motor | Para quê | Baseado em | Licença |
 |---|---|---|---|
 | EraMOBI | MOBI, AZW, AZW3 → EPUB | libmobi (LGPL-3.0+) | AGPL-3.0-ou-posterior |
 | EraDjVu | DJVU | DjVuLibre (GPL-2.0+), libjpeg-turbo | AGPL-3.0-ou-posterior |
+| EraPDF | PDF (páginas, texto com posição, busca) | MuPDF (AGPL-3.0+), jbig2dec (AGPL-3.0+), FreeType (FTL), OpenJPEG (BSD-2), libjpeg-turbo | AGPL-3.0-ou-posterior |
 | EraComic | CBR (RAR 4 e 5) e CBZ | dmc_unrar (GPL-2.0+), libjpeg-turbo, libpng, libwebp, MiniZip, EasyBMP | GPL-2.0 |
 
 - Origem das fontes, versão e lista exata de alterações: [`ALTERACOES-ALEXANDRIA.txt`](app/src/main/cpp/openreadera/ALTERACOES-ALEXANDRIA.txt).

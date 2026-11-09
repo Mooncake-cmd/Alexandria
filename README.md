@@ -1,6 +1,6 @@
 # Alexandria — projeto Android
 
-**Versão:** 0.8.0  
+**Versão:** 0.9.0  
 **Pacote:** `com.alexandria.reader`  
 **Plataforma:** Android 6.0 ou superior (API 23+)  
 **Idioma da interface:** Português (Brasil)
@@ -23,7 +23,7 @@
 
 | Formato | Como é exibido | Recursos |
 |---|---|---|
-| PDF | renderizador nativo do Android | zoom por pinça e toque duplo, deslizar para trocar de página, ir para página |
+| PDF | motor **EraPDF** (MuPDF, o mesmo do ReadEra) | **texto selecionável**, glossário sublinhado, busca, anotar trecho, zoom, ir para página |
 | CBZ | imagens do ZIP em ordem natural (pág. 2 antes da 10) | os mesmos do PDF |
 | CBR | RAR 4/5 pelo motor **EraComic** (ou como CBZ, se for ZIP disfarçado) | os mesmos do PDF |
 | DJVU | motor **EraDjVu** (DjVuLibre) | os mesmos do PDF |
@@ -46,15 +46,17 @@ Em todos os formatos:
 - **Glossário do livro**: selecione uma palavra ou expressão ("Arrakis", "Casa Atreides") e toque em **"Definir termo"**.
   Nas próximas vezes em que ela aparecer no livro, fica **sublinhada**: um toque mostra a definição (com editar e remover).
   Vale sem diferenciar maiúsculas e acentos, só para palavras inteiras, e cada livro tem o seu glossário (menu ⋮ →
-  "Glossário do livro"; todos aparecem também na aba Notas). Em PDF, DJVU e quadrinhos o texto é imagem: dá para
-  cadastrar termos pelo menu, mas não há sublinhado.
+  "Glossário do livro"; todos aparecem também na aba Notas). Vale também no PDF. Em DJVU e quadrinhos o texto é
+  imagem: dá para cadastrar termos pelo menu, mas não há sublinhado.
 - **Tempo de leitura**: o cronômetro aparece embaixo do título ao abrir o livro. Para quando o app sai da tela ou depois
   de 5 minutos sem nenhum toque. O total de cada livro aparece no cartão da biblioteca.
 - **Sequência de dias**: um dia conta a partir de 5 minutos de leitura. A biblioteca mostra "🔥 N dias seguidos" e a aba
   Estatísticas mostra sequência atual, melhor sequência, tempo de hoje, tempo total, livros com mais tempo e um
   calendário do mês com os dias lidos.
-- **Seleção de texto**: funciona em EPUB, MOBI, DOCX e TXT (inclusive em livros cujo CSS tentava bloquear a seleção).
-  Em PDF, DJVU e quadrinhos a página é uma imagem, sem texto selecionável.
+- **Seleção de texto**: funciona em **PDF**, EPUB, MOBI, DOCX e TXT. No PDF: **toque longo** numa palavra a seleciona
+  (continuar arrastando estende), as **alças azuis** ajustam o começo e o fim e a barra oferece Copiar, Definir termo e
+  Anotar. Funciona nos dois modos de leitura. Em DJVU e quadrinhos a página é imagem; PDF escaneado (foto de papel)
+  também não tem texto.
 - **Conforto visual** (menu ⋮ ou Ajustes), com efeito ao vivo enquanto se ajusta:
   - **Cor da página**: Claro, Sépia, Cinza suave, Escuro suave e Escuro. Vale também para PDF, DJVU e quadrinhos: nos
     temas claros o papel ganha a cor escolhida; nos escuros a luminosidade é invertida mantendo o matiz das imagens.
@@ -83,7 +85,7 @@ estão em `app/src/main/cpp/openreadera`.
 
 - São **programas separados**, empacotados como `lib<motor>.so`. O app inicia o programa e conversa com ele por dois
   pipes nomeados, com o protocolo binário do OpenReadEra (`OreEngine.kt`). Nenhum código deles é ligado ao app.
-- O APK passou de ~1 MB para ~5 MB (três motores × três arquiteturas: arm64-v8a, armeabi-v7a, x86_64).
+- O APK tem ~12 MB (quatro motores × três arquiteturas: arm64-v8a, armeabi-v7a, x86_64; o EraPDF é o maior). No aparelho só os motores da arquitetura dele são instalados.
 - Licenças (AGPL-3.0, GPL-2.0 e outras) e obrigações ao distribuir o APK: veja [`TERCEIROS.md`](TERCEIROS.md).
 
 ### Origem dos novos recursos
@@ -94,7 +96,9 @@ Os recursos da 0.4.0 vieram da Biblioteca do site RPG Hardcore (HTML/JavaScript)
 
 - MOBI/AZW3 com DRM não abre. A primeira abertura de um MOBI demora um pouco mais (conversão para EPUB).
 - DJVU não tem busca nem seleção de texto nesta versão (o motor oferece; falta ligar à interface).
-- PDF não tem busca nem seleção de texto: o renderizador nativo só entrega imagem. Anotações de PDF são por página.
+- PDF protegido por senha ainda não abre. PDF escaneado não tem texto (precisaria de reconhecimento de texto).
+- A seleção no PDF fica dentro de uma página (não atravessa para a seguinte).
+- Se o motor EraPDF não iniciar num aparelho, o PDF abre pelo renderizador do Android, sem seleção nem busca.
 - EPUB com DRM não abre. O livro é exibido com o estilo de leitura do app (cores e margens); scripts do livro são bloqueados.
 - Arquivos TXT acima de 8 MB são exibidos só até esse limite.
 - EPUB, CBZ e DOCX são copiados para o cache do app na primeira leitura (acesso aleatório ao ZIP). Se o Android limpar o cache, a cópia é refeita.
@@ -103,13 +107,15 @@ Os recursos da 0.4.0 vieram da Biblioteca do site RPG Hardcore (HTML/JavaScript)
 
 ## Testes
 
-Os testes rodam na JVM, sem emulador (100 no total):
+Os testes rodam na JVM, sem emulador (106 no total):
 
 - Lógica pura: `FormatsTest`, `TextDecodingTest`, `TextChunkerTest`, `ReadingStatusTest`, `BookHelpersTest` (ordem natural, busca sem acentos, caminhos em ZIP, preparo do HTML do EPUB, prateleiras, blocos do DOCX).
 - `ZipFormatsTest` (Robolectric): EPUB 2 e 3 (capítulos, sumário, capa), DOCX (títulos com estilos em português, listas, estilos, tabelas, caixas de texto), CBZ.
 - `LibraryDatabaseTest` (Robolectric): migrações 0.2 → 0.4 e 0.3 → 0.4 sem perda de dados, anotações, Estante e prateleiras.
 - `TextReaderTest`, `ReaderFormatsTest` (Robolectric): abre TXT, DOCX e EPUB no leitor, salva e restaura posição, busca, CBR em RAR com erro claro.
 - `MainActivityTest` (Robolectric): biblioteca com prateleiras e Estante, abas Notas, Estatísticas e Ajustes.
+- `PageTextModelTest`, `PdfTextTest`: texto do PDF por caractere com posição (EraPDF real, com acentos), toque longo
+  selecionando palavras nos dois modos, termo do glossário tocado no PDF e busca sem acentos.
 - `ReadingLogicTest`, `GlossaryAndTimeTest`: sequência de dias, cronômetro com pausa por inatividade e virada de dia,
   migração para o banco v5, glossário (palavras inteiras, sem acentos, HTML), termo sublinhado e tocado no TXT (com
   medida de texto real), termos marcados no EPUB, tempo salvo no livro e no dia, sequência na biblioteca e estatísticas.

@@ -1,4 +1,4 @@
-# Alexandria: só os módulos usados pelo app (MOBI, DJVU e quadrinhos CBR/CBZ) e suas dependências.
+# Alexandria: só os módulos usados pelo app (PDF, MOBI, DJVU e quadrinhos CBR/CBZ) e suas dependências.
 # O Android.mk original do OpenReadEra incluía todos os subdiretórios (também EraPDF e EraEPUB).
 OREADERA_ROOT := $(call my-dir)
 include $(OREADERA_ROOT)/orebridge/Android.mk
@@ -12,3 +12,8 @@ include $(OREADERA_ROOT)/minizip/Android.mk
 include $(OREADERA_ROOT)/eramobi/Android.mk
 include $(OREADERA_ROOT)/eradjvu/Android.mk
 include $(OREADERA_ROOT)/eracomic/Android.mk
+include $(OREADERA_ROOT)/erapdf/freetype/Android.mk
+include $(OREADERA_ROOT)/erapdf/jbig2dec/Android.mk
+include $(OREADERA_ROOT)/erapdf/openjpeg/openjpeg-simd/Android.mk
+include $(OREADERA_ROOT)/erapdf/openjpeg/openjpeg/Android.mk
+include $(OREADERA_ROOT)/erapdf/erapdf/Android.mk

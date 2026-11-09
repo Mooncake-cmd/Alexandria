@@ -11,8 +11,8 @@ android {
         applicationId = "com.alexandria.reader"
         minSdk = 23
         targetSdk = 35
-        versionCode = 8
-        versionName = "0.8.0"
+        versionCode = 9
+        versionName = "0.9.0"
     }
 
     ndkVersion = "27.0.12077973"
@@ -62,11 +62,11 @@ dependencies {
     testImplementation("org.robolectric:robolectric:4.14.1")
 }
 
-// ---------- Motores do OpenReadEra (MOBI, DJVU, CBR) ----------
+// ---------- Motores do OpenReadEra (PDF, MOBI, DJVU, CBR) ----------
 // São programas separados (não bibliotecas): o app os executa e conversa com eles por pipes.
 // O Android só instala e deixa executar arquivos lib*.so do APK, então cada executável gerado
 // pelo ndk-build é copiado como lib<motor>.so, do mesmo jeito que o ReadEra faz.
-val oreEngines = listOf("eramobi", "eradjvu", "eracomic")
+val oreEngines = listOf("eramobi", "eradjvu", "eracomic", "erapdf")
 val oreAbis = listOf("arm64-v8a", "armeabi-v7a", "x86_64")
 val oreSource = layout.projectDirectory.dir("src/main/cpp/openreadera")
 val oreOut = layout.buildDirectory.dir("ore")

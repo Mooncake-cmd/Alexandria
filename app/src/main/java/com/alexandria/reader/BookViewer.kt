@@ -54,6 +54,9 @@ abstract class BookViewer(protected val host: ReaderHost) {
     /** Formatos paginados anotam a página inteira; os de texto anotam um trecho selecionado. */
     open val annotatesPages: Boolean = false
 
+    /** Há texto selecionável (para "Definir termo" e "Anotar" com trecho). PDF com EraPDF também tem. */
+    open val selectsText: Boolean get() = !annotatesPages
+
     /** Trecho selecionado agora e a posição dele, ou null se não há seleção no texto do livro. */
     open fun selection(done: (excerpt: String, position: Int) -> Unit): Boolean = false
 
