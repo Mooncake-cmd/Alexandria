@@ -45,7 +45,7 @@ class ImageChunk(val file: java.io.File) : CharSequence by "" {
 class TextViewer(host: ReaderHost, private val load: (LibraryItem) -> TextContent) : BookViewer(host) {
     private var chunks: List<CharSequence> = emptyList()
     private var textSizeSp = ReadingPrefs.textSize(context)
-    private var night = ReadingPrefs.night(context)
+    private var comfort = ComfortStore.load(context)
     private var ready = false
     /** Bloco, início e fim do resultado de busca destacado. */
     private var highlight: Triple<Int, Int, Int>? = null
@@ -122,7 +122,7 @@ class TextViewer(host: ReaderHost, private val load: (LibraryItem) -> TextConten
     override fun atEnd() = ready && !list.canScrollVertically(1)
     override fun describe(position: Int) = "${position / 100}%"
 
-    override fun menuActions() = listOf("Tema claro/escuro" to { toggleNight() })
+    override fun menuActions(): List<Pair<String, () -> Unit>> = emptyList()
 
     // ---------- modo páginas ----------
 
@@ -153,14 +153,8 @@ class TextViewer(host: ReaderHost, private val load: (LibraryItem) -> TextConten
         override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
             val chunk = chunks[position]
             if (chunk is ImageChunk) return imageView(chunk, convertView as? ImageView)
-            val view = convertView as? TextView ?: TextView(context).apply {
-                typeface = Typeface.SERIF
-                setLineSpacing(0f, 1.35f)
-                setPadding(context.dp(20), 0, context.dp(20), 0)
-                setTextIsSelectable(true)
-            }
-            view.textSize = textSizeSp
-            view.setTextColor(if (night) ReadingPrefs.NIGHT_TEXT else Palette.ink)
+            val view = convertView as? TextView ?: TextView(context).apply { setTextIsSelectable(true) }
+            styleText(view, parent.width)
             val mark = highlight
             view.text = if (mark != null && mark.first == position) {
                 SpannableString(chunk).apply {
@@ -233,17 +227,48 @@ class TextViewer(host: ReaderHost, private val load: (LibraryItem) -> TextConten
         }
     }
 
+    /** Cor, fonte, espaçamentos, margens, largura da linha e alinhamento do painel "Conforto visual". */
+    private fun styleText(view: TextView, listWidth: Int) {
+        val c = comfort
+        view.textSize = textSizeSp
+        view.setTextColor(c.theme.text)
+        view.setLinkTextColor(c.theme.link)
+        view.typeface = ReaderFonts.forText(context, c.font)
+        view.setLineSpacing(0f, c.lineSpacing / 100f)
+        view.letterSpacing = c.letterSpacing / 100f
+        val textPx = textSizeSp * context.resources.displayMetrics.scaledDensity
+        val side = Comfort.sidePadding(listWidth, textPx, context.dp(c.margin.dp), c.lineWidth)
+        view.setPadding(side, 0, side, 0)
+        setJustified(view, c.justify)
+    }
+
+    /** Texto justificado existe a partir do Android 8; antes disso fica sempre à esquerda. */
+    private fun setJustified(view: TextView, justify: Boolean) {
+        when {
+            android.os.Build.VERSION.SDK_INT >= 29 -> view.justificationMode =
+                if (justify) android.graphics.text.LineBreaker.JUSTIFICATION_MODE_INTER_WORD else android.graphics.text.LineBreaker.JUSTIFICATION_MODE_NONE
+            android.os.Build.VERSION.SDK_INT >= 26 -> setJustifiedLegacy(view, justify)
+        }
+    }
+
+    @android.annotation.SuppressLint("WrongConstant") // Android 8 e 9: as constantes ainda ficavam em Layout (mesmos valores)
+    @android.annotation.TargetApi(26)
+    private fun setJustifiedLegacy(view: TextView, justify: Boolean) {
+        view.justificationMode = if (justify) android.text.Layout.JUSTIFICATION_MODE_INTER_WORD else android.text.Layout.JUSTIFICATION_MODE_NONE
+    }
+
     private fun applyColors() {
-        val background = if (night) ReadingPrefs.NIGHT_BACKGROUND else Palette.paper
+        val background = comfort.theme.background
         list.setBackgroundColor(background)
         list.cacheColorHint = background
     }
 
-    private fun toggleNight() {
-        night = !night
-        ReadingPrefs.setNight(context, night)
+    override fun applyComfort(comfort: Comfort) {
+        val fraction = if (ready) textFraction() else 0
+        this.comfort = comfort
         applyColors()
         adapter.notifyDataSetChanged()
+        if (ready) restoreFraction(fraction)
     }
 
     private fun changeTextSize(delta: Float) {

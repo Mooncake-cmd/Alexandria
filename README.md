@@ -1,6 +1,6 @@
 # Alexandria — projeto Android
 
-**Versão:** 0.6.0  
+**Versão:** 0.7.0  
 **Pacote:** `com.alexandria.reader`  
 **Plataforma:** Android 6.0 ou superior (API 23+)  
 **Idioma da interface:** Português (Brasil)
@@ -39,8 +39,17 @@ Em todos os formatos:
     **esquerda** para voltar; deslizar não vira a página. Em PDF, DJVU e quadrinhos a página aparece **inteira** na
     tela; toque duplo no meio ou pinça dão zoom, e com zoom o dedo arrasta a página.
   - **Rolagem contínua**: o texto corre livremente; em PDF, DJVU e quadrinhos as páginas ficam uma embaixo da outra.
-- **Régua de leitura** (menu ⋮): faixa clara sobre a linha lida, com o resto levemente escurecido; arraste pela alça
-  dourada à direita. Liga/desliga e posição são lembradas.
+- **Zoom também na rolagem contínua**: pinça ou toque duplo ampliam a coluna de páginas; com zoom, o dedo arrasta para
+  os lados e a rolagem vertical continua normal.
+- **Régua de leitura** (menu ⋮): faixa sobre a linha lida; arraste pela alça à direita. Espessura (1, 2 ou 3 linhas),
+  cor, opacidade e "escurecer o resto da página" são escolhidos no Conforto visual.
+- **Conforto visual** (menu ⋮ ou Ajustes), com efeito ao vivo enquanto se ajusta:
+  - **Cor da página**: Claro, Sépia, Cinza suave, Escuro suave e Escuro. Vale também para PDF, DJVU e quadrinhos: nos
+    temas claros o papel ganha a cor escolhida; nos escuros a luminosidade é invertida mantendo o matiz das imagens.
+  - **Luz e filtro**: brilho próprio do app (pode ficar abaixo do mínimo do sistema), luz quente e sobreposição colorida
+    opcional (cor e opacidade).
+  - **Tipografia** (EPUB, MOBI, DOCX, TXT): fonte (original, serifada, sem serifa ou Atkinson Hyperlegible), espaçamento
+    entre linhas e entre letras, margens, largura máxima da linha (~55 a 75 caracteres) e alinhamento.
 
 - **Progresso salvo** por documento.
 - **Anotações**: selecione um trecho e toque em "Anotar" (EPUB, DOCX, TXT); em PDF e CBZ, use 📝 → "Anotar esta página". A lista de anotações do livro leva direto ao trecho.
@@ -78,18 +87,19 @@ Os recursos da 0.4.0 vieram da Biblioteca do site RPG Hardcore (HTML/JavaScript)
 - Arquivos TXT acima de 8 MB são exibidos só até esse limite.
 - EPUB, CBZ e DOCX são copiados para o cache do app na primeira leitura (acesso aleatório ao ZIP). Se o Android limpar o cache, a cópia é refeita.
 - Os gestos do PDF/CBZ e a exibição do EPUB no WebView **só podem ser validados num aparelho real**: o simulador dos testes não renderiza PDF, imagens nem páginas web.
-- Zoom só existe no modo páginas (na rolagem contínua, as páginas ficam na largura da tela).
 - Os motores foram testados de verdade, mas no Linux (veja Testes). Rodar no Android depende de o aparelho permitir executar os programas instalados com o app, o que o Android permite para arquivos `lib*.so` extraídos; ainda assim, **teste num aparelho real** antes de distribuir.
 
 ## Testes
 
-Os testes rodam na JVM, sem emulador (76 no total):
+Os testes rodam na JVM, sem emulador (88 no total):
 
 - Lógica pura: `FormatsTest`, `TextDecodingTest`, `TextChunkerTest`, `ReadingStatusTest`, `BookHelpersTest` (ordem natural, busca sem acentos, caminhos em ZIP, preparo do HTML do EPUB, prateleiras, blocos do DOCX).
 - `ZipFormatsTest` (Robolectric): EPUB 2 e 3 (capítulos, sumário, capa), DOCX (títulos com estilos em português, listas, estilos, tabelas, caixas de texto), CBZ.
 - `LibraryDatabaseTest` (Robolectric): migrações 0.2 → 0.4 e 0.3 → 0.4 sem perda de dados, anotações, Estante e prateleiras.
 - `TextReaderTest`, `ReaderFormatsTest` (Robolectric): abre TXT, DOCX e EPUB no leitor, salva e restaura posição, busca, CBR em RAR com erro claro.
 - `MainActivityTest` (Robolectric): biblioteca com prateleiras e Estante, abas Notas, Estatísticas e Ajustes.
+- `ComfortMathTest`, `ComfortTest`: cores dos temas (papel sépia, escuro mantendo o matiz), brilho abaixo do mínimo,
+  CSS do EPUB, fonte servida de dentro do app, tema/fonte/espaçamento no TXT, estilo da régua, painel e zoom na rolagem.
 - `ReadingModesTest`, `PageTurnTest`: toque duplo nas bordas vira a página (DJVU pelo motor real e TXT), no meio dá
   zoom; rolagem contínua lista todas as páginas; página inteira na tela; régua de leitura.
 - `OreEnginesTest` e parte do `ReaderFormatsTest`: os **motores de verdade**, compilados para Linux a partir das mesmas

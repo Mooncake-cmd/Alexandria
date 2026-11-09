@@ -65,6 +65,9 @@ abstract class BookViewer(protected val host: ReaderHost) {
     /** Ações extras do menu ⋮ (tamanho de letra, tema, sumário…). */
     open fun menuActions(): List<Pair<String, () -> Unit>> = emptyList()
 
+    /** Aplica cores, tipografia etc. do painel "Conforto visual" (chamado também enquanto se ajusta). */
+    open fun applyComfort(comfort: Comfort) = Unit
+
     /** Gestos próprios (zoom, deslizar). Retorna true se consumiu o evento, null para seguir o normal. */
     open fun dispatchTouch(event: MotionEvent): Boolean? = null
 

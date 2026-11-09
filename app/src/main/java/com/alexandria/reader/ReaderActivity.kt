@@ -69,7 +69,8 @@ class ReaderActivity : Activity(), ReaderHost {
         }
         current = item
         viewer = created
-        setContentView(frame(item, created))
+        setContentView(withComfortLayers(frame(item, created)))
+        applyComfort(ComfortStore.load(this))
         // Uma anotação aberta pela aba Notas leva direto ao ponto dela.
         val start = intent.getIntExtra(EXTRA_POSITION, -1).takeIf { it >= 0 } ?: item.position
         created.open(item, start)
@@ -194,6 +195,43 @@ class ReaderActivity : Activity(), ReaderHost {
         return root
     }
 
+    // ---------- conforto visual ----------
+
+    /** Camadas sobre a tela inteira: escurecimento extra, luz quente e sobreposição colorida. */
+    private val dimLayer by lazy { comfortLayer() }
+    private val warmLayer by lazy { comfortLayer() }
+    private val tintLayer by lazy { comfortLayer() }
+
+    private fun comfortLayer() = View(this).apply {
+        isClickable = false
+        isFocusable = false
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+    }
+
+    private fun withComfortLayers(content: View): View = FrameLayout(this).apply {
+        addView(content, FrameLayout.LayoutParams(-1, -1))
+        addView(tintLayer, FrameLayout.LayoutParams(-1, -1))
+        addView(warmLayer, FrameLayout.LayoutParams(-1, -1))
+        addView(dimLayer, FrameLayout.LayoutParams(-1, -1))
+    }
+
+    private fun applyComfort(comfort: Comfort) {
+        window.attributes = window.attributes.apply { screenBrightness = Comfort.windowBrightness(comfort) }
+        dimLayer.setBackgroundColor(android.graphics.Color.argb((Comfort.extraDim(comfort) * 255).toInt(), 0, 0, 0))
+        warmLayer.setBackgroundColor(Comfort.warmColor(comfort))
+        tintLayer.setBackgroundColor(Comfort.overlayColor(comfort))
+        ruler?.applyStyle(comfort)
+        viewer?.applyComfort(comfort)
+    }
+
+    private fun showComfort() {
+        ComfortPanel.show(
+            this,
+            rulerOn = ruler?.visibility == View.VISIBLE,
+            onRulerToggle = { on -> setRuler(on) }
+        ) { applyComfort(it) }
+    }
+
     override fun onPositionChanged() {
         val view = viewer ?: return
         val item = current ?: return
@@ -210,6 +248,7 @@ class ReaderActivity : Activity(), ReaderHost {
         actions += (if (paged) "Modo: rolagem contínua" else "Modo: páginas (toque duplo na borda)") to { switchMode(!paged) }
         val rulerOn = ruler?.visibility == View.VISIBLE
         actions += (if (rulerOn) "Esconder régua de leitura" else "Mostrar régua de leitura") to { toggleRuler() }
+        actions.add(0, "Conforto visual…" to { showComfort() })
         actions += if (item.finished) {
             "Voltar para \"Lendo agora\"" to { markFinished(false) }
         } else {
@@ -237,11 +276,14 @@ class ReaderActivity : Activity(), ReaderHost {
     }
 
     private fun toggleRuler() {
-        val r = ruler ?: return
-        val on = r.visibility != View.VISIBLE
-        r.visibility = if (on) View.VISIBLE else View.GONE
+        val on = ruler?.visibility != View.VISIBLE
+        setRuler(on)
+        if (on) Toast.makeText(this, "Arraste a alça à direita para mover a régua. Espessura, cor e opacidade: ⋮ > Conforto visual.", Toast.LENGTH_LONG).show()
+    }
+
+    private fun setRuler(on: Boolean) {
+        ruler?.visibility = if (on) View.VISIBLE else View.GONE
         ReadingPrefs.setRuler(this, on)
-        if (on) Toast.makeText(this, "Arraste a alça dourada à direita para mover a régua.", Toast.LENGTH_SHORT).show()
     }
 
     /** Concluir move o livro para a Estante, como o botão "Finalizar" do leitor web. */

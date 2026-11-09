@@ -620,6 +620,19 @@ class MainActivity : Activity() {
             })
         }
 
+        settingsPanel("Conforto visual") {
+            addView(label("Cor da página, brilho, luz quente, sobreposição colorida, fonte e espaçamentos, e a régua de leitura. Também dá para abrir durante a leitura, no menu ⋮.", 12f, muted).apply {
+                setPadding(0, 0, 0, dp(10))
+            })
+            addView(Button(this@MainActivity).apply {
+                text = "Ajustar conforto visual"
+                setAllCaps(false)
+                setTextColor(Color.WHITE)
+                background = rounded(ink, 10)
+                setOnClickListener { ComfortPanel.show(this@MainActivity) }
+            }, LinearLayout.LayoutParams(-1, dp(48)))
+        }
+
         settingsPanel("Armazenamento") {
             val cache = File(cacheDir, "books")
             addView(label("Cópias e conversões em cache: ${formatSize(folderSize(cache))}", 13f, ink))
@@ -725,7 +738,8 @@ class MainActivity : Activity() {
             "libmobi — GNU LGPL 3.0" to "LGPL-3.0.txt",
             "GNU GPL 3.0 (base da LGPL 3.0)" to "GPL-3.0.txt",
             "Common CLI viewer interface — Apache 2.0" to "Apache-2.0.txt",
-            "libjpeg-turbo, libpng, libwebp, MiniZip, EasyBMP" to "terceiros.txt"
+            "libjpeg-turbo, libpng, libwebp, MiniZip, EasyBMP" to "terceiros.txt",
+            "Fonte Atkinson Hyperlegible — SIL OFL 1.1" to "OFL-1.1-Atkinson.txt"
         )
         private val COVER_FORMATS = setOf("pdf", "cbz", "cbr", "epub", "mobi", "djvu")
     }

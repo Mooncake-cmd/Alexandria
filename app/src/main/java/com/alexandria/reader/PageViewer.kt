@@ -160,6 +160,13 @@ class ZoomPageView(context: Context) : android.view.View(context) {
         invalidate()
     }
 
+    /** Filtro de cor do tema (PDF/DJVU/quadrinhos não têm cor de texto para trocar). */
+    fun setTheme(theme: Comfort.Theme) {
+        paint.colorFilter = Comfort.pageMatrix(theme)?.let { android.graphics.ColorMatrixColorFilter(android.graphics.ColorMatrix(it)) }
+        setBackgroundColor(theme.background)
+        invalidate()
+    }
+
     /** Mesma página e geometria, bitmap mais nítido (depois de um zoom). */
     fun sharpen(page: Bitmap) {
         bitmap = page
@@ -245,7 +252,7 @@ class PageViewer(host: ReaderHost, private val openSource: (LibraryItem) -> Page
     private var touchInPage = false
     private var pinching = false
 
-    private val pageView = ZoomPageView(context).apply { setBackgroundColor(Palette.paper) }
+    private val pageView = ZoomPageView(context).apply { setTheme(ComfortStore.load(context).theme) }
     private val prevButton = barButton("‹ Anterior", Palette.ink) { goTo(pageIndex - 1) }
     private val nextButton = barButton("Próxima ›", Palette.ink) { goTo(pageIndex + 1) }
     private val pageLabel = context.label("Abrindo…", 13f, Palette.muted).apply {
@@ -284,6 +291,8 @@ class PageViewer(host: ReaderHost, private val openSource: (LibraryItem) -> Page
     override fun atEnd() = count > 0 && pageIndex >= count - 1
     override fun describe(position: Int) = "Pág. ${position + 1}"
     override fun menuActions() = listOf("Ir para a página…" to { askPage(context, count, pageIndex) { goTo(it) } })
+
+    override fun applyComfort(comfort: Comfort) = pageView.setTheme(comfort.theme)
 
     override fun close() {
         host.worker.execute {
@@ -492,15 +501,24 @@ internal fun askPage(context: android.app.Activity, count: Int, current: Int, go
 /**
  * Modo rolagem contínua para PDF, DJVU e quadrinhos: as páginas, na largura da tela, uma embaixo
  * da outra. Cada página é desenhada quando aparece e guardada num cache limitado.
+ *
+ * Zoom: a coluna de páginas inteira é ampliada (pinça ou toque duplo). A rolagem vertical continua
+ * normal e, com zoom, o dedo arrasta a coluna para os lados. Depois do zoom, as páginas visíveis
+ * são desenhadas de novo na resolução nova.
  */
 class PageScrollViewer(host: ReaderHost, private val openSource: (LibraryItem) -> PageSource, private val kind: String) : BookViewer(host) {
     private var source: PageSource? = null // só tocado na thread de fundo
     private var count = 0
     private val aspects = HashMap<Int, Float>()
     private var defaultAspect = 1.414f
-    private val requested = HashSet<Int>()
+    /** Largura (em pixels) em que cada página está sendo desenhada agora. */
+    private val inFlight = HashMap<Int, Int>()
     @Volatile
     private var visibleRange = 0..0
+    private var zoom = 1f
+    private var pinching = false
+    private var touchInside = false
+    private var pageFilter: android.graphics.ColorFilter? = null
     private val bitmaps = object : android.util.LruCache<Int, Bitmap>(
         (Runtime.getRuntime().maxMemory() / 6).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
     ) {
@@ -517,22 +535,25 @@ class PageScrollViewer(host: ReaderHost, private val openSource: (LibraryItem) -
                 scaleType = ImageView.ScaleType.FIT_XY
                 setBackgroundColor(Color.WHITE)
             }
+            view.colorFilter = pageFilter
             val width = parent.width.takeIf { it > 0 } ?: context.resources.displayMetrics.widthPixels
             val height = (width * (aspects[position] ?: defaultAspect)).toInt().coerceAtLeast(1)
             view.layoutParams = android.widget.AbsListView.LayoutParams(width, height)
             val bitmap = bitmaps.get(position)
             view.setImageBitmap(bitmap)
-            if (bitmap == null) request(position, width)
+            // Sem bitmap, ou com um mais "borrado" que o zoom atual pede: desenha de novo.
+            val wanted = renderWidth(width)
+            if (bitmap == null || bitmap.width < wanted * 0.85f) request(position, wanted)
             return view
         }
     }
 
     private val list = android.widget.ListView(context).apply {
         adapter = this@PageScrollViewer.adapter
-        divider = android.graphics.drawable.ColorDrawable(Palette.paper)
         dividerHeight = context.dp(8)
-        setBackgroundColor(Palette.paper)
         selector = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
+        pivotX = 0f
+        pivotY = 0f
         setOnScrollListener(object : android.widget.AbsListView.OnScrollListener {
             override fun onScrollStateChanged(view: android.widget.AbsListView, state: Int) = Unit
             override fun onScroll(view: android.widget.AbsListView, first: Int, visible: Int, total: Int) {
@@ -544,6 +565,15 @@ class PageScrollViewer(host: ReaderHost, private val openSource: (LibraryItem) -
             }
         })
     }
+
+    /** Moldura que recorta a coluna ampliada. */
+    private val frame = FrameLayout(context).apply {
+        addView(list, FrameLayout.LayoutParams(-1, -1))
+        addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
+            if (bottom - top != oldBottom - oldTop) applyZoomLayout()
+        }
+    }
+
     private val pageLabel = context.label("Abrindo…", 13f, Palette.muted).apply {
         gravity = Gravity.CENTER
         minHeight = context.dp(48)
@@ -551,10 +581,23 @@ class PageScrollViewer(host: ReaderHost, private val openSource: (LibraryItem) -
         setOnClickListener { askPage(host.activity, count, position()) { goTo(it) } }
     }
 
-    override val body = list
+    override val body = frame
     override val footer = footerBar().apply { addView(pageLabel, LinearLayout.LayoutParams(0, -2, 1f)) }
     override val loaded get() = count > 0
     override val annotatesPages = true
+
+    init {
+        applyComfort(ComfortStore.load(context))
+    }
+
+    override fun applyComfort(comfort: Comfort) {
+        pageFilter = Comfort.pageMatrix(comfort.theme)?.let { android.graphics.ColorMatrixColorFilter(android.graphics.ColorMatrix(it)) }
+        frame.setBackgroundColor(comfort.theme.background)
+        list.setBackgroundColor(comfort.theme.background)
+        list.divider = android.graphics.drawable.ColorDrawable(comfort.theme.background)
+        list.dividerHeight = context.dp(8)
+        adapter.notifyDataSetChanged()
+    }
 
     override fun open(item: LibraryItem, start: Int) {
         openPageSource(host, openSource, item, kind) { (opened, total) ->
@@ -575,12 +618,16 @@ class PageScrollViewer(host: ReaderHost, private val openSource: (LibraryItem) -
         }
     }
 
+    private fun renderWidth(baseWidth: Int): Int = (baseWidth * zoom).toInt().coerceAtLeast(1)
+
     private fun request(index: Int, width: Int) {
-        if (!requested.add(index)) return
+        val pending = inFlight[index]
+        if (pending != null && pending >= width) return
+        inFlight[index] = width
         host.worker.execute {
             // A página já saiu da tela enquanto esperava: não gasta tempo desenhando.
             if (index !in visibleRange) {
-                onUi { requested.remove(index) }
+                onUi { if (inFlight[index] == width) inFlight.remove(index) }
                 return@execute
             }
             val result = try {
@@ -593,7 +640,7 @@ class PageScrollViewer(host: ReaderHost, private val openSource: (LibraryItem) -
                 null
             }
             onUi {
-                requested.remove(index)
+                if (inFlight[index] == width) inFlight.remove(index)
                 if (result == null) return@onUi
                 val changed = aspects[index] != result.first
                 aspects[index] = result.first
@@ -602,6 +649,103 @@ class PageScrollViewer(host: ReaderHost, private val openSource: (LibraryItem) -
             }
         }
     }
+
+    // ---------- zoom ----------
+
+    /** A lista tem altura = moldura / zoom e é ampliada pelo canto de cima: preenche a moldura. */
+    private fun applyZoomLayout() {
+        val height = frame.height
+        if (height <= 0) return
+        val params = list.layoutParams
+        val wanted = (height / zoom).toInt().coerceAtLeast(1)
+        if (params.height != wanted) {
+            params.height = wanted
+            list.layoutParams = params
+        }
+        list.scaleX = zoom
+        list.scaleY = zoom
+        clampTranslation()
+    }
+
+    private fun clampTranslation() {
+        val minX = frame.width - frame.width * zoom
+        list.translationX = list.translationX.coerceIn(minOf(minX, 0f), 0f)
+    }
+
+    /** Zoom mantendo parado o ponto ([focusX], [focusY]) da moldura. */
+    private fun setZoom(newZoom: Float, focusX: Float, focusY: Float) {
+        val old = zoom
+        val next = newZoom.coerceIn(1f, MAX_ZOOM)
+        if (next == old) return
+        list.translationX = focusX - (focusX - list.translationX) * next / old
+        // Na vertical, o mesmo conteúdo continua sob o dedo: rola a lista a diferença.
+        val delta = (focusY / old - focusY / next).toInt()
+        zoom = next
+        applyZoomLayout()
+        if (delta != 0) list.scrollListBy(delta)
+        updateLabel()
+    }
+
+    /** Depois do zoom, as páginas visíveis são desenhadas de novo na resolução nova. */
+    private fun sharpen() = adapter.notifyDataSetChanged()
+
+    private fun local(windowX: Float, windowY: Float): Pair<Float, Float> {
+        val location = IntArray(2)
+        frame.getLocationInWindow(location)
+        return Pair(windowX - location[0], windowY - location[1])
+    }
+
+    private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+        override fun onScale(detector: ScaleGestureDetector): Boolean {
+            val (x, y) = local(detector.focusX, detector.focusY)
+            setZoom(zoom * detector.scaleFactor, x, y)
+            return true
+        }
+    })
+
+    private val tapDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
+        override fun onScroll(e1: MotionEvent?, e2: MotionEvent, distanceX: Float, distanceY: Float): Boolean {
+            if (zoom > 1.01f) {
+                list.translationX -= distanceX
+                clampTranslation()
+            }
+            return false // a lista continua rolando na vertical
+        }
+
+        override fun onDoubleTap(e: MotionEvent): Boolean {
+            val (x, y) = local(e.x, e.y)
+            setZoom(if (zoom > 1.05f) 1f else DOUBLE_TAP_ZOOM, x, y)
+            sharpen()
+            return true
+        }
+    })
+
+    override fun dispatchTouch(event: MotionEvent): Boolean? {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            val (x, y) = local(event.x, event.y)
+            touchInside = x >= 0 && y >= 0 && x < frame.width && y < frame.height
+            pinching = false
+        }
+        if (!touchInside || count == 0) return null
+        scaleDetector.onTouchEvent(event)
+        if (scaleDetector.isInProgress && !pinching) {
+            // Durante a pinça a lista não rola: cancela o gesto que ela estava vendo.
+            pinching = true
+            val cancel = MotionEvent.obtain(event).apply { action = MotionEvent.ACTION_CANCEL }
+            context.window.superDispatchTouchEvent(cancel)
+            cancel.recycle()
+        }
+        if (pinching) {
+            if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
+                pinching = false
+                sharpen()
+            }
+            return true
+        }
+        return if (tapDetector.onTouchEvent(event)) true else null
+    }
+
+    // ---------- posição ----------
 
     override fun position(): Int {
         if (list.childCount == 0) return list.firstVisiblePosition
@@ -629,7 +773,8 @@ class PageScrollViewer(host: ReaderHost, private val openSource: (LibraryItem) -
     override fun menuActions() = listOf("Ir para a página…" to { askPage(context, count, position()) { goTo(it) } })
 
     private fun updateLabel() {
-        pageLabel.text = "Página ${position() + 1} de $count"
+        val zoomText = if (zoom > 1.05f) " · ${(zoom * 100).toInt()}%" else ""
+        pageLabel.text = "Página ${position() + 1} de $count$zoomText"
     }
 
     override fun close() {
@@ -637,5 +782,10 @@ class PageScrollViewer(host: ReaderHost, private val openSource: (LibraryItem) -
             source?.close()
             source = null
         }
+    }
+
+    companion object {
+        private const val MAX_ZOOM = 4f
+        private const val DOUBLE_TAP_ZOOM = 2f
     }
 }

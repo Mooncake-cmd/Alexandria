@@ -47,7 +47,7 @@ class EpubViewer(
     private var cssSnapshot = ""
     private var chapterReady = false
     private var textSizeSp = ReadingPrefs.textSize(context)
-    private var night = ReadingPrefs.night(context)
+    private var comfort = ComfortStore.load(context)
 
     private val web = BookWebView(context).apply {
         @SuppressLint("SetJavaScriptEnabled")
@@ -174,8 +174,7 @@ class EpubViewer(
     override fun menuActions() = listOf(
         "Sumário" to { showContents() },
         "Letra menor" to { changeTextSize(-1f) },
-        "Letra maior" to { changeTextSize(1f) },
-        "Tema claro/escuro" to { toggleNight() }
+        "Letra maior" to { changeTextSize(1f) }
     )
 
     // ---------- capítulos ----------
@@ -276,28 +275,21 @@ class EpubViewer(
         goTo(keep)
     }
 
-    private fun toggleNight() {
-        night = !night
-        ReadingPrefs.setNight(context, night)
-        applyBackground()
-        goTo(position())
-    }
-
     private fun applyBackground() {
-        web.setBackgroundColor(if (night) ReadingPrefs.NIGHT_BACKGROUND else Palette.paper)
+        web.setBackgroundColor(comfort.theme.background)
     }
 
-    private fun readerCss(): String {
-        val background = if (night) "#12161c" else "#f5f2eb"
-        val text = if (night) "#d6d0c4" else "#162234"
-        return """
-            html, body { background: $background !important; color: $text !important; }
-            body { margin: 0 !important; padding: 20px 6% 48px !important; line-height: 1.55; word-wrap: break-word; }
-            img, svg, video { max-width: 100% !important; height: auto !important; }
-            a { color: #b78942 !important; }
-            pre, table { max-width: 100%; overflow-x: auto; }
-        """.trimIndent()
+    private val reloadForComfort = Runnable { if (book != null) goTo(position()) }
+
+    override fun applyComfort(comfort: Comfort) {
+        this.comfort = comfort
+        applyBackground()
+        // Arrastar um controle manda várias mudanças seguidas: o capítulo é redesenhado só quando para.
+        web.removeCallbacks(reloadForComfort)
+        web.postDelayed(reloadForComfort, 350)
     }
+
+    private fun readerCss(): String = Comfort.epubCss(comfort, ReaderFonts.epubFontFaces(BASE))
 
     // ---------- seleção e busca ----------
 
@@ -399,8 +391,9 @@ class EpubViewer(
 
     /** Arquivos de dentro do livro (imagens, CSS, fontes). Roda numa thread do WebView. */
     private fun serve(url: String): WebResourceResponse {
-        val file = zip ?: return notFound()
         val path = ZipPaths.resolve("", url.removePrefix(BASE))
+        if (path.startsWith(APP_FONTS)) return appFont(path.removePrefix(APP_FONTS))
+        val file = zip ?: return notFound()
         val entry = file.getEntry(path) ?: return notFound()
         val type = mimeType(path)
         return try {
@@ -424,12 +417,23 @@ class EpubViewer(
     private fun prepareHtml(bytes: ByteArray, css: String): String =
         EpubHtml.prepare(String(bytes, Charsets.UTF_8), css)
 
+    /** Fontes do próprio app (Atkinson Hyperlegible), pedidas pelo CSS de leitura. */
+    private fun appFont(name: String): WebResourceResponse {
+        if (!name.matches(Regex("[a-z0-9-]+\\.woff2"))) return notFound()
+        return try {
+            WebResourceResponse("font/woff2", null, 200, "OK", mapOf("Cache-Control" to "max-age=86400"), context.assets.open("fonts/$name"))
+        } catch (e: Exception) {
+            notFound()
+        }
+    }
+
     private fun notFound() = WebResourceResponse("text/plain", "utf-8", 404, "Not Found", emptyMap(), ByteArrayInputStream(ByteArray(0)))
 
     enum class Route { PASS, BOOK, BLOCK }
 
     companion object {
         private const val BASE = "https://book.alexandria/"
+        private const val APP_FONTS = "__alexandria/fonts/"
 
         /**
          * O que fazer com um pedido do WebView: endereços sem rede (data:, about:, blob:) seguem

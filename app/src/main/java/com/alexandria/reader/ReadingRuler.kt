@@ -19,7 +19,8 @@ class ReadingRuler(context: Context, initialFraction: Float, private val onMoved
     var fraction = initialFraction.coerceIn(0f, 1f)
         private set
 
-    private val bandHeight = context.dp(46).toFloat()
+    private var bandHeight = context.dp(46).toFloat()
+    private var dimOutside = true
     private val handleWidth = context.dp(36).toFloat()
     private val dim = Paint().apply { color = Color.argb(70, 16, 26, 42) }
     private val band = Paint().apply { color = Color.argb(46, 198, 154, 82) }
@@ -38,6 +39,17 @@ class ReadingRuler(context: Context, initialFraction: Float, private val onMoved
 
     init {
         contentDescription = "Régua de leitura"
+        applyStyle(ComfortStore.load(context))
+    }
+
+    /** Espessura, cor, opacidade e escurecimento escolhidos no painel "Conforto visual". */
+    fun applyStyle(comfort: Comfort) {
+        bandHeight = context.dp(comfort.rulerHeight.dp).toFloat()
+        band.color = Comfort.rulerColor(comfort)
+        edge.color = Comfort.rulerEdgeColor(comfort)
+        handle.color = Comfort.rulerEdgeColor(comfort)
+        dimOutside = comfort.rulerDim
+        invalidate()
     }
 
     private fun bandTop(): Float = (fraction * height - bandHeight / 2).coerceIn(0f, (height - bandHeight).coerceAtLeast(0f))
@@ -52,8 +64,10 @@ class ReadingRuler(context: Context, initialFraction: Float, private val onMoved
     override fun onDraw(canvas: Canvas) {
         val top = bandTop()
         val bottom = top + bandHeight
-        canvas.drawRect(0f, 0f, width.toFloat(), top, dim)
-        canvas.drawRect(0f, bottom, width.toFloat(), height.toFloat(), dim)
+        if (dimOutside) {
+            canvas.drawRect(0f, 0f, width.toFloat(), top, dim)
+            canvas.drawRect(0f, bottom, width.toFloat(), height.toFloat(), dim)
+        }
         canvas.drawRect(0f, top, width.toFloat(), bottom, band)
         canvas.drawLine(0f, bottom, width.toFloat(), bottom, edge)
         // Alça: pílula dourada com três riscos.

@@ -16,6 +16,12 @@ deles ao próprio código.
 - Textos completos das licenças e avisos das bibliotecas: [`app/src/main/assets/licenses`](app/src/main/assets/licenses).
   O app mostra os mesmos textos em **Ajustes → Licenças de código aberto**.
 
+## Fonte Atkinson Hyperlegible
+
+A fonte de leitura **Atkinson Hyperlegible** (© 2020 Braille Institute of America) vem do pacote `@fontsource/atkinson-hyperlegible`
+5.3.0 e está em `app/src/main/assets/fonts` (subconjunto latino; os arquivos `.ttf` foram convertidos dos `.woff` originais, sem
+alterar os desenhos). Licença: **SIL Open Font License 1.1**, em `app/src/main/assets/licenses/OFL-1.1-Atkinson.txt`.
+
 ## Obrigações ao distribuir o APK
 
 AGPL e GPL exigem que quem recebe o APK também possa obter o **código-fonte dos motores**. Como as fontes e o
