@@ -266,7 +266,7 @@ class WoodenShelf(
         plant?.let { bitmap ->
             val height = space * 0.98f
             val width = height * bitmap.width / bitmap.height
-            val left = post + inner * 0.03f
+            val left = post + inner * 0.09f
             ellipseShadow(canvas, left + width * 0.5f, floor, width * 0.32f, dp(5f), 170)
             paint.color = Color.BLACK
             canvas.drawBitmap(bitmap, null, RectF(left, floor - height, left + width, floor + dp(1f)), paint)
@@ -274,65 +274,11 @@ class WoodenShelf(
         globe?.let { bitmap ->
             val height = space * 0.90f
             val width = height * bitmap.width / bitmap.height
-            val left = post + inner * 0.47f - width / 2f
+            val left = post + inner * 0.70f - width / 2f
             ellipseShadow(canvas, left + width * 0.5f, floor, width * 0.30f, dp(5f), 170)
             paint.color = Color.BLACK
             canvas.drawBitmap(bitmap, null, RectF(left, floor - height, left + width, floor + dp(1f)), paint)
         }
-        drawOldBooks(canvas, post + inner * 0.70f, post + inner * 0.985f, floor, space)
-    }
-
-    /** Livros antigos de couro com faixas douradas, quatro em pé e um inclinado. */
-    private fun drawOldBooks(canvas: Canvas, left: Float, right: Float, floor: Float, space: Float) {
-        val leathers = intArrayOf(Color.rgb(104, 36, 28), Color.rgb(36, 62, 46), Color.rgb(38, 52, 82), Color.rgb(96, 58, 30), Color.rgb(70, 28, 36))
-        val heights = floatArrayOf(0.74f, 0.82f, 0.78f, 0.86f)
-        val widths = floatArrayOf(0.17f, 0.19f, 0.16f, 0.20f)
-        val total = right - left
-        var x = right
-        for (i in heights.indices.reversed()) {
-            val bw = total * widths[i]
-            val bh = space * heights[i]
-            drawSpine(canvas, RectF(x - bw, floor - bh, x, floor), leathers[i], i)
-            x -= bw + dp(0.5f)
-        }
-        // Inclinado, apoiado nos outros.
-        val bw = total * 0.17f
-        val bh = space * 0.80f
-        canvas.save()
-        canvas.rotate(-17f, x, floor)
-        ellipseShadow(canvas, x - bw / 2f, floor, bw * 0.7f, dp(4f), 120)
-        drawSpine(canvas, RectF(x - bw, floor - bh, x, floor), leathers[4], 4)
-        canvas.restore()
-    }
-
-    private fun drawSpine(canvas: Canvas, r: RectF, leather: Int, seed: Int) {
-        paint.shader = LinearGradient(
-            r.left, 0f, r.right, 0f,
-            intArrayOf(darker(leather, 0.45f), lighter(leather, 0.18f), leather, darker(leather, 0.5f)),
-            floatArrayOf(0f, 0.35f, 0.7f, 1f), Shader.TileMode.CLAMP
-        )
-        canvas.drawRoundRect(r, dp(2f), dp(2f), paint)
-        paint.shader = null
-        val gold = Color.rgb(201, 160, 88)
-        paint.color = gold
-        val band = dp(1.6f)
-        for (fraction in floatArrayOf(0.08f, 0.13f, 0.84f, 0.89f)) {
-            val y = r.top + r.height() * fraction
-            canvas.drawRect(r.left + dp(1f), y, r.right - dp(1f), y + band, paint)
-        }
-        // Rótulo e um ornamento simples.
-        paint.color = darker(leather, 0.35f)
-        val label = RectF(r.left + r.width() * 0.18f, r.top + r.height() * 0.24f, r.right - r.width() * 0.18f, r.top + r.height() * 0.38f)
-        canvas.drawRect(label, paint)
-        paint.color = gold
-        paint.style = Paint.Style.STROKE
-        paint.strokeWidth = dp(0.8f)
-        canvas.drawRect(label, paint)
-        val cy = r.top + r.height() * (0.55f + (seed % 3) * 0.05f)
-        val cx = r.centerX()
-        val s = r.width() * 0.16f
-        canvas.drawPath(Path().apply { moveTo(cx, cy - s); lineTo(cx + s, cy); lineTo(cx, cy + s); lineTo(cx - s, cy); close() }, paint)
-        paint.style = Paint.Style.FILL
     }
 
     private fun drawPlate(canvas: Canvas, text: String, cy: Float) {
