@@ -6,6 +6,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -47,6 +48,12 @@ class MainActivityTest {
         return result
     }
 
+    private fun shelfBooks(root: View): List<ShelfBook> = when (root) {
+        is ShelfBook -> listOf(root)
+        is ViewGroup -> (0 until root.childCount).flatMap { shelfBooks(root.getChildAt(it)) }
+        else -> emptyList()
+    }
+
     private fun click(root: View, text: String) {
         fun find(view: View): View? {
             if (view is TextView && view.text.toString().startsWith(text)) return view
@@ -74,8 +81,15 @@ class MainActivityTest {
         click(activity.window.decorView, "▶  🏆 Estante")
         shown = texts(activity.window.decorView)
         assertTrue(shown.contains("Quadrinho"))
-        assertTrue(shown.contains("Manual"))
-        assertTrue(shown.any { it.startsWith("Concluído em") })
+        // Na Estante de madeira o livro é desenhado; título e data ficam na descrição (leitor de tela).
+        val books = shelfBooks(activity.window.decorView)
+        assertEquals(listOf("Manual"), books.map { it.contentDescription.toString().substringBefore(". ") })
+        assertTrue(books.single().contentDescription.contains("Concluído em"))
+        // Manter pressionado mostra as opções, com a data de conclusão no cabeçalho.
+        books.single().performLongClick()
+        shadowOf(Looper.getMainLooper()).idle()
+        val dialog = org.robolectric.shadows.ShadowDialog.getLatestDialog()
+        assertTrue(texts(dialog.window!!.decorView).any { it.startsWith("Concluído em") })
     }
 
     @Test

@@ -226,8 +226,9 @@ class IncomingBooksTest {
         context.getSharedPreferences("main", Context.MODE_PRIVATE).edit().clear().commit()
         val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
         all(activity.window.decorView).filterIsInstance<TextView>().first { it.text.startsWith("▶  🏆 Estante") }.performClick()
-        var shown = all(activity.window.decorView).filterIsInstance<TextView>().map { it.text.toString() }
-        assertTrue(shown.toString(), shown.any { it.endsWith("· arquivo removido · ⏱ 10 min") })
+        val book = all(activity.window.decorView).filterIsInstance<ShelfBook>().single()
+        assertTrue(book.contentDescription.toString(), book.contentDescription.endsWith("· arquivo removido · ⏱ 10 min"))
+        var shown: List<String>
 
         all(activity.window.decorView).filterIsInstance<TextView>().first { it.text == "Estatísticas" }.performClick()
         all(activity.window.decorView).filterIsInstance<TextView>().first { it.text == "Limpar estatísticas…" }.performClick()

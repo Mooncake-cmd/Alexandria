@@ -232,11 +232,28 @@ class MainActivity : Activity() {
             if (finished.isEmpty()) {
                 content.addView(label("Nenhum livro concluído ainda. Ao chegar no fim de um livro, toque em \"Concluir livro\".", 12f, muted))
             } else {
-                addGroupedCards(finished)
+                addWoodenShelf(finished)
             }
         }
         spacer(14)
         content.addView(label("Toque em um item para abri-lo. Mantenha pressionado para mover de prateleira, concluir ou remover.", 11f, muted))
+    }
+
+    /** Estante de madeira: livros soltos primeiro, depois cada prateleira com a sua placa. */
+    private fun addWoodenShelf(finished: List<LibraryItem>) {
+        val sections = mutableListOf(ShelfSection(null, finished.filter { it.shelf.isEmpty() }))
+        val groups = finished.filter { it.shelf.isNotEmpty() }.groupBy { it.shelf }
+        for (name in groups.keys.sortedWith(Shelves.order)) sections += ShelfSection(name, groups.getValue(name))
+        val shelf = WoodenShelf(
+            this,
+            sections,
+            cover = { BookFiles.loadCover(this, it.id) },
+            title = { displayTitle(it.name) },
+            status = { statusText(it) },
+            onOpen = { openItem(it) },
+            onOptions = { itemOptions(it) }
+        )
+        content.addView(shelf, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
     }
 
     /** Livros soltos primeiro; os que estão em prateleiras, em blocos recolhíveis por nome. */
@@ -282,17 +299,21 @@ class MainActivity : Activity() {
             ellipsize = TextUtils.TruncateAt.END
         })
         info.addView(label(entry.format.uppercase(), 10f, gold, true).apply { setPadding(0, dp(4), 0, 0) })
+        info.addView(label(statusText(entry), 11f, muted).apply { setPadding(0, dp(3), 0, dp(6)) })
+        if (entry.format in Formats.readable) info.addView(progressBar(ReadingStatus.progress(entry)), LinearLayout.LayoutParams(-1, dp(4)))
+        card.addView(info, LinearLayout.LayoutParams(0, -2, 1f))
+
+        content.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(9) })
+    }
+
+    /** "Concluído em …", "25% lido" etc., com o tempo de leitura quando houver. */
+    private fun statusText(entry: LibraryItem): String {
         val base = when {
             entry.archived -> "Concluído em ${dateFormat.format(Date(entry.finishedAt))} · arquivo removido"
             entry.finished -> "Concluído em ${dateFormat.format(Date(entry.finishedAt))}"
             else -> ReadingStatus.describe(entry)
         }
-        val status = if (entry.readingSeconds >= 60) "$base · ⏱ ${ReadingTime.format(entry.readingSeconds)}" else base
-        info.addView(label(status, 11f, muted).apply { setPadding(0, dp(3), 0, dp(6)) })
-        if (entry.format in Formats.readable) info.addView(progressBar(ReadingStatus.progress(entry)), LinearLayout.LayoutParams(-1, dp(4)))
-        card.addView(info, LinearLayout.LayoutParams(0, -2, 1f))
-
-        content.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(9) })
+        return if (entry.readingSeconds >= 60) "$base · ⏱ ${ReadingTime.format(entry.readingSeconds)}" else base
     }
 
     private fun coverView(entry: LibraryItem): View {
@@ -336,8 +357,15 @@ class MainActivity : Activity() {
         }
         if (entry.finished && !entry.archived) options += "Liberar espaço (manter na Estante)…" to { confirmFreeSpace(entry) }
         options += (if (entry.archived) "Remover da Estante" else "Remover da biblioteca") to { confirmRemove(entry) }
+        // Na Estante de madeira os livros não mostram texto: data, arquivo e tempo aparecem aqui.
+        val heading = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(20), dp(24), dp(6))
+            addView(label(displayTitle(entry.name), 18f, ink, true))
+            addView(label(statusText(entry), 12f, muted).apply { setPadding(0, dp(4), 0, 0) })
+        }
         AlertDialog.Builder(this)
-            .setTitle(displayTitle(entry.name))
+            .setCustomTitle(heading)
             .setItems(options.map { it.first }.toTypedArray()) { _, which -> options[which].second() }
             .setNegativeButton("Cancelar", null)
             .show()
