@@ -1,5 +1,6 @@
 package com.alexandria.reader
 
+import android.content.Context
 import android.graphics.Bitmap
 import java.io.File
 import java.nio.ByteBuffer
@@ -145,7 +146,7 @@ class PageText(val chars: List<PdfChar>) {
  * PDF pelo motor EraPDF (MuPDF, o mesmo do ReadEra): desenha as páginas e entrega o texto com
  * posição, o que permite selecionar, sublinhar termos do glossário e buscar.
  */
-class EraPdfSource(private val engine: OreEngine, file: File) : PageSource {
+class EraPdfSource(private val engine: OreEngine, file: File, fonts: Map<Int, File> = emptyMap()) : PageSource {
     override val pageCount: Int
     private val sizes = HashMap<Int, Pair<Float, Float>>()
     private val texts = object : LinkedHashMap<Int, PageText>(16, 0.75f, true) {
@@ -154,6 +155,15 @@ class EraPdfSource(private val engine: OreEngine, file: File) : PageSource {
 
     init {
         val response = try {
+            // Fontes para PDFs que não embutem as suas (Times, Arial, Courier...). Sem isso o motor
+            // procura as fontes Droid em /system/fonts, que não existem nos Androids atuais, e o
+            // texto some. Falhar aqui não impede de abrir: só piora o caso dessas fontes.
+            if (fonts.isNotEmpty()) {
+                val args = fonts.entries.sortedBy { it.key }.flatMap { (key, path) ->
+                    listOf(OreEngine.Arg.int(key), OreEngine.Arg.string(path.path))
+                }
+                engine.call(OreEngine.CMD_REQ_SET_FONT_CONFIG, *args.toTypedArray())
+            }
             engine.call(
                 OreEngine.CMD_REQ_OPEN,
                 OreEngine.Arg.string(""),
@@ -231,3 +241,46 @@ class PdfPasswordException : Exception("PDF protegido por senha")
 internal fun distance(ax: Float, ay: Float, bx: Float, by: Float) = sqrt((ax - bx) * (ax - bx) + (ay - by) * (ay - by))
 
 internal fun near(a: Float, b: Float, tolerance: Float) = abs(a - b) <= tolerance
+
+/**
+ * Fontes Liberation (SIL OFL 1.1), com as mesmas medidas de Times New Roman, Arial e Courier New,
+ * usadas pelo EraPDF no lugar das fontes que o PDF cita mas não traz embutidas. Ficam no APK e são
+ * copiadas uma vez para a pasta do app, porque o motor (outro processo) precisa de um caminho.
+ */
+object PdfFonts {
+    private const val ASSET_DIR = "fonts/pdf"
+
+    /** Chave do motor (SET_FONT_CONFIG) → arquivo: sem serifa 124–127, serifada 128–131, mono 132–135. */
+    val KEYS: Map<Int, String> = linkedMapOf(
+        124 to "LiberationSans-Regular.ttf", 125 to "LiberationSans-Italic.ttf",
+        126 to "LiberationSans-Bold.ttf", 127 to "LiberationSans-BoldItalic.ttf",
+        128 to "LiberationSerif-Regular.ttf", 129 to "LiberationSerif-Italic.ttf",
+        130 to "LiberationSerif-Bold.ttf", 131 to "LiberationSerif-BoldItalic.ttf",
+        132 to "LiberationMono-Regular.ttf", 133 to "LiberationMono-Italic.ttf",
+        134 to "LiberationMono-Bold.ttf", 135 to "LiberationMono-BoldItalic.ttf"
+    )
+
+    private val lock = Any()
+
+    /** Caminhos das fontes já copiadas; as que não puderem ser copiadas ficam de fora. */
+    fun files(context: Context): Map<Int, File> = synchronized(lock) {
+        val dir = File(context.filesDir, ASSET_DIR).apply { mkdirs() }
+        val result = LinkedHashMap<Int, File>()
+        for ((key, name) in KEYS) {
+            val target = File(dir, name)
+            try {
+                if (!target.isFile || target.length() == 0L) {
+                    val partial = File(dir, "$name.part")
+                    context.assets.open("$ASSET_DIR/$name").use { input ->
+                        partial.outputStream().use { input.copyTo(it) }
+                    }
+                    if (!partial.renameTo(target)) continue
+                }
+                result[key] = target
+            } catch (e: java.io.IOException) {
+                // Sem essa fonte o motor usa a padrão dele: o PDF abre do mesmo jeito.
+            }
+        }
+        result
+    }
+}

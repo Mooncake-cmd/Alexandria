@@ -123,6 +123,44 @@ class PdfTextTest {
         }
     }
 
+    /** Pixels escuros na faixa (em fração da altura) de uma página desenhada. */
+    private fun darkPixels(bitmap: android.graphics.Bitmap, top: Float, bottom: Float): Int {
+        var dark = 0
+        for (y in (bitmap.height * top).toInt() until (bitmap.height * bottom).toInt()) {
+            for (x in 0 until bitmap.width) {
+                val c = bitmap.getPixel(x, y)
+                if (android.graphics.Color.red(c) + android.graphics.Color.green(c) + android.graphics.Color.blue(c) < 384) dark++
+            }
+        }
+        return dark
+    }
+
+    @Test
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    fun pdfWithoutEmbeddedFontsUsesBundledFonts() {
+        // Times New Roman e Arial citadas mas não embutidas (como nos PDFs do Word): sem as fontes
+        // do app o motor procurava as Droid em /system/fonts e a página saía em branco.
+        val file = File(context.cacheDir, "sem-fontes.pdf").also { t ->
+            javaClass.getResourceAsStream("/ore/sem-fontes.pdf")!!.use { i -> t.outputStream().use { i.copyTo(it) } }
+        }
+        val fonts = PdfFonts.files(context)
+        assertEquals(PdfFonts.KEYS.keys, fonts.keys)
+        assertTrue(fonts.values.all { it.length() > 100_000 })
+        val pdf = EraPdfSource(OreEngine.start(context, "erapdf"), file, fonts)
+        try {
+            val page = pdf.render(0, 595)
+            // Linha da Times (y = 700 pt de 842, de baixo para cima) e da Arial (y = 600 pt).
+            assertTrue("Times não desenhada", darkPixels(page.bitmap, 0.13f, 0.18f) > 500)
+            assertTrue("Arial não desenhada", darkPixels(page.bitmap, 0.25f, 0.30f) > 500)
+            assertTrue(pdf.text(0).string.contains("Redação sem fonte embutida."))
+        } finally {
+            pdf.close()
+        }
+        // Segunda vez: reaproveita os arquivos já copiados.
+        val again = PdfFonts.files(context)
+        assertEquals(fonts.values.map { it.lastModified() }, again.values.map { it.lastModified() })
+    }
+
     private fun all(root: View): List<View> {
         val result = mutableListOf(root)
         if (root is ViewGroup) for (i in 0 until root.childCount) result += all(root.getChildAt(i))

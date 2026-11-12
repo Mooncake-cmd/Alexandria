@@ -992,7 +992,8 @@ class MainActivity : Activity() {
             "GNU GPL 3.0 (base da LGPL 3.0)" to "GPL-3.0.txt",
             "Common CLI viewer interface — Apache 2.0" to "Apache-2.0.txt",
             "libjpeg-turbo, libpng, libwebp, MiniZip, EasyBMP, FreeType, OpenJPEG" to "terceiros.txt",
-            "Fonte Atkinson Hyperlegible — SIL OFL 1.1" to "OFL-1.1-Atkinson.txt"
+            "Fonte Atkinson Hyperlegible — SIL OFL 1.1" to "OFL-1.1-Atkinson.txt",
+            "Fontes Liberation (PDFs sem fontes embutidas) — SIL OFL 1.1" to "OFL-1.1-Liberation.txt"
         )
         private val COVER_FORMATS = setOf("pdf", "cbz", "cbr", "epub", "mobi", "djvu")
     }

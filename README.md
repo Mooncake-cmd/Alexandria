@@ -1,6 +1,6 @@
 # Alexandria — projeto Android
 
-**Versão:** 0.10.0  
+**Versão:** 0.11.0  
 **Pacote:** `com.alexandria.reader`  
 **Plataforma:** Android 6.0 ou superior (API 23+)  
 **Idioma da interface:** Português (Brasil)
@@ -96,7 +96,7 @@ estão em `app/src/main/cpp/openreadera`.
 
 - São **programas separados**, empacotados como `lib<motor>.so`. O app inicia o programa e conversa com ele por dois
   pipes nomeados, com o protocolo binário do OpenReadEra (`OreEngine.kt`). Nenhum código deles é ligado ao app.
-- O APK tem ~12 MB (quatro motores × três arquiteturas: arm64-v8a, armeabi-v7a, x86_64; o EraPDF é o maior). No aparelho só os motores da arquitetura dele são instalados.
+- O APK tem ~14 MB (quatro motores × três arquiteturas: arm64-v8a, armeabi-v7a, x86_64; o EraPDF é o maior; as fontes Liberation somam ~2,4 MB). No aparelho só os motores da arquitetura dele são instalados.
 - Licenças (AGPL-3.0, GPL-2.0 e outras) e obrigações ao distribuir o APK: veja [`TERCEIROS.md`](TERCEIROS.md).
 
 ### Origem dos novos recursos
@@ -107,6 +107,9 @@ Os recursos da 0.4.0 vieram da Biblioteca do site RPG Hardcore (HTML/JavaScript)
 
 - MOBI/AZW3 com DRM não abre. A primeira abertura de um MOBI demora um pouco mais (conversão para EPUB).
 - DJVU não tem busca nem seleção de texto nesta versão (o motor oferece; falta ligar à interface).
+- PDFs que citam fontes sem embuti-las (Times New Roman, Arial, Courier New, comuns em arquivos do Word) são desenhados
+  com as fontes **Liberation**, que vêm no app e têm as mesmas medidas; fontes de outras famílias não embutidas usam a
+  mais parecida das três.
 - PDF protegido por senha ainda não abre. PDF escaneado não tem texto (precisaria de reconhecimento de texto).
 - A seleção no PDF fica dentro de uma página (não atravessa para a seguinte).
 - Se o motor EraPDF não iniciar num aparelho, o PDF abre pelo renderizador do Android, sem seleção nem busca.

@@ -514,7 +514,7 @@ class PageViewer(host: ReaderHost, private val openSource: (LibraryItem) -> Page
          */
         fun pdf(host: ReaderHost) = create(host, "pdf") { item ->
             try {
-                EraPdfSource(OreEngine.start(host.activity, "erapdf"), BookFiles.localCopy(host.activity, item))
+                EraPdfSource(OreEngine.start(host.activity, "erapdf"), BookFiles.localCopy(host.activity, item), PdfFonts.files(host.activity))
             } catch (e: PdfPasswordException) {
                 throw e
             } catch (e: Exception) {
