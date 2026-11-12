@@ -62,6 +62,9 @@ class ShelfPreviewTest {
         val header = find(activity.window.decorView) { it is TextView && it.text.startsWith("▶  🏆 Estante") }!!
         header.performClick()
         shadowOf(Looper.getMainLooper()).idle()
+        save(find(activity.window.decorView) { it is WoodenShelf }!!, File(dir, "estante-fechada.png"))
+        find(activity.window.decorView) { it is ShelfPlate }!!.performClick()
+        shadowOf(Looper.getMainLooper()).idle()
         val root = activity.window.decorView
         val shelf = find(root) { it is WoodenShelf }!!
         val scroll = find(root) { it is ScrollView } as ScrollView

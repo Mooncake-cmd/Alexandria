@@ -31,8 +31,11 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
-/** Um grupo da Estante: os livros soltos ([title] nulo) ou uma prateleira com nome. */
-class ShelfSection(val title: String?, val books: List<LibraryItem>)
+/**
+ * Um grupo da Estante: os livros soltos ([title] nulo) ou uma prateleira com nome. Prateleira
+ * fechada ([open] falso) mostra só a placa, com a quantidade de livros.
+ */
+class ShelfSection(val title: String?, val books: List<LibraryItem>, val open: Boolean = true)
 
 /**
  * A Estante desenhada como um móvel de madeira: uma prateleira de cima com decorações e, abaixo,
@@ -48,14 +51,16 @@ class WoodenShelf(
     title: (LibraryItem) -> String,
     status: (LibraryItem) -> String,
     onOpen: (LibraryItem) -> Unit,
-    onOptions: (LibraryItem) -> Unit
+    onOptions: (LibraryItem) -> Unit,
+    onToggleShelf: (String) -> Unit = {},
+    onRenameShelf: (String) -> Unit = {}
 ) : ViewGroup(context) {
 
     private sealed class Row {
         var top = 0
         var height = 0
         object Decor : Row()
-        class Title(val text: String) : Row()
+        class Title(val plate: ShelfPlate) : Row()
         class Books(val books: List<ShelfBook>) : Row()
     }
 
@@ -83,17 +88,22 @@ class WoodenShelf(
     private val backWood = Paint().apply { shader = woodShader(false, Color.rgb(40, 23, 13), Color.rgb(74, 45, 27), 11) }
     private val frameWood = Paint().apply { shader = woodShader(false, Color.rgb(78, 48, 27), Color.rgb(132, 86, 50), 23) }
     private val boardWood = Paint().apply { shader = woodShader(true, Color.rgb(92, 57, 32), Color.rgb(146, 96, 56), 37) }
-    private val plateText = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-        typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD)
-        textSize = dp(13f)
-        color = Color.rgb(58, 36, 16)
-        textAlign = Paint.Align.CENTER
-    }
+    private val plates = ArrayList<ShelfPlate>()
 
     init {
         setWillNotDraw(false)
-        // As fileiras dependem da largura e são montadas no onMeasure; aqui só os livros, em ordem.
+        // As fileiras dependem da largura e são montadas no onMeasure; aqui só placas e livros, em ordem.
         for (section in sections) {
+            if (section.books.isEmpty()) continue
+            section.title?.let { name ->
+                val plate = ShelfPlate(context, name, section.books.size, section.open).apply {
+                    setOnClickListener { onToggleShelf(name) }
+                    setOnLongClickListener { onRenameShelf(name); true }
+                }
+                plates += plate
+                addView(plate)
+            }
+            if (!section.open) continue
             for (item in section.books) {
                 val book = ShelfBook(context, item, cover(item), title(item), status(item)).apply {
                     setOnClickListener { onOpen(item) }
@@ -134,6 +144,8 @@ class WoodenShelf(
         val exact = MeasureSpec.makeMeasureSpec(bookWidth, MeasureSpec.EXACTLY)
         val exactHeight = MeasureSpec.makeMeasureSpec(bookHeight, MeasureSpec.EXACTLY)
         books.forEach { it.measure(exact, exactHeight) }
+        val plateHeight = MeasureSpec.makeMeasureSpec(dp(30f).roundToInt(), MeasureSpec.EXACTLY)
+        plates.forEach { it.measure(MeasureSpec.makeMeasureSpec((width * 0.8f).roundToInt(), MeasureSpec.AT_MOST), plateHeight) }
         setMeasuredDimension(width, y)
     }
 
@@ -142,9 +154,11 @@ class WoodenShelf(
         rows.clear()
         rows += Row.Decor
         var index = 0
+        var plate = 0
         for (section in sections) {
             if (section.books.isEmpty()) continue
-            section.title?.let { rows += Row.Title(it) }
+            if (section.title != null) rows += Row.Title(plates[plate++])
+            if (!section.open) continue
             val sectionBooks = books.subList(index, index + section.books.size)
             index += section.books.size
             sectionBooks.chunked(columns).forEach { rows += Row.Books(it) }
@@ -154,6 +168,12 @@ class WoodenShelf(
     override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
         val cell = (width - 2 * post) / columns
         for (row in rows) {
+            if (row is Row.Title) {
+                val plate = row.plate
+                val left = (width - plate.measuredWidth) / 2
+                val top = row.top + (row.height - plate.measuredHeight) / 2
+                plate.layout(left, top, left + plate.measuredWidth, top + plate.measuredHeight)
+            }
             if (row !is Row.Books) continue
             row.books.forEachIndexed { column, book ->
                 val left = (post + column * cell + (cell - bookWidth) / 2f - dp(2f)).roundToInt()
@@ -190,7 +210,7 @@ class WoodenShelf(
 
         when (row) {
             Row.Decor -> drawDecor(canvas, top, floor)
-            is Row.Title -> drawPlate(canvas, row.text, (top + bottom) / 2f)
+            is Row.Title -> Unit // a placa é um filho (ShelfPlate)
             is Row.Books -> row.books.forEach { drawBookShadow(canvas, it, floor) }
         }
         if (row !is Row.Title) drawBoard(canvas, floor)
@@ -279,31 +299,6 @@ class WoodenShelf(
             paint.color = Color.BLACK
             canvas.drawBitmap(bitmap, null, RectF(left, floor - height, left + width, floor + dp(1f)), paint)
         }
-    }
-
-    private fun drawPlate(canvas: Canvas, text: String, cy: Float) {
-        val label = TextUtils.ellipsize(text, plateText, width * 0.6f, TextUtils.TruncateAt.END).toString()
-        val half = plateText.measureText(label) / 2f + dp(16f)
-        val cx = width / 2f
-        val plate = RectF(cx - half, cy - dp(12f), cx + half, cy + dp(12f))
-        paint.color = Color.argb(110, 0, 0, 0)
-        canvas.drawRoundRect(RectF(plate.left + dp(2f), plate.top + dp(3f), plate.right + dp(2f), plate.bottom + dp(3f)), dp(4f), dp(4f), paint)
-        paint.shader = LinearGradient(0f, plate.top, 0f, plate.bottom,
-            intArrayOf(Color.rgb(236, 205, 134), Color.rgb(196, 152, 78), Color.rgb(150, 108, 48)), null, Shader.TileMode.CLAMP)
-        canvas.drawRoundRect(plate, dp(4f), dp(4f), paint)
-        paint.shader = null
-        paint.style = Paint.Style.STROKE
-        paint.strokeWidth = dp(1f)
-        paint.color = Color.rgb(110, 76, 30)
-        canvas.drawRoundRect(plate, dp(4f), dp(4f), paint)
-        paint.style = Paint.Style.FILL
-        for (x in floatArrayOf(plate.left + dp(6f), plate.right - dp(6f))) {
-            paint.color = Color.rgb(120, 84, 36)
-            canvas.drawCircle(x, cy, dp(2f), paint)
-            paint.color = Color.rgb(240, 214, 150)
-            canvas.drawCircle(x - dp(0.5f), cy - dp(0.5f), dp(0.8f), paint)
-        }
-        canvas.drawText(label, cx, cy - (plateText.ascent() + plateText.descent()) / 2f, plateText)
     }
 
     companion object {
@@ -537,5 +532,84 @@ class ShelfBook(context: Context, val item: LibraryItem, private val cover: Bitm
             Color.rgb(96, 28, 26), Color.rgb(30, 46, 74), Color.rgb(34, 64, 46),
             Color.rgb(78, 48, 26), Color.rgb(44, 40, 38), Color.rgb(88, 70, 34)
         )
+    }
+}
+
+/**
+ * Placa de latão com o nome de uma prateleira da Estante. Tocar abre ou fecha a prateleira;
+ * manter pressionado renomeia. A seta mostra o estado e o número diz quantos livros há nela.
+ */
+@SuppressLint("ViewConstructor")
+class ShelfPlate(context: Context, val name: String, private val count: Int, val open: Boolean) : View(context) {
+    private val density = resources.displayMetrics.density
+    private fun dp(value: Float) = value * density
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val text = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+        typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD)
+        textSize = dp(13f)
+        color = Color.rgb(58, 36, 16)
+    }
+    private val label = "$name · $count"
+
+    init {
+        isClickable = true
+        isLongClickable = true
+        contentDescription = "Prateleira $name, $count livro(s), ${if (open) "aberta" else "fechada"}"
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val wanted = (text.measureText(label) + dp(58f)).roundToInt()
+        val limit = MeasureSpec.getSize(widthMeasureSpec)
+        setMeasuredDimension(if (limit > 0) min(wanted, limit) else wanted, MeasureSpec.getSize(heightMeasureSpec))
+    }
+
+    override fun onDraw(canvas: Canvas) = drawPlate(canvas)
+
+    private fun drawPlate(canvas: Canvas) {
+        val plate = RectF(dp(1f), dp(1f), width - dp(3f), height - dp(4f))
+        val radius = dp(4f)
+        paint.color = Color.argb(110, 0, 0, 0)
+        canvas.drawRoundRect(RectF(plate.left + dp(2f), plate.top + dp(3f), plate.right + dp(2f), plate.bottom + dp(3f)), radius, radius, paint)
+        val pressedTint = if (isPressed) 0.12f else 0f
+        paint.shader = LinearGradient(0f, plate.top, 0f, plate.bottom,
+            intArrayOf(
+                WoodenShelf.darker(Color.rgb(236, 205, 134), pressedTint),
+                WoodenShelf.darker(Color.rgb(196, 152, 78), pressedTint),
+                WoodenShelf.darker(Color.rgb(150, 108, 48), pressedTint)
+            ), null, Shader.TileMode.CLAMP)
+        canvas.drawRoundRect(plate, radius, radius, paint)
+        paint.shader = null
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = dp(1f)
+        paint.color = Color.rgb(110, 76, 30)
+        canvas.drawRoundRect(plate, radius, radius, paint)
+        paint.style = Paint.Style.FILL
+        val cy = plate.centerY()
+        for (x in floatArrayOf(plate.left + dp(7f), plate.right - dp(7f))) {
+            paint.color = Color.rgb(120, 84, 36)
+            canvas.drawCircle(x, cy, dp(2f), paint)
+            paint.color = Color.rgb(240, 214, 150)
+            canvas.drawCircle(x - dp(0.5f), cy - dp(0.5f), dp(0.8f), paint)
+        }
+        // Seta: para baixo aberta, para a direita fechada.
+        val ax = plate.left + dp(20f)
+        val s = dp(4f)
+        val arrow = Path()
+        if (open) {
+            arrow.moveTo(ax - s, cy - s * 0.6f); arrow.lineTo(ax + s, cy - s * 0.6f); arrow.lineTo(ax, cy + s * 0.7f)
+        } else {
+            arrow.moveTo(ax - s * 0.6f, cy - s); arrow.lineTo(ax + s * 0.7f, cy); arrow.lineTo(ax - s * 0.6f, cy + s)
+        }
+        arrow.close()
+        paint.color = Color.rgb(58, 36, 16)
+        canvas.drawPath(arrow, paint)
+        val available = plate.right - dp(14f) - (ax + dp(10f))
+        val shown = TextUtils.ellipsize(label, text, available, TextUtils.TruncateAt.MIDDLE).toString()
+        canvas.drawText(shown, ax + dp(10f), cy - (text.ascent() + text.descent()) / 2f, text)
+    }
+
+    override fun setPressed(pressed: Boolean) {
+        super.setPressed(pressed)
+        invalidate()
     }
 }

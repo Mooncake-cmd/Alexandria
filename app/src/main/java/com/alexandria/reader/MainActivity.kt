@@ -38,6 +38,12 @@ class MainActivity : Activity() {
     private var refreshOnResume = false
     private var shelfOpen = false
     private val openShelves = mutableSetOf<String>()
+    /** Prateleiras abertas dentro da Estante (independentes das de "Lendo agora"). */
+    private val openEstante = mutableSetOf<String>()
+    /** Livro cuja capa está sendo trocada (aguardando a imagem da galeria). */
+    private var pendingCoverId = 0L
+    private var scroller: ScrollView? = null
+    private var scrollerScreen = ""
 
     /** Gera capas e conta páginas em segundo plano, um documento por vez. */
     private val background = Executors.newSingleThreadExecutor()
@@ -51,6 +57,8 @@ class MainActivity : Activity() {
         section = savedInstanceState?.getString(KEY_SECTION) ?: SECTION_LIBRARY
         shelfOpen = savedInstanceState?.getBoolean(KEY_SHELF_OPEN) ?: false
         savedInstanceState?.getStringArrayList(KEY_OPEN_SHELVES)?.let { openShelves += it }
+        savedInstanceState?.getStringArrayList(KEY_OPEN_ESTANTE)?.let { openEstante += it }
+        pendingCoverId = savedInstanceState?.getLong(KEY_PENDING_COVER) ?: 0L
         showSection(section)
     }
 
@@ -59,6 +67,8 @@ class MainActivity : Activity() {
         outState.putString(KEY_SECTION, section)
         outState.putBoolean(KEY_SHELF_OPEN, shelfOpen)
         outState.putStringArrayList(KEY_OPEN_SHELVES, ArrayList(openShelves))
+        outState.putStringArrayList(KEY_OPEN_ESTANTE, ArrayList(openEstante))
+        outState.putLong(KEY_PENDING_COVER, pendingCoverId)
     }
 
     override fun onResume() {
@@ -109,7 +119,12 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(18), dp(20), dp(18))
         }
+        // Ao redesenhar a mesma aba (abrir uma prateleira, trocar uma capa), mantém a posição da rolagem.
+        val previous = if (scrollerScreen == selected) scroller?.scrollY ?: 0 else 0
         val scroll = ScrollView(this).apply { addView(content) }
+        scroller = scroll
+        scrollerScreen = selected
+        if (previous > 0) scroll.post { scroll.scrollTo(0, previous) }
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
 
         val nav = LinearLayout(this).apply {
@@ -243,7 +258,7 @@ class MainActivity : Activity() {
     private fun addWoodenShelf(finished: List<LibraryItem>) {
         val sections = mutableListOf(ShelfSection(null, finished.filter { it.shelf.isEmpty() }))
         val groups = finished.filter { it.shelf.isNotEmpty() }.groupBy { it.shelf }
-        for (name in groups.keys.sortedWith(Shelves.order)) sections += ShelfSection(name, groups.getValue(name))
+        for (name in groups.keys.sortedWith(Shelves.order)) sections += ShelfSection(name, groups.getValue(name), name in openEstante)
         val shelf = WoodenShelf(
             this,
             sections,
@@ -251,7 +266,12 @@ class MainActivity : Activity() {
             title = { displayTitle(it.name) },
             status = { statusText(it) },
             onOpen = { openItem(it) },
-            onOptions = { itemOptions(it) }
+            onOptions = { itemOptions(it) },
+            onToggleShelf = { name ->
+                if (!openEstante.remove(name)) openEstante += name
+                showLibrary()
+            },
+            onRenameShelf = { renameShelf(it) }
         )
         content.addView(shelf, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
     }
@@ -356,6 +376,11 @@ class MainActivity : Activity() {
             }
         }
         if (entry.finished && !entry.archived) options += "Liberar espaço (manter na Estante)…" to { confirmFreeSpace(entry) }
+        options += "Trocar capa…" to { chooseCover(entry) }
+        if (BookFiles.hasCustomCover(this, entry.id)) options += "Restaurar capa original" to {
+            BookFiles.removeCustomCover(this, entry.id)
+            showLibrary()
+        }
         options += (if (entry.archived) "Remover da Estante" else "Remover da biblioteca") to { confirmRemove(entry) }
         // Na Estante de madeira os livros não mostram texto: data, arquivo e tempo aparecem aqui.
         val heading = LinearLayout(this).apply {
@@ -449,7 +474,10 @@ class MainActivity : Activity() {
 
     private fun moveToShelf(entry: LibraryItem, shelf: String) {
         database.setShelf(entry.id, shelf)
-        if (shelf.isNotEmpty()) openShelves += shelf
+        if (shelf.isNotEmpty()) {
+            openShelves += shelf
+            openEstante += shelf
+        }
         showLibrary()
     }
 
@@ -458,6 +486,7 @@ class MainActivity : Activity() {
             val target = Shelves.resolve(typed, database.shelves() - name)
             database.renameShelf(name, target)
             if (openShelves.remove(name)) openShelves += target
+            if (openEstante.remove(name)) openEstante += target
             showLibrary()
         }
     }
@@ -514,9 +543,43 @@ class MainActivity : Activity() {
         }
     }
 
+    /** Abre a galeria (ou o seletor de imagens) para escolher a capa de [entry]. */
+    @Suppress("DEPRECATION")
+    private fun chooseCover(entry: LibraryItem) {
+        pendingCoverId = entry.id
+        val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "image/*"
+        }
+        try {
+            startActivityForResult(Intent.createChooser(intent, "Escolher capa"), REQUEST_COVER)
+        } catch (e: ActivityNotFoundException) {
+            Toast.makeText(this, "Este aparelho não tem uma galeria disponível.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun receiveCover(image: Uri) {
+        val id = pendingCoverId
+        pendingCoverId = 0L
+        if (id == 0L) return
+        Thread({
+            val ok = BookFiles.setCustomCover(this, id, image)
+            runOnUiThread {
+                if (destroyed) return@runOnUiThread
+                if (!ok) Toast.makeText(this, "Não foi possível usar essa imagem como capa.", Toast.LENGTH_LONG).show()
+                if (section == SECTION_LIBRARY) showLibrary()
+            }
+        }, "capa").start()
+    }
+
     @Suppress("OVERRIDE_DEPRECATION", "DEPRECATION")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_COVER) {
+            val image = data?.data
+            if (resultCode == RESULT_OK && image != null) receiveCover(image) else pendingCoverId = 0L
+            return
+        }
         if (requestCode != REQUEST_DOCUMENT || resultCode != RESULT_OK) return
         val result = data ?: return
 
@@ -1000,6 +1063,9 @@ class MainActivity : Activity() {
         private const val KEY_SECTION = "section"
         private const val KEY_SHELF_OPEN = "shelf_open"
         private const val KEY_OPEN_SHELVES = "open_shelves"
+        private const val KEY_OPEN_ESTANTE = "open_estante"
+        private const val KEY_PENDING_COVER = "pending_cover"
+        private const val REQUEST_COVER = 4102
         private const val SECTION_LIBRARY = "Biblioteca"
         private const val SECTION_NOTES = "Notas"
         private const val SECTION_STATS = "Estatísticas"

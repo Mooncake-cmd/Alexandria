@@ -92,6 +92,84 @@ class MainActivityTest {
         assertTrue(texts(dialog.window!!.decorView).any { it.startsWith("Concluído em") })
     }
 
+    private fun <T : View> all(root: View, type: Class<T>): List<T> {
+        val result = mutableListOf<T>()
+        if (type.isInstance(root)) result += type.cast(root)!!
+        if (root is ViewGroup) for (i in 0 until root.childCount) result += all(root.getChildAt(i), type)
+        return result
+    }
+
+    @Test
+    fun estanteShelvesOpenAndCloseByThePlate() {
+        LibraryDatabase(context).use { db ->
+            val saga = db.add("Saga.cbz", "content://9", "cbz")!!
+            db.setFinished(saga, true)
+            db.setShelf(saga, "Sagas")
+        }
+        val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        click(activity.window.decorView, "▶  🏆 Estante")
+        var plate = all(activity.window.decorView, ShelfPlate::class.java).single()
+        assertEquals("Sagas", plate.name)
+        assertFalse("prateleira da Estante começa fechada", plate.open)
+        assertEquals(listOf("Manual.pdf"), shelfBooks(activity.window.decorView).map { it.item.name })
+
+        plate.performClick()
+        shadowOf(Looper.getMainLooper()).idle()
+        plate = all(activity.window.decorView, ShelfPlate::class.java).single()
+        assertTrue(plate.open)
+        assertEquals(listOf("Manual.pdf", "Saga.cbz"), shelfBooks(activity.window.decorView).map { it.item.name })
+
+        // Manter a placa pressionada renomeia a prateleira.
+        plate.performLongClick()
+        shadowOf(Looper.getMainLooper()).idle()
+        val dialog = org.robolectric.shadows.ShadowDialog.getLatestDialog() as android.app.AlertDialog
+        assertEquals("Renomear prateleira", org.robolectric.Shadows.shadowOf(dialog).title)
+    }
+
+    @Test
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    fun coverCanBeChangedFromTheGalleryAndRestored() {
+        // Foto deitada (1000×500): a capa sai recortada no centro, em pé (2:3).
+        val photo = java.io.File(context.cacheDir, "foto.png")
+        android.graphics.Bitmap.createBitmap(1000, 500, android.graphics.Bitmap.Config.ARGB_8888).apply {
+            eraseColor(android.graphics.Color.rgb(200, 40, 40))
+            photo.outputStream().use { compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+        }
+        val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        click(activity.window.decorView, "▶  🏆 Estante")
+        val manual = shelfBooks(activity.window.decorView).single()
+
+        fun chooseOption(text: String) {
+            manual.let { shelfBooks(activity.window.decorView).single().performLongClick() }
+            shadowOf(Looper.getMainLooper()).idle()
+            val dialog = org.robolectric.shadows.ShadowDialog.getLatestDialog() as android.app.AlertDialog
+            val list = dialog.listView
+            val index = (0 until list.adapter.count).first { list.adapter.getItem(it).toString() == text }
+            list.performItemClick(list.adapter.getView(index, null, list), index, index.toLong())
+            shadowOf(Looper.getMainLooper()).idle()
+        }
+
+        chooseOption("Trocar capa…")
+        val started = shadowOf(activity).nextStartedActivityForResult
+        val picker = started.intent.getParcelableExtra<android.content.Intent>(android.content.Intent.EXTRA_INTENT)!!
+        assertEquals("image/*", picker.type)
+        shadowOf(activity).receiveResult(started.intent, android.app.Activity.RESULT_OK, android.content.Intent().setData(android.net.Uri.fromFile(photo)))
+        val id = manual.item.id
+        val custom = BookFiles.customCoverFile(context, id)
+        val deadline = System.currentTimeMillis() + 10_000
+        while (!custom.exists() && System.currentTimeMillis() < deadline) Thread.sleep(20)
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue(custom.exists())
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeFile(custom.path, bounds)
+        assertEquals(BookFiles.CUSTOM_COVER_WIDTH, bounds.outWidth)
+        assertEquals(BookFiles.CUSTOM_COVER_HEIGHT, bounds.outHeight)
+        assertEquals(BookFiles.CUSTOM_COVER_WIDTH, BookFiles.loadCover(context, id)!!.width)
+
+        chooseOption("Restaurar capa original")
+        assertFalse(custom.exists())
+    }
+
     @Test
     fun notesAndStatsTabs() {
         val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()

@@ -1,6 +1,6 @@
 # Alexandria — projeto Android
 
-**Versão:** 0.11.0  
+**Versão:** 0.12.0  
 **Pacote:** `com.alexandria.reader`  
 **Plataforma:** Android 6.0 ou superior (API 23+)  
 **Idioma da interface:** Português (Brasil)
@@ -25,6 +25,12 @@
 - Importação de vários documentos de uma vez (Storage Access Framework), guardados no SQLite local.
 - Cartões com **capa** (PDF, EPUB e CBZ), formato, progresso em texto e barra de progresso.
 - **Lendo agora** e **Estante** (livros concluídos, recolhível), ordenados pelo que foi lido por último.
+- **Estante de madeira**: os concluídos ficam em pé num móvel de madeira, com capa, lombada, páginas e sombra; na
+  prateleira de cima, uma planta e um globo. Tocar num livro faz ele girar um pouco em 3D e abre; manter pressionado
+  mostra as opções (com data de conclusão e tempo de leitura no topo). Cada prateleira com nome ganha uma **placa de
+  latão**: tocar abre ou fecha a prateleira, manter pressionado renomeia. Livro sem capa ganha capa de couro com o título.
+- **Trocar capa** (toque longo → "Trocar capa…"): escolha uma imagem da galeria; ela é cortada no centro na proporção
+  de livro (2:3), endireitada se a foto estiver deitada, e guardada no app. "Restaurar capa original" volta à automática.
 - **Prateleiras**: toque longo num livro → mover para prateleira; toque longo no nome da prateleira → renomear.
 - Toque longo também permite marcar como concluído/não concluído e remover (apaga as anotações do livro).
 
@@ -96,7 +102,7 @@ estão em `app/src/main/cpp/openreadera`.
 
 - São **programas separados**, empacotados como `lib<motor>.so`. O app inicia o programa e conversa com ele por dois
   pipes nomeados, com o protocolo binário do OpenReadEra (`OreEngine.kt`). Nenhum código deles é ligado ao app.
-- O APK tem ~14 MB (quatro motores × três arquiteturas: arm64-v8a, armeabi-v7a, x86_64; o EraPDF é o maior; as fontes Liberation somam ~2,4 MB). No aparelho só os motores da arquitetura dele são instalados.
+- O APK tem ~14,5 MB (quatro motores × três arquiteturas: arm64-v8a, armeabi-v7a, x86_64; o EraPDF é o maior; as fontes Liberation somam ~2,4 MB). No aparelho só os motores da arquitetura dele são instalados.
 - Licenças (AGPL-3.0, GPL-2.0 e outras) e obrigações ao distribuir o APK: veja [`TERCEIROS.md`](TERCEIROS.md).
 
 ### Origem dos novos recursos
@@ -127,7 +133,8 @@ Os testes rodam na JVM, sem emulador (115 no total):
 - `ZipFormatsTest` (Robolectric): EPUB 2 e 3 (capítulos, sumário, capa), DOCX (títulos com estilos em português, listas, estilos, tabelas, caixas de texto), CBZ.
 - `LibraryDatabaseTest` (Robolectric): migrações 0.2 → 0.4 e 0.3 → 0.4 sem perda de dados, anotações, Estante e prateleiras.
 - `TextReaderTest`, `ReaderFormatsTest` (Robolectric): abre TXT, DOCX e EPUB no leitor, salva e restaura posição, busca, CBR em RAR com erro claro.
-- `MainActivityTest` (Robolectric): biblioteca com prateleiras e Estante, abas Notas, Estatísticas e Ajustes.
+- `MainActivityTest` (Robolectric): biblioteca com prateleiras e Estante de madeira (placas que abrem e fecham, troca de capa pela galeria), abas Notas, Estatísticas e Ajustes.
+- `ShelfPreviewTest`: gera imagens da Estante quando `SHELF_PREVIEW` aponta para uma pasta com capas de exemplo (sem a variável, é pulado).
 - `IncomingBooksTest`: migração para o banco v6, "Abrir com" e "Compartilhar" oferecidos para os formatos certos (e
   não para TXT), livro repetido reaproveitado, liberar espaço mantendo na Estante, livro arquivado voltando com
   anotações e glossário, limpar estatísticas.

@@ -45,6 +45,85 @@ object BookFiles {
 
     fun coverFile(context: Context, id: Long) = File(coversDir(context), "$id.jpg")
 
+    /** Capa escolhida pelo leitor na galeria. Fica à parte: a capa automática nunca a substitui. */
+    fun customCoverFile(context: Context, id: Long) = File(coversDir(context), "$id.custom.jpg")
+
+    fun hasCustomCover(context: Context, id: Long) = customCoverFile(context, id).exists()
+
+    /** Largura e altura da capa personalizada: a proporção (2:3) dos livros na Estante. */
+    const val CUSTOM_COVER_WIDTH = 400
+    const val CUSTOM_COVER_HEIGHT = 600
+
+    /**
+     * Guarda [image] (da galeria) como capa do livro: endireitada pela orientação da foto, cortada
+     * no centro na proporção 2:3 e reduzida. Roda em thread de fundo. Falso se não der para ler.
+     */
+    fun setCustomCover(context: Context, id: Long, image: Uri): Boolean {
+        val resolver = context.contentResolver
+        val decoded = try {
+            decodeScaled({ resolver.openInputStream(image) ?: throw java.io.FileNotFoundException() }, CUSTOM_COVER_WIDTH, 4_000_000)
+        } catch (e: Exception) {
+            null
+        } catch (e: OutOfMemoryError) {
+            null
+        } ?: return false
+        val rotation = try {
+            photoRotation(context, image)
+        } catch (e: Exception) {
+            0
+        }
+        val upright = if (rotation == 0) decoded else Bitmap.createBitmap(
+            decoded, 0, 0, decoded.width, decoded.height, android.graphics.Matrix().apply { postRotate(rotation.toFloat()) }, true
+        ).also { if (it !== decoded) decoded.recycle() }
+        val cover = centerCrop(upright, CUSTOM_COVER_WIDTH, CUSTOM_COVER_HEIGHT)
+        if (cover !== upright) upright.recycle()
+        val target = customCoverFile(context, id)
+        val partial = File(target.path + ".part")
+        FileOutputStream(partial).use { cover.compress(Bitmap.CompressFormat.JPEG, 86, it) }
+        cover.recycle()
+        return partial.renameTo(target)
+    }
+
+    /** Volta à capa automática (a do arquivo, ou a de couro com o título). */
+    fun removeCustomCover(context: Context, id: Long) {
+        customCoverFile(context, id).delete()
+    }
+
+    /** Recorta o centro de [source] na proporção de [width]×[height] e redimensiona para esse tamanho. */
+    fun centerCrop(source: Bitmap, width: Int, height: Int): Bitmap {
+        val scale = maxOf(width.toFloat() / source.width, height.toFloat() / source.height)
+        val cropWidth = (width / scale).toInt().coerceIn(1, source.width)
+        val cropHeight = (height / scale).toInt().coerceIn(1, source.height)
+        val result = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(result)
+        canvas.drawColor(Color.WHITE)
+        val left = (source.width - cropWidth) / 2
+        val top = (source.height - cropHeight) / 2
+        canvas.drawBitmap(
+            source,
+            android.graphics.Rect(left, top, left + cropWidth, top + cropHeight),
+            android.graphics.Rect(0, 0, width, height),
+            android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG)
+        )
+        return result
+    }
+
+    /**
+     * Fotos de câmera guardam a rotação à parte (EXIF); sem aplicar, a capa sairia deitada.
+     * Usa o ExifInterface do próprio Android (7+) para não adicionar dependências ao app.
+     */
+    @android.annotation.SuppressLint("ExifInterface")
+    private fun photoRotation(context: Context, image: Uri): Int {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.N) return 0
+        val exif = context.contentResolver.openInputStream(image)?.use { android.media.ExifInterface(it) } ?: return 0
+        return when (exif.getAttributeInt(android.media.ExifInterface.TAG_ORIENTATION, android.media.ExifInterface.ORIENTATION_NORMAL)) {
+            android.media.ExifInterface.ORIENTATION_ROTATE_90 -> 90
+            android.media.ExifInterface.ORIENTATION_ROTATE_180 -> 180
+            android.media.ExifInterface.ORIENTATION_ROTATE_270 -> 270
+            else -> 0
+        }
+    }
+
     /** Marca que já se tentou gerar a capa e não deu (formato sem capa ou arquivo inválido). */
     private fun noCoverMarker(context: Context, id: Long) = File(coversDir(context), "$id.none")
 
@@ -127,11 +206,12 @@ object BookFiles {
     fun delete(context: Context, id: Long) {
         booksDir(context).listFiles()?.filter { it.name.startsWith("$id.") }?.forEach { it.deleteRecursively() }
         coverFile(context, id).delete()
+        customCoverFile(context, id).delete()
         noCoverMarker(context, id).delete()
     }
 
     fun loadCover(context: Context, id: Long): Bitmap? {
-        val file = coverFile(context, id)
+        val file = customCoverFile(context, id).takeIf { it.exists() } ?: coverFile(context, id)
         return if (file.exists()) BitmapFactory.decodeFile(file.path) else null
     }
 
