@@ -1,6 +1,6 @@
 # Alexandria — projeto Android
 
-**Versão:** 0.12.0  
+**Versão:** 0.13.0  
 **Pacote:** `com.alexandria.reader`  
 **Plataforma:** Android 6.0 ou superior (API 23+)  
 **Idioma da interface:** Português (Brasil)
@@ -56,8 +56,11 @@ Em todos os formatos:
   - **Rolagem contínua**: o texto corre livremente; em PDF, DJVU e quadrinhos as páginas ficam uma embaixo da outra.
 - **Zoom também na rolagem contínua**: pinça ou toque duplo ampliam a coluna de páginas; com zoom, o dedo arrasta para
   os lados e a rolagem vertical continua normal.
-- **Régua de leitura** (menu ⋮): faixa sobre a linha lida; arraste pela alça à direita. Espessura (1, 2 ou 3 linhas),
-  cor, opacidade e "escurecer o resto da página" são escolhidos no Conforto visual.
+- **Régua de leitura** (menu ⋮): faixa sobre a linha lida. A alça fica escondida: **toque na régua** para ela aparecer
+  à direita por 3 segundos e arraste-a (com o leitor de tela ligado, a alça fica sempre à vista). Espessura (1, 2 ou 3
+  linhas), cor, opacidade e o que fazer fora da régua (normal, escurecer ou preto) ficam no Conforto visual.
+- **Modo foco** (menu ⋮ → "Modo foco (só o texto da régua)"): liga a régua e deixa **preto** tudo fora dela; só o texto
+  sob a faixa fica visível. O mesmo menu desliga (volta a só escurecer).
 - **Glossário do livro**: selecione uma palavra ou expressão ("Arrakis", "Casa Atreides") e toque em **"Definir termo"**.
   Nas próximas vezes em que ela aparecer no livro, fica **sublinhada**: um toque mostra a definição (com editar e remover).
   Vale sem diferenciar maiúsculas e acentos, só para palavras inteiras, e cada livro tem o seu glossário (menu ⋮ →

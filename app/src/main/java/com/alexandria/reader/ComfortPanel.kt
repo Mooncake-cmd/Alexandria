@@ -98,7 +98,8 @@ object ComfortPanel {
             label(activity, content, "Cor")
             colors(activity, content, c.rulerColor) { update(comfort.copy(rulerColor = it), redraw = true) }
             slider(activity, content, "Opacidade", 10, 60, c.rulerOpacity, { "$it%" }) { update(comfort.copy(rulerOpacity = it)) }
-            switch(activity, content, "Escurecer o resto da página", c.rulerDim) { update(comfort.copy(rulerDim = it)) }
+            label(activity, content, "Fora da régua")
+            chips(activity, content, Comfort.RulerOutside.entries, c.rulerOutside, { it.label }) { update(comfort.copy(rulerOutside = it), redraw = true) }
 
             content.addView(TextView(activity).apply {
                 text = "Restaurar o padrão"

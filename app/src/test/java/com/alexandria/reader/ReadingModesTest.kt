@@ -185,9 +185,25 @@ class ReadingModesTest {
         val ruler = all(controller.get().window.decorView).filterIsInstance<ReadingRuler>().single()
         assertEquals(View.VISIBLE, ruler.visibility)
         assertEquals(0.7f, ruler.fraction, 0.001f)
+        // A alça começa escondida: o toque no lugar dela ainda vai para o livro.
+        assertFalse(ruler.handleShown)
+        assertFalse(ruler.hitsHandle(ruler.width - 10f, ruler.height * 0.7f))
+        // Um toque rápido na faixa mostra a alça (e o toque segue para o livro).
+        val activity = controller.get()
+        val location = IntArray(2)
+        ruler.getLocationInWindow(location)
+        val x = location[0] + ruler.width / 2f
+        val y = location[1] + ruler.height * 0.7f
+        val down = android.os.SystemClock.uptimeMillis()
+        activity.dispatchTouchEvent(android.view.MotionEvent.obtain(down, down, android.view.MotionEvent.ACTION_DOWN, x, y, 0))
+        activity.dispatchTouchEvent(android.view.MotionEvent.obtain(down, down + 50, android.view.MotionEvent.ACTION_UP, x, y, 0))
+        assertTrue(ruler.handleShown)
         // Fora da alça, o toque passa para o livro; na alça, é da régua.
         assertFalse(ruler.hitsHandle(10f, ruler.height * 0.7f))
         assertTrue(ruler.hitsHandle(ruler.width - 10f, ruler.height * 0.7f))
+        // Some sozinha depois de alguns segundos.
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(ReadingRuler.HANDLE_SECONDS + 1L))
+        assertFalse(ruler.handleShown)
         controller.pause().stop().destroy()
     }
 }

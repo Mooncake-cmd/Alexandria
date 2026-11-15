@@ -79,4 +79,32 @@ class ShelfPreviewTest {
         book.rotationY = -22f
         save(shelf, File(dir, "estante-toque.png"))
     }
+
+    @Test
+    fun focusPreview() {
+        val dir = File(System.getenv("SHELF_PREVIEW") ?: "")
+        assumeTrue(dir.isDirectory)
+        context.deleteDatabase("alexandria.db")
+        ComfortStore.save(context, Comfort(rulerOutside = Comfort.RulerOutside.FOCO))
+        context.getSharedPreferences("reader", Context.MODE_PRIVATE).edit().putBoolean("ruler_on", true).putFloat("ruler_y", 0.35f).commit()
+        val text = File(context.cacheDir, "Dom Casmurro.txt").apply {
+            writeText((1..12).joinToString("\n\n") {
+                "Uma noite destas, vindo da cidade para o Engenho Novo, encontrei no trem da Central um rapaz aqui do bairro, que eu conheço de vista e de chapéu. Cumprimentou-me, sentou-se ao pé de mim, falou da lua e dos ministros, e acabou recitando-me versos."
+            })
+        }
+        val id = LibraryDatabase(context).use { it.add(text.name, android.net.Uri.fromFile(text).toString(), "txt")!! }
+        val activity = Robolectric.buildActivity(
+            ReaderActivity::class.java,
+            android.content.Intent(context, ReaderActivity::class.java).putExtra(ReaderActivity.EXTRA_ITEM_ID, id)
+        ).setup().visible().get()
+        val deadline = System.currentTimeMillis() + 5_000
+        while (System.currentTimeMillis() < deadline) {
+            Thread.sleep(50)
+            shadowOf(Looper.getMainLooper()).idle()
+        }
+        val root = activity.window.decorView
+        save(root, File(dir, "foco.png"))
+        (find(root) { it is ReadingRuler } as ReadingRuler).revealHandle()
+        save(root, File(dir, "foco-alca.png"))
+    }
 }

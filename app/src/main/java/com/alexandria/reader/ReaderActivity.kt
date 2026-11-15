@@ -151,6 +151,8 @@ class ReaderActivity : Activity(), ReaderHost {
 
     /** O dedo começou na alça da régua: o gesto inteiro é dela, não do livro. */
     private var rulerGesture = false
+    /** Toque que começou sobre a faixa da régua (com alça escondida): se for um toque rápido, mostra a alça. */
+    private var bandDown: Triple<Float, Float, Long>? = null
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         if (ev.actionMasked == MotionEvent.ACTION_DOWN) clock.interaction(System.currentTimeMillis())
@@ -160,7 +162,21 @@ class ReaderActivity : Activity(), ReaderHost {
                 r.getLocationInWindow(location)
                 r.visibility == View.VISIBLE && r.hitsHandle(ev.x - location[0], ev.y - location[1])
             } ?: false
+            bandDown = ruler?.takeIf { !rulerGesture && it.visibility == View.VISIBLE }?.let { r ->
+                val location = IntArray(2)
+                r.getLocationInWindow(location)
+                if (r.hitsBand(ev.y - location[1])) Triple(ev.x, ev.y, ev.eventTime) else null
+            }
         }
+        if (ev.actionMasked == MotionEvent.ACTION_UP) {
+            bandDown?.let { (x, y, time) ->
+                val slop = android.view.ViewConfiguration.get(this).scaledTouchSlop
+                val still = kotlin.math.abs(ev.x - x) < slop && kotlin.math.abs(ev.y - y) < slop
+                if (still && ev.eventTime - time < android.view.ViewConfiguration.getLongPressTimeout()) ruler?.revealHandle()
+            }
+            bandDown = null
+        }
+        if (ev.actionMasked == MotionEvent.ACTION_CANCEL) bandDown = null
         if (rulerGesture) return super.dispatchTouchEvent(ev)
         return viewer?.dispatchTouch(ev) ?: super.dispatchTouchEvent(ev)
     }
@@ -308,6 +324,8 @@ class ReaderActivity : Activity(), ReaderHost {
         actions += (if (paged) "Modo: rolagem contínua" else "Modo: páginas (toque duplo na borda)") to { switchMode(!paged) }
         val rulerOn = ruler?.visibility == View.VISIBLE
         actions += (if (rulerOn) "Esconder régua de leitura" else "Mostrar régua de leitura") to { toggleRuler() }
+        val focus = ComfortStore.load(this).rulerOutside == Comfort.RulerOutside.FOCO
+        actions += (if (focus && rulerOn) "Desligar modo foco" else "Modo foco (só o texto da régua)") to { toggleFocus(!(focus && rulerOn)) }
         actions.add(0, "Conforto visual…" to { showComfort() })
         actions.add(1, "Glossário do livro" to { showGlossary() })
         actions += if (item.finished) {
@@ -339,11 +357,22 @@ class ReaderActivity : Activity(), ReaderHost {
     private fun toggleRuler() {
         val on = ruler?.visibility != View.VISIBLE
         setRuler(on)
-        if (on) Toast.makeText(this, "Arraste a alça à direita para mover a régua. Espessura, cor e opacidade: ⋮ > Conforto visual.", Toast.LENGTH_LONG).show()
+        if (on) Toast.makeText(this, "Toque na régua para mostrar a alça e arraste-a para mover. Espessura, cor e modo foco: ⋮ > Conforto visual.", Toast.LENGTH_LONG).show()
+    }
+
+    /** Modo foco: liga a régua e deixa preto tudo fora dela (ou volta a só escurecer). */
+    private fun toggleFocus(on: Boolean) {
+        val comfort = ComfortStore.load(this)
+        val updated = comfort.copy(rulerOutside = if (on) Comfort.RulerOutside.FOCO else Comfort.RulerOutside.ESCURECER)
+        ComfortStore.save(this, updated)
+        if (on) setRuler(true)
+        applyComfort(updated)
+        if (on) Toast.makeText(this, "Modo foco: só o texto sob a régua fica visível. Toque na régua para mostrar a alça e movê-la.", Toast.LENGTH_LONG).show()
     }
 
     private fun setRuler(on: Boolean) {
         ruler?.visibility = if (on) View.VISIBLE else View.GONE
+        if (on) ruler?.revealHandle()
         ReadingPrefs.setRuler(this, on)
     }
 

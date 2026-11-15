@@ -1,13 +1,13 @@
 ALEXANDRIA — STATUS DA ENTREGA
 
-Versão do projeto: 0.12.0
+Versão do projeto: 0.13.0
 
 Build: compilado com sucesso (AGP 8.7.3, Gradle 8.14.3, SDK 35, NDK 27.0.12077973). Lint sem avisos.
-118 testes automatizados passando, incluindo integração com os motores do OpenReadEra compilados para Linux.
+120 testes automatizados passando, incluindo integração com os motores do OpenReadEra compilados para Linux.
 APK: ~14,5 MB, não versionado; gerado pelo GitHub Actions (artefato Alexandria-debug-apk) ou por ./gradlew assembleDebug.
 
 Formatos com leitor: PDF, EPUB, MOBI/AZW/AZW3, DJVU, CBZ, CBR (RAR 4/5 ou ZIP), DOCX, TXT.
-Leitura: modo páginas (toque duplo nas bordas, página inteira) ou rolagem contínua, com zoom nos dois; régua configurável;
+Leitura: modo páginas (toque duplo nas bordas, página inteira) ou rolagem contínua, com zoom nos dois; régua configurável (alça aparece ao tocar) e modo foco (só a régua visível);
 Conforto visual: temas (também em PDF/DJVU/quadrinhos), brilho, luz quente, sobreposição colorida e tipografia; DOCX com imagens.
 Glossário por livro (definir termo pela seleção, sublinhado e toque para ver), tempo de leitura e sequência de dias.
 PDF pelo EraPDF (MuPDF): texto selecionável, glossário sublinhado, busca e anotação de trechos; fontes Liberation

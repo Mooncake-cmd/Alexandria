@@ -151,7 +151,7 @@ class ComfortTest {
         context.getSharedPreferences("reader", Context.MODE_PRIVATE).edit().putBoolean("night_mode", true).commit()
         assertEquals(Comfort.Theme.ESCURO, ComfortStore.load(context).theme)
         val custom = Comfort(theme = Comfort.Theme.CINZA, warmth = 30, overlayOn = true, overlayColor = Comfort.Tint.ROSA,
-            font = Comfort.Font.ATKINSON, rulerHeight = Comfort.RulerHeight.GROSSA, rulerColor = Comfort.Tint.AZUL, rulerDim = false)
+            font = Comfort.Font.ATKINSON, rulerHeight = Comfort.RulerHeight.GROSSA, rulerColor = Comfort.Tint.AZUL, rulerOutside = Comfort.RulerOutside.FOCO)
         ComfortStore.save(context, custom)
         assertEquals(custom, ComfortStore.load(context))
     }
@@ -204,6 +204,34 @@ class ComfortTest {
     }
 
     @Test
+    fun oldDimSettingBecomesRulerOutside() {
+        context.getSharedPreferences("reader", Context.MODE_PRIVATE).edit().putBoolean("ruler_dim", false).commit()
+        assertEquals(Comfort.RulerOutside.NORMAL, ComfortStore.load(context).rulerOutside)
+        context.getSharedPreferences("reader", Context.MODE_PRIVATE).edit().putBoolean("ruler_dim", true).commit()
+        assertEquals(Comfort.RulerOutside.ESCURECER, ComfortStore.load(context).rulerOutside)
+    }
+
+    @Test
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    fun focusModeLeavesOnlyTheBandVisible() {
+        ComfortStore.save(context, Comfort(rulerOutside = Comfort.RulerOutside.FOCO, rulerOpacity = 10))
+        val ruler = ReadingRuler(context, 0.5f) {}
+        ruler.measure(View.MeasureSpec.makeMeasureSpec(400, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(800, View.MeasureSpec.EXACTLY))
+        ruler.layout(0, 0, 400, 800)
+        val page = android.graphics.Bitmap.createBitmap(400, 800, android.graphics.Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(page)
+        canvas.drawColor(android.graphics.Color.WHITE) // a página do livro, por baixo
+        ruler.draw(canvas)
+        assertEquals(android.graphics.Color.BLACK, page.getPixel(200, 100))
+        assertEquals(android.graphics.Color.BLACK, page.getPixel(200, 760))
+        val band = page.getPixel(100, 400)
+        assertTrue("faixa da régua continua clara", android.graphics.Color.red(band) > 200)
+        // Alça escondida: nada desenhado no canto direito da faixa até tocar na régua.
+        assertFalse(ruler.handleShown)
+        assertEquals(band, page.getPixel(380, 400))
+    }
+
+    @Test
     fun rulerFollowsChosenStyle() {
         ComfortStore.save(context, Comfort(rulerHeight = Comfort.RulerHeight.GROSSA, rulerColor = Comfort.Tint.VERDE, rulerOpacity = 40))
         context.getSharedPreferences("reader", Context.MODE_PRIVATE).edit().putBoolean("ruler_on", true).putFloat("ruler_y", 0.5f).commit()
@@ -212,7 +240,8 @@ class ComfortTest {
         val ruler = all(controller.get().window.decorView).filterIsInstance<ReadingRuler>().single()
         val middle = ruler.height * 0.5f
         val half = context.resources.displayMetrics.density * 70 / 2
-        // Régua grossa (70 dp): a alça cobre a faixa inteira.
+        // Régua grossa (70 dp): a alça cobre a faixa inteira (depois de aparecer com um toque).
+        ruler.revealHandle()
         assertTrue(ruler.hitsHandle(ruler.width - 5f, middle - half + 2))
         assertTrue(ruler.hitsHandle(ruler.width - 5f, middle + half - 2))
         controller.pause().stop().destroy()

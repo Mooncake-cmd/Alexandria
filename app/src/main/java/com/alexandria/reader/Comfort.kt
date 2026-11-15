@@ -34,7 +34,8 @@ data class Comfort(
     val rulerColor: Tint = Tint.DOURADO,
     /** Opacidade da faixa da régua, em %. */
     val rulerOpacity: Int = 25,
-    val rulerDim: Boolean = true
+    /** O que acontece fora da faixa: nada, escurecer de leve, ou preto (modo foco). */
+    val rulerOutside: RulerOutside = RulerOutside.ESCURECER
 ) {
     enum class Theme(val label: String, val background: Int, val text: Int, val link: Int, val dark: Boolean) {
         CLARO("Claro", 0xFFF5F2EB.toInt(), 0xFF162234.toInt(), 0xFFB78942.toInt(), false),
@@ -70,6 +71,11 @@ data class Comfort(
         SERIFADA("Serifada", "Georgia, 'Noto Serif', serif"),
         SEM_SERIFA("Sem serifa", "Roboto, 'Noto Sans', sans-serif"),
         ATKINSON("Atkinson Hyperlegible", "'Atkinson Hyperlegible', sans-serif")
+    }
+
+    /** Fora da régua: [FOCO] deixa visível só o texto sob a faixa; o resto da página fica preto. */
+    enum class RulerOutside(val label: String) {
+        NORMAL("Normal"), ESCURECER("Escurecer"), FOCO("Preto (modo foco)")
     }
 
     enum class RulerHeight(val label: String, val dp: Int) {
@@ -216,7 +222,11 @@ object ComfortStore {
             rulerHeight = enumOf(p.getString("ruler_height", null), d.rulerHeight),
             rulerColor = enumOf(p.getString("ruler_color", null), d.rulerColor),
             rulerOpacity = p.getInt("ruler_opacity", d.rulerOpacity),
-            rulerDim = p.getBoolean("ruler_dim", d.rulerDim)
+            // Até a 0.12 havia só "escurecer sim/não" (ruler_dim).
+            rulerOutside = enumOf(
+                p.getString("ruler_outside", null),
+                if (p.getBoolean("ruler_dim", true)) Comfort.RulerOutside.ESCURECER else Comfort.RulerOutside.NORMAL
+            )
         )
     }
 
@@ -238,7 +248,7 @@ object ComfortStore {
             .putString("ruler_height", c.rulerHeight.name)
             .putString("ruler_color", c.rulerColor.name)
             .putInt("ruler_opacity", c.rulerOpacity)
-            .putBoolean("ruler_dim", c.rulerDim)
+            .putString("ruler_outside", c.rulerOutside.name)
             .apply()
     }
 }
