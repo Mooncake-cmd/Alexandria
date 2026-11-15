@@ -1,0 +1,5 @@
+DjVu.js (biblioteca), de RussCoder — https://github.com/RussCoder/djvujs
+Licença: GNU GPL versão 2 ou (a seu critério) qualquer versão posterior (LICENSE.md, GNU_GPL_v2).
+Origem: pacote npm "djvujs-dist" 0.5.4, pasta library/src.
+Alteração feita para o Alexandria: em src/DjVuPage.js o import de "pngjs/browser" foi trocado por
+"const png = null" (a conversão para PNG não é usada pelo site e o pngjs não é incluído).

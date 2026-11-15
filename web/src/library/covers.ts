@@ -30,6 +30,25 @@ const makers: Record<string, (file: Blob, item: LibraryItem) => Promise<Blob | n
       book.dispose()
     }
   },
+  pdf: async (file, item) => {
+    const { pdfCover } = await import('../reader/pdfSource')
+    const { cover, pages } = await pdfCover(file)
+    await updatePageCount(item.id, pages)
+    return cover
+  },
+  cbz: async (file, item) => comic(file, item, false),
+  cbr: async (file, item) => comic(file, item, true),
+  djvu: async (file, item) => {
+    const { openDjvu } = await import('../reader/djvuSource')
+    const source = await openDjvu(file)
+    try {
+      await updatePageCount(item.id, source.pageCount)
+      const { comicCover } = await import('../reader/comicSource')
+      return await comicCover({ ...source, render: async (i, w) => bitmapCanvas(await source.render(i, w)) })
+    } finally {
+      source.close()
+    }
+  },
   mobi: async (file, item) => {
     const { openMobi } = await import('../reader/reflowBook')
     const book = await openMobi(file)
@@ -73,4 +92,24 @@ export async function ensureCovers(items: LibraryItem[]) {
   } finally {
     running = false
   }
+}
+
+async function comic(file: Blob, item: LibraryItem, rar: boolean): Promise<Blob | null> {
+  const { openCbz, openCbr, comicCover } = await import('../reader/comicSource')
+  const source = rar ? await openCbr(file) : await openCbz(file)
+  try {
+    await updatePageCount(item.id, source.pageCount)
+    return await comicCover(source)
+  } finally {
+    source.close()
+  }
+}
+
+function bitmapCanvas(drawn: HTMLCanvasElement | ImageBitmap): HTMLCanvasElement {
+  if (drawn instanceof HTMLCanvasElement) return drawn
+  const canvas = document.createElement('canvas')
+  canvas.width = drawn.width
+  canvas.height = drawn.height
+  canvas.getContext('2d')!.drawImage(drawn, 0, 0)
+  return canvas
 }

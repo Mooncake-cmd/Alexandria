@@ -2,7 +2,7 @@
 
 > Documento de planejamento e acompanhamento. Base: app Android 0.15.0 (≈9.200 linhas de Kotlin, 20 arquivos de teste).
 >
-> **Situação:** Etapas 0 a 4 prontas (base do site, regras do app com testes, biblioteca com backup, leitores de TXT, DOCX, EPUB e MOBI).
+> **Situação:** Etapas 0 a 5 prontas (base do site, regras do app com testes, biblioteca com backup, leitores de todos os formatos).
 
 ## 0. Decisões do dono do projeto
 
@@ -239,7 +239,7 @@ Portar para `web/src/core/`, com os testes equivalentes do Kotlin:
 - **Pronto quando:** EPUBs de teste do app e o "Didascalicon" abrem, paginam sem repetir/cortar linhas, voltam ao
   ponto; MOBIs de teste (`huffdic`, `windows-1252`, `obfuscated_fonts`) abrem.
 
-### Etapa 5 — PDF, quadrinhos e DJVU (G)
+### Etapa 5 — PDF, quadrinhos e DJVU (G) ✅
 - Visualizador de páginas (modo páginas com página inteira e rolagem contínua), zoom por pinça/toque duplo,
   bloqueio lateral, ir para página; PDF com camada de texto (seleção com alças, busca); CBZ, CBR (RAR 4/5), DJVU.
 - **Pronto quando:** as amostras do app (`amostra.pdf`, `sem-fontes.pdf`, `amostra.djvu`, `quadrinho-rar5.cbr`)

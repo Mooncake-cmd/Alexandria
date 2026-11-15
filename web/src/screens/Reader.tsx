@@ -9,6 +9,9 @@ import { EpubReader, type EpubReaderHandle } from '../reader/EpubReader'
 import { openEpub, openMobi, type ReflowBook } from '../reader/reflowBook'
 import { coverOf, setCover, updatePageCount } from '../storage/library'
 import { scaleCover } from '../library/covers'
+import { PageReader, type PageReaderHandle } from '../reader/PageReader'
+import type { PageSource } from '../reader/pageSource'
+import { promptDialog } from '../ui/dialogs'
 import { menuDialog, toast } from '../ui/dialogs'
 
 type State =
@@ -17,10 +20,33 @@ type State =
   | { status: 'pending'; item: LibraryItem }
   | { status: 'text'; item: LibraryItem; content: TextContent; prefs: ReadingPrefs }
   | { status: 'reflow'; item: LibraryItem; book: ReflowBook; prefs: ReadingPrefs }
+  | { status: 'pages'; item: LibraryItem; source: PageSource; prefs: ReadingPrefs }
 
 /** Formatos com leitor no site até agora (os demais chegam nas próximas etapas do plano). */
 const TEXT_FORMATS = new Set(['txt', 'docx'])
 const REFLOW_FORMATS = new Set(['epub', 'mobi'])
+const PAGE_FORMATS = new Set(['pdf', 'cbz', 'cbr', 'djvu'])
+
+/** Abre PDF, quadrinho ou DJVU; PDF com senha pede a senha (o app ainda não abre esses). */
+async function openPages(format: string, file: Blob): Promise<PageSource | null> {
+  if (format === 'pdf') {
+    const { openPdf, isPasswordError } = await import('../reader/pdfSource')
+    let password: string | undefined
+    for (;;) {
+      try {
+        return await openPdf(file, password)
+      } catch (e) {
+        if (!isPasswordError(e)) throw e
+        const typed = await promptDialog(password === undefined ? 'PDF protegido' : 'Senha incorreta', 'Senha do PDF', '', [], 'Abrir')
+        if (typed === null) return null
+        password = typed
+      }
+    }
+  }
+  if (format === 'djvu') return (await import('../reader/djvuSource')).openDjvu(file)
+  const comics = await import('../reader/comicSource')
+  return format === 'cbr' ? comics.openCbr(file) : comics.openCbz(file)
+}
 
 export function Reader({ bookId }: { bookId: number }) {
   const [state, setState] = useState<State>({ status: 'loading' })
@@ -29,12 +55,26 @@ export function Reader({ bookId }: { bookId: number }) {
     let alive = true
     let content: TextContent | null = null
     let reflow: ReflowBook | null = null
+    let pages: PageSource | null = null
     ;(async () => {
       const item = await findItem(bookId)
       if (!item) return setState({ status: 'error', message: 'Documento não encontrado na biblioteca.' })
-      if (!TEXT_FORMATS.has(item.format) && !REFLOW_FORMATS.has(item.format)) return setState({ status: 'pending', item })
+      if (!TEXT_FORMATS.has(item.format) && !REFLOW_FORMATS.has(item.format) && !PAGE_FORMATS.has(item.format)) return setState({ status: 'pending', item })
       const file = await bookFile(bookId)
       if (!file) return setState({ status: 'error', message: 'O arquivo deste livro não está guardado neste navegador. Importe-o de novo.' })
+      if (PAGE_FORMATS.has(item.format)) {
+        try {
+          const [source, prefs] = await Promise.all([openPages(item.format, file), loadPrefs()])
+          if (!source) return void (location.hash = '#/biblioteca')
+          pages = source
+          if (!alive) return source.close()
+          setState({ status: 'pages', item, source, prefs })
+        } catch (e) {
+          console.error(e)
+          setState({ status: 'error', message: `Não foi possível abrir este ${item.format.toUpperCase()}. O arquivo pode estar danificado.` })
+        }
+        return
+      }
       if (REFLOW_FORMATS.has(item.format)) {
         try {
           const [book, prefs] = await Promise.all([item.format === 'epub' ? openEpub(file) : openMobi(file), loadPrefs()])
@@ -66,12 +106,14 @@ export function Reader({ bookId }: { bookId: number }) {
       alive = false
       content?.dispose()
       reflow?.dispose()
+      pages?.close()
     }
   }, [bookId])
 
   if (state.status === 'loading') return <div class="reader-message">Carregando…</div>
   if (state.status === 'error') return <ReaderMessage text={state.message} />
   if (state.status === 'pending') return <ReaderMessage title={displayTitle(state.item.name)} text={`O leitor de ${state.item.format.toUpperCase()} do site ainda está em construção.`} />
+  if (state.status === 'pages') return <PageBookView item={state.item} source={state.source} initialPrefs={state.prefs} />
   if (state.status === 'reflow') return <ReflowBookView item={state.item} book={state.book} initialPrefs={state.prefs} />
   return <TextBook item={state.item} content={state.content} initialPrefs={state.prefs} />
 }
@@ -288,6 +330,116 @@ function ReflowBookView({ item: initial, book, initialPrefs }: { item: LibraryIt
         <button type="button" class="foot-button" disabled={info.chapter <= 0} aria-label="Capítulo anterior" onClick={() => handle.current?.turnChapter(-1)}>‹ Cap.</button>
         <span class="muted small foot-label">{title ? <><strong>{title}</strong><br /></> : null}{label}</span>
         <button type="button" class="foot-button" disabled={info.chapter >= book.chapterCount - 1} aria-label="Próximo capítulo" onClick={() => handle.current?.turnChapter(1)}>Cap. ›</button>
+      </footer>
+    </div>
+  )
+}
+
+/** Moldura do leitor de PDF, quadrinhos e DJVU: páginas, zoom, bloqueio lateral, ir para a página. */
+function PageBookView({ item: initial, source, initialPrefs }: { item: LibraryItem; source: PageSource; initialPrefs: ReadingPrefs }) {
+  const [item, setItem] = useState(initial)
+  const [prefs, setPrefs] = useState(initialPrefs)
+  const [info, setInfo] = useState({ page: Math.min(source.pageCount - 1, initial.position), atEnd: false, zoom: 1 })
+  const handle = useRef<PageReaderHandle | null>(null)
+  const saved = useRef(initial.position)
+
+  const changePrefs = (change: Partial<ReadingPrefs>) => {
+    const next = { ...prefs, ...change }
+    setPrefs(next)
+    savePrefs(next)
+  }
+
+  useEffect(() => {
+    updateProgress(item.id, info.page, source.pageCount)
+    const save = () => updateProgress(item.id, handle.current?.current() ?? saved.current, source.pageCount)
+    window.addEventListener('pagehide', save)
+    document.addEventListener('visibilitychange', save)
+    return () => {
+      save()
+      window.removeEventListener('pagehide', save)
+      document.removeEventListener('visibilitychange', save)
+    }
+  }, [])
+  useEffect(() => {
+    if (info.page === saved.current) return
+    const timer = setTimeout(() => {
+      saved.current = info.page
+      updateProgress(item.id, info.page, source.pageCount)
+    }, 600)
+    return () => clearTimeout(timer)
+  }, [info.page])
+
+  const finish = async (done: boolean) => {
+    await setFinished(item.id, done)
+    setItem({ ...item, finishedAt: done ? Date.now() : 0 })
+    toast(done ? `"${displayTitle(item.name)}" foi para a Estante.` : `"${displayTitle(item.name)}" voltou para "Lendo agora".`)
+  }
+  const askPage = async () => {
+    const typed = await promptDialog('Ir para a página', `Página (1 a ${source.pageCount})`, String(info.page + 1), [], 'Ir')
+    const number = typed ? Number.parseInt(typed, 10) : NaN
+    if (Number.isFinite(number)) handle.current?.goTo(number - 1)
+  }
+  const toggleLock = () => {
+    const locked = !prefs.sideLock
+    changePrefs({ sideLock: locked })
+    toast(locked ? 'Movimento para os lados bloqueado. Zoom e rolagem para cima e para baixo continuam.' : 'Movimento para os lados liberado.')
+  }
+  const menu = async () => {
+    const actions: [string, () => void][] = [
+      ['Ir para a página…', askPage],
+      [prefs.paged ? 'Modo: rolagem contínua' : 'Modo: páginas (página inteira na tela)', () => changePrefs({ paged: !prefs.paged })],
+      ['Cor da página…', async () => {
+        const themes = Object.entries(THEMES)
+        const choice = await menuDialog('Cor da página', themes.map(([key, t]) => (key === prefs.comfort.theme ? `▸ ${t.label}` : t.label)))
+        if (choice !== null) changePrefs({ comfort: { ...prefs.comfort, theme: themes[choice][0] as keyof typeof THEMES } })
+      }],
+      [prefs.sideLock ? 'Liberar movimento para os lados' : 'Bloquear movimento para os lados', toggleLock],
+      [isFinished(item) ? 'Voltar para "Lendo agora"' : 'Concluir livro', () => finish(!isFinished(item))]
+    ]
+    const choice = await menuDialog('Opções de leitura', actions.map((a) => a[0]))
+    if (choice !== null) actions[choice][1]()
+  }
+
+  const zoomText = info.zoom > 1.05 ? ` · ${Math.round(info.zoom * 100)}%` : ''
+  return (
+    <div class="reader">
+      <header class="reader-bar">
+        <a href="#/biblioteca" class="bar-button" aria-label="Voltar para a biblioteca">‹</a>
+        <div class="reader-title">
+          <strong>{item.name}</strong>
+        </div>
+        <button type="button" class="bar-button" aria-label="Mais opções" onClick={menu}>⋮</button>
+      </header>
+      <div class="reader-body">
+        <PageReader
+          source={source}
+          paged={prefs.paged}
+          sideLock={prefs.sideLock}
+          comfort={prefs.comfort}
+          start={Math.min(source.pageCount - 1, initial.position)}
+          onPage={(page, atEnd, zoom) => setInfo({ page, atEnd, zoom })}
+          handle={(h) => (handle.current = h)}
+        />
+        <button
+          type="button"
+          class={prefs.sideLock ? 'lock-button locked' : 'lock-button'}
+          aria-label={prefs.sideLock ? 'Desbloquear o movimento para os lados' : 'Bloquear o movimento para os lados'}
+          onClick={toggleLock}
+        >
+          <span class="arrow">⟷</span>
+          {prefs.sideLock ? 'Bloqueado' : 'Bloquear'}
+        </button>
+      </div>
+      {info.atEnd && !isFinished(item) && (
+        <div class="finish-banner">
+          <span>Você chegou ao fim.</span>
+          <button type="button" onClick={() => finish(true)}>🏁 Concluir livro</button>
+        </div>
+      )}
+      <footer class="reader-foot">
+        <button type="button" class="foot-button" disabled={info.page <= 0} onClick={() => handle.current?.goTo(info.page - 1)}>‹ Anterior</button>
+        <button type="button" class="page-label" title="Ir para a página" onClick={askPage}>Página {info.page + 1} de {source.pageCount}{zoomText}</button>
+        <button type="button" class="foot-button" disabled={info.page >= source.pageCount - 1} onClick={() => handle.current?.goTo(info.page + 1)}>Próxima ›</button>
       </footer>
     </div>
   )

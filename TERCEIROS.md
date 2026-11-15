@@ -33,7 +33,10 @@ cita uma dessas fontes sem trazê-la embutida (comum em arquivos gerados pelo Wo
 ## Site (pasta `web/`)
 
 O site usa, além do próprio código (AGPL-3.0-or-later): **Preact** (MIT), **fflate** (MIT, ZIP e zlib),
-**foliate-js** (MIT, leitura de MOBI/AZW3, de John Factotum) e a fonte **Atkinson Hyperlegible** (SIL OFL 1.1,
+**foliate-js** (MIT, leitura de MOBI/AZW3, de John Factotum), **pdf.js** (Apache-2.0, Mozilla, com as fontes
+padrão e mapas de caracteres dele), **libarchive.js** (MIT, com o libarchive em WebAssembly, BSD-2, para CBR em RAR),
+**DjVu.js** (GPL-2.0-or-later, de RussCoder, cópia do código em `web/vendor/djvujs` com a alteração descrita no
+`LEIA-ME.txt` de lá) e a fonte **Atkinson Hyperlegible** (SIL OFL 1.1,
 em `web/public/fonts`). As ferramentas de build e teste (Vite, TypeScript, Vitest, jsdom, fake-indexeddb,
 vite-plugin-pwa/Workbox) não são distribuídas no site publicado.
 
