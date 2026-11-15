@@ -2,7 +2,7 @@
 
 > Documento de planejamento e acompanhamento. Base: app Android 0.15.0 (≈9.200 linhas de Kotlin, 20 arquivos de teste).
 >
-> **Situação:** Etapas 0, 1 e 2 prontas (base do site, regras do app com testes, biblioteca guardada no navegador com backup).
+> **Situação:** Etapas 0 a 3 prontas (base do site, regras do app com testes, biblioteca com backup, leitor de TXT e DOCX).
 
 ## 0. Decisões do dono do projeto
 
@@ -228,7 +228,7 @@ Portar para `web/src/core/`, com os testes equivalentes do Kotlin:
 - **Pronto quando:** dá para montar a biblioteca, fechar e reabrir o navegador e tudo continuar lá; o backup
   restaura tudo num navegador limpo.
 
-### Etapa 3 — TXT e DOCX (M)
+### Etapa 3 — TXT e DOCX (M) ✅
 - Leitor de texto com lista virtual, modo páginas com linhas inteiras e rolagem contínua, letra, tipografia,
   temas, progresso, fim do livro, seleção.
 - **Pronto quando:** os mesmos cenários dos testes `TextReaderTest`/`ReadingModesTest` passam no Playwright.

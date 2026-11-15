@@ -153,3 +153,34 @@ button.link { background: none; border: 0; padding: 0; color: var(--gold); font:
 
 .reader-placeholder { padding: 24px 32px; }
 .back { text-decoration: none; font-weight: 700; }
+
+/* ---------- leitor ---------- */
+.reader { position: fixed; inset: 0; display: flex; flex-direction: column; background: var(--paper); }
+.reader-bar { display: flex; align-items: center; gap: 6px; background: var(--ink); color: #fff; padding: 6px 8px; min-height: 52px; }
+.reader-title { flex: 1; min-width: 0; padding: 0 6px; }
+.reader-title strong { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 15px; }
+.bar-button { min-width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; background: none; border: 0; color: #fff; font-size: 20px; text-decoration: none; border-radius: 10px; cursor: pointer; }
+.bar-button:hover { background: rgba(255, 255, 255, 0.08); }
+.reader-body { position: relative; flex: 1; min-height: 0; }
+.reader-foot { display: flex; align-items: center; justify-content: space-between; background: var(--card); border-top: 1px solid var(--line); padding: 4px 8px; }
+.foot-button { min-width: 48px; height: 40px; background: none; border: 0; color: var(--text); font-size: 16px; border-radius: 10px; cursor: pointer; }
+.foot-button:hover { background: var(--line); }
+.finish-banner { display: flex; align-items: center; justify-content: space-between; background: #faf3e4; color: var(--ink); padding: 4px 8px 4px 16px; font-size: 14px; }
+.finish-banner button { background: none; border: 0; color: var(--gold); font-weight: 700; font-size: 14px; padding: 12px; cursor: pointer; }
+.reader-message { padding: 24px 32px; }
+
+.text-reader { position: absolute; inset: 0; background: var(--page-bg); color: var(--page-text); }
+.text-scroller { position: absolute; inset: 0; overflow-y: auto; outline: none; }
+.text-scroller.paged { overflow-y: hidden; }
+.text-column { margin: 0 auto; }
+.chunk { white-space: normal; content-visibility: auto; contain-intrinsic-size: auto 900px; }
+.chunk-text { white-space: pre-wrap; overflow-wrap: break-word; }
+.chunk-html p, .chunk-html h1, .chunk-html h2, .chunk-html h3, .chunk-html h4 { margin: 0 0 1em; }
+.chunk-html .docx-title { font-size: 1.6em; }
+.chunk-html h2 { font-size: 1.4em; }
+.chunk-html h3 { font-size: 1.2em; }
+.chunk-html h4 { font-size: 1.1em; }
+.chunk-image { text-align: center; padding: 8px 0; }
+.chunk-image img { max-width: 100%; height: auto; }
+.text-reader a { color: var(--page-link); }
+.page-mask { position: absolute; left: 0; right: 0; background: var(--page-bg); pointer-events: none; }
