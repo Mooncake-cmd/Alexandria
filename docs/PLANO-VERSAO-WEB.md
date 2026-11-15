@@ -2,7 +2,7 @@
 
 > Documento de planejamento e acompanhamento. Base: app Android 0.15.0 (≈9.200 linhas de Kotlin, 20 arquivos de teste).
 >
-> **Situação:** Etapas 0 a 3 prontas (base do site, regras do app com testes, biblioteca com backup, leitor de TXT e DOCX).
+> **Situação:** Etapas 0 a 4 prontas (base do site, regras do app com testes, biblioteca com backup, leitores de TXT, DOCX, EPUB e MOBI).
 
 ## 0. Decisões do dono do projeto
 
@@ -233,8 +233,8 @@ Portar para `web/src/core/`, com os testes equivalentes do Kotlin:
   temas, progresso, fim do livro, seleção.
 - **Pronto quando:** os mesmos cenários dos testes `TextReaderTest`/`ReadingModesTest` passam no Playwright.
 
-### Etapa 4 — EPUB e MOBI (G)
-- Leitor de EPUB (iframe protegido + service worker), sumário, links internos, capítulos, paginador por linhas,
+### Etapa 4 — EPUB e MOBI (G) ✅
+- Leitor de EPUB (iframe protegido; os arquivos do livro viram endereços locais blob:, sem precisar do service worker), sumário, links internos, capítulos, paginador por linhas,
   posição, capas; MOBI/AZW3 pelo foliate-js.
 - **Pronto quando:** EPUBs de teste do app e o "Didascalicon" abrem, paginam sem repetir/cortar linhas, voltam ao
   ponto; MOBIs de teste (`huffdic`, `windows-1252`, `obfuscated_fonts`) abrem.

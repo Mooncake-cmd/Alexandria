@@ -2,7 +2,7 @@
   "name": "alexandria-web",
   "private": true,
   "license": "AGPL-3.0-or-later",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Alexandria no navegador: leitor de livros que funciona sem servidor e sem internet.",
   "type": "module",
   "scripts": {
@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "fflate": "0.8.2",
+    "foliate-js": "1.0.1",
     "preact": "10.27.3"
   },
   "devDependencies": {

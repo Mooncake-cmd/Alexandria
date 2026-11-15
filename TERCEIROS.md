@@ -30,6 +30,13 @@ As fontes **Liberation Serif, Sans e Mono** 2.1.5 (© 2010 Google Corporation; �
 cita uma dessas fontes sem trazê-la embutida (comum em arquivos gerados pelo Word). Licença: **SIL Open Font License 1.1**, em
 `app/src/main/assets/licenses/OFL-1.1-Liberation.txt`.
 
+## Site (pasta `web/`)
+
+O site usa, além do próprio código (AGPL-3.0-or-later): **Preact** (MIT), **fflate** (MIT, ZIP e zlib),
+**foliate-js** (MIT, leitura de MOBI/AZW3, de John Factotum) e a fonte **Atkinson Hyperlegible** (SIL OFL 1.1,
+em `web/public/fonts`). As ferramentas de build e teste (Vite, TypeScript, Vitest, jsdom, fake-indexeddb,
+vite-plugin-pwa/Workbox) não são distribuídas no site publicado.
+
 ## Imagens da Estante
 
 A planta e o globo da Estante (`app/src/main/assets/shelf`) foram fornecidos pelo dono do projeto para uso no app.

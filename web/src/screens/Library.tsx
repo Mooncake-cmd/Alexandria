@@ -1,10 +1,11 @@
-import { useRef, useState } from 'preact/hooks'
+import { useEffect, useRef, useState } from 'preact/hooks'
 import { shelfCompare } from '../core/library'
 import { isArchived, isFinished, type LibraryItem } from '../storage/library'
 import { useLibrary } from '../storage/useLibrary'
 import { ACCEPT, importFiles } from '../library/importBooks'
 import { BookCard } from '../library/BookCard'
 import { itemOptions } from '../library/itemOptions'
+import { ensureCovers } from '../library/covers'
 import { toast } from '../ui/dialogs'
 import { Empty } from './Empty'
 
@@ -24,6 +25,9 @@ export function Library() {
   const { items, loaded } = useLibrary()
   const [, redraw] = useState(0)
   const input = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (loaded) ensureCovers(items)
+  }, [loaded, items])
   const reading = items.filter((i) => !isFinished(i))
   const finished = items.filter((i) => isFinished(i))
 
