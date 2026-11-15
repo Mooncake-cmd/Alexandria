@@ -22,6 +22,9 @@ interface Props {
   onPosition: (info: { position: number; chapter: number; atEnd: boolean; ready: boolean }) => void
   onTextSize: (size: number) => void
   handle?: (h: EpubReaderHandle) => void
+  /** Clique simples no capítulo (fora de links e seleções) e clique duplo. */
+  onTap?: () => void
+  onDoubleTap?: () => void
 }
 
 /**
@@ -29,7 +32,7 @@ interface Props {
  * internet), com o CSS de leitura do conforto visual. Modo páginas com linhas inteiras e
  * passagem automática de capítulo; rolagem contínua dentro do capítulo.
  */
-export function EpubReader({ book, paged, textSize, comfort, start, onPosition, onTextSize, handle }: Props) {
+export function EpubReader({ book, paged, textSize, comfort, start, onPosition, onTextSize, handle, onTap, onDoubleTap }: Props) {
   const frame = useRef<HTMLIFrameElement>(null)
   const [chapter, setChapter] = useState(() => Math.min(book.chapterCount - 1, Math.floor((start * book.chapterCount) / 10000 + 1e-6)))
   const [src, setSrc] = useState<string | null>(null)
@@ -160,8 +163,8 @@ export function EpubReader({ book, paged, textSize, comfort, start, onPosition, 
       wheel.current.last = now
     }
   }
-  const handlers = useRef({ onKey, onWheel })
-  handlers.current = { onKey, onWheel }
+  const handlers = useRef({ onKey, onWheel, onTap, onDoubleTap })
+  handlers.current = { onKey, onWheel, onTap, onDoubleTap }
   useEffect(() => {
     const key = (e: KeyboardEvent) => handlers.current.onKey(e)
     window.addEventListener('keydown', key)
@@ -191,6 +194,7 @@ export function EpubReader({ book, paged, textSize, comfort, start, onPosition, 
     w.addEventListener('wheel', (e) => handlers.current.onWheel(e), { passive: false })
     w.addEventListener('scroll', () => requestAnimationFrame(report), { passive: true })
     doc.addEventListener('dblclick', (e) => {
+      handlers.current.onDoubleTap?.()
       if (!paged) return
       const direction = turnDirection(e.clientX, w.innerWidth)
       if (direction !== 0) {
@@ -201,7 +205,10 @@ export function EpubReader({ book, paged, textSize, comfort, start, onPosition, 
     // Links internos (notas, sumário do livro) abrem o capítulo certo; externos são ignorados.
     doc.addEventListener('click', async (e) => {
       const link = (e.target as Element | null)?.closest?.('a[href]')
-      if (!link) return
+      if (!link) {
+        if (w.getSelection()?.isCollapsed ?? true) handlers.current.onTap?.()
+        return
+      }
       e.preventDefault()
       const resolved = await book.resolveLink(chapter, link.getAttribute('href')!)
       if (!resolved) return

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks'
 import { displayTitle } from '../core/library'
 import { THEMES } from '../core/comfort'
-import { bookFile, findItem, isFinished, setFinished, updateProgress, type LibraryItem } from '../storage/library'
+import { bookFile, findItem, setFinished, updateProgress, type LibraryItem } from '../storage/library'
 import { loadPrefs, savePrefs, MAX_TEXT_SIZE, MIN_TEXT_SIZE, type ReadingPrefs } from '../reader/prefs'
 import { loadDocx, loadTxt, type TextContent } from '../reader/textContent'
 import { TextReader, type TextReaderHandle } from '../reader/TextReader'
@@ -13,6 +13,7 @@ import { PageReader, type PageReaderHandle } from '../reader/PageReader'
 import type { PageSource } from '../reader/pageSource'
 import { promptDialog } from '../ui/dialogs'
 import { menuDialog, toast } from '../ui/dialogs'
+import { ReaderChrome } from '../reader/ReaderChrome'
 
 type State =
   | { status: 'loading' }
@@ -128,27 +129,31 @@ function ReaderMessage({ title, text }: { title?: string; text: string }) {
   )
 }
 
-/** Moldura do leitor de TXT/DOCX: barra de cima, texto, aviso de fim e controles de baixo. */
-function TextBook({ item: initial, content, initialPrefs }: { item: LibraryItem; content: TextContent; initialPrefs: ReadingPrefs }) {
+/** Estado comum dos leitores: preferências, concluir e salvar o ponto de leitura. */
+function useBook(initial: LibraryItem, initialPrefs: ReadingPrefs, pageCount: number, current: () => number) {
   const [item, setItem] = useState(initial)
   const [prefs, setPrefs] = useState(initialPrefs)
-  const [position, setPosition] = useState({ fraction: initial.position, atEnd: false })
-  const handle = useRef<TextReaderHandle | null>(null)
   const saved = useRef(initial.position)
-
   const changePrefs = (change: Partial<ReadingPrefs>) => {
-    const next = { ...prefs, ...change }
-    setPrefs(next)
-    savePrefs(next)
+    setPrefs((old) => {
+      const next = { ...old, ...change }
+      savePrefs(next)
+      return next
+    })
   }
-
-  // Salva o ponto de leitura (sem gravar a cada pixel) e ao sair do livro ou fechar a aba.
+  const finish = async (done: boolean) => {
+    await setFinished(item.id, done)
+    setItem({ ...item, finishedAt: done ? Date.now() : 0 })
+    toast(done ? `"${displayTitle(item.name)}" foi para a Estante.` : `"${displayTitle(item.name)}" voltou para "Lendo agora".`)
+  }
+  // Salva ao abrir, de vez em quando (sem gravar a cada pixel) e ao sair do livro ou fechar a aba.
+  const currentRef = useRef(current)
+  currentRef.current = current
   useEffect(() => {
-    updateProgress(item.id, initial.position)
+    updateProgress(item.id, initial.position, pageCount)
     const save = () => {
-      const fraction = handle.current?.fraction() ?? saved.current
-      saved.current = fraction
-      updateProgress(item.id, fraction)
+      saved.current = currentRef.current()
+      updateProgress(item.id, saved.current, pageCount)
     }
     window.addEventListener('pagehide', save)
     document.addEventListener('visibilitychange', save)
@@ -158,51 +163,59 @@ function TextBook({ item: initial, content, initialPrefs }: { item: LibraryItem;
       document.removeEventListener('visibilitychange', save)
     }
   }, [])
+  const savePosition = (position: number) => {
+    if (position === saved.current) return
+    saved.current = position
+    updateProgress(item.id, position, pageCount)
+  }
+  return { item, prefs, changePrefs, finish, savePosition }
+}
+
+/** Salva a posição pouco depois que ela para de mudar. */
+function useDebouncedSave(value: number, save: (v: number) => void, delay = 800) {
   useEffect(() => {
-    const timer = setTimeout(() => {
-      if (position.fraction !== saved.current) {
-        saved.current = position.fraction
-        updateProgress(item.id, position.fraction)
-      }
-    }, 800)
+    const timer = setTimeout(() => save(value), delay)
     return () => clearTimeout(timer)
-  }, [position.fraction])
+  }, [value])
+}
 
+async function chooseTheme(prefs: ReadingPrefs, changePrefs: (c: Partial<ReadingPrefs>) => void) {
+  const themes = Object.entries(THEMES)
+  const choice = await menuDialog('Cor da página', themes.map(([key, t]) => (key === prefs.comfort.theme ? `▸ ${t.label}` : t.label)))
+  if (choice !== null) changePrefs({ comfort: { ...prefs.comfort, theme: themes[choice][0] as keyof typeof THEMES } })
+}
+
+/** Leitor de TXT/DOCX. */
+function TextBook({ item: initial, content, initialPrefs }: { item: LibraryItem; content: TextContent; initialPrefs: ReadingPrefs }) {
+  const handle = useRef<TextReaderHandle | null>(null)
+  const [position, setPosition] = useState({ fraction: initial.position, atEnd: false })
+  const { item, prefs, changePrefs, finish, savePosition } = useBook(initial, initialPrefs, 0, () => handle.current?.fraction() ?? position.fraction)
+  useDebouncedSave(position.fraction, savePosition)
   const textSize = (delta: number) => changePrefs({ textSize: Math.min(MAX_TEXT_SIZE, Math.max(MIN_TEXT_SIZE, prefs.textSize + delta)) })
-
-  const finish = async (done: boolean) => {
-    await setFinished(item.id, done)
-    setItem({ ...item, finishedAt: done ? Date.now() : 0 })
-    toast(done ? `"${displayTitle(item.name)}" foi para a Estante.` : `"${displayTitle(item.name)}" voltou para "Lendo agora".`)
-  }
-
-  const menu = async () => {
-    const actions: [string, () => void][] = [
-      [prefs.paged ? 'Modo: rolagem contínua' : 'Modo: páginas (setas, roda do mouse ou clique duplo na borda)', () => changePrefs({ paged: !prefs.paged })],
-      ['Letra menor', () => textSize(-1)],
-      ['Letra maior', () => textSize(1)],
-      ['Cor da página…', async () => {
-        const themes = Object.entries(THEMES)
-        const choice = await menuDialog('Cor da página', themes.map(([key, t]) => (key === prefs.comfort.theme ? `▸ ${t.label}` : t.label)))
-        if (choice !== null) changePrefs({ comfort: { ...prefs.comfort, theme: themes[choice][0] as keyof typeof THEMES } })
-      }],
-      [isFinished(item) ? 'Voltar para "Lendo agora"' : 'Concluir livro', () => finish(!isFinished(item))]
-    ]
-    const choice = await menuDialog('Opções de leitura', actions.map((a) => a[0]))
-    if (choice !== null) actions[choice][1]()
-  }
-
-  const percent = Math.trunc(position.fraction / 100)
   return (
-    <div class="reader" data-theme-dark={THEMES[prefs.comfort.theme].dark ? 'true' : undefined}>
-      <header class="reader-bar">
-        <a href="#/biblioteca" class="bar-button" aria-label="Voltar para a biblioteca">‹</a>
-        <div class="reader-title">
-          <strong>{item.name}</strong>
-        </div>
-        <button type="button" class="bar-button" aria-label="Mais opções" onClick={menu}>⋮</button>
-      </header>
-      <div class="reader-body">
+    <ReaderChrome
+      title={item.name}
+      prefs={prefs}
+      onPrefs={changePrefs}
+      typography
+      menu={[
+        [prefs.paged ? 'Modo: rolagem contínua' : 'Modo: páginas (setas, roda do mouse ou clique duplo na borda)', () => changePrefs({ paged: !prefs.paged })],
+        ['Letra menor', () => textSize(-1)],
+        ['Letra maior', () => textSize(1)],
+        ['Cor da página…', () => chooseTheme(prefs, changePrefs)]
+      ]}
+      footer={
+        <>
+          <button type="button" class="foot-button" aria-label="Diminuir letra" onClick={() => textSize(-1)}>A-</button>
+          <span class="muted small">{position.atEnd ? 'Fim' : `${Math.trunc(position.fraction / 100)}% lido`}</span>
+          <button type="button" class="foot-button" aria-label="Aumentar letra" onClick={() => textSize(1)}>A+</button>
+        </>
+      }
+      finished={item.finishedAt > 0}
+      atEnd={position.atEnd}
+      onFinish={finish}
+    >
+      {() => (
         <TextReader
           content={content}
           paged={prefs.paged}
@@ -213,102 +226,50 @@ function TextBook({ item: initial, content, initialPrefs }: { item: LibraryItem;
           onTextSize={(size) => changePrefs({ textSize: size })}
           handle={(h) => (handle.current = h)}
         />
-      </div>
-      {position.atEnd && !isFinished(item) && (
-        <div class="finish-banner">
-          <span>Você chegou ao fim.</span>
-          <button type="button" onClick={() => finish(true)}>🏁 Concluir livro</button>
-        </div>
       )}
-      <footer class="reader-foot">
-        <button type="button" class="foot-button" aria-label="Diminuir letra" onClick={() => textSize(-1)}>A-</button>
-        <span class="muted small">{position.atEnd ? 'Fim' : `${percent}% lido`}</span>
-        <button type="button" class="foot-button" aria-label="Aumentar letra" onClick={() => textSize(1)}>A+</button>
-      </footer>
-    </div>
+    </ReaderChrome>
   )
 }
 
-/** Moldura do leitor de EPUB/MOBI: capítulos, sumário, letra e aviso de fim. */
+/** Leitor de EPUB/MOBI. */
 function ReflowBookView({ item: initial, book, initialPrefs }: { item: LibraryItem; book: ReflowBook; initialPrefs: ReadingPrefs }) {
-  const [item, setItem] = useState(initial)
-  const [prefs, setPrefs] = useState(initialPrefs)
-  const [info, setInfo] = useState({ position: initial.position, chapter: 0, atEnd: false })
   const handle = useRef<EpubReaderHandle | null>(null)
-  const saved = useRef(initial.position)
-
-  const changePrefs = (change: Partial<ReadingPrefs>) => {
-    const next = { ...prefs, ...change }
-    setPrefs(next)
-    savePrefs(next)
-  }
-
-  useEffect(() => {
-    updateProgress(item.id, initial.position, book.chapterCount)
-    const save = () => {
-      const position = handle.current?.position() ?? saved.current
-      saved.current = position
-      updateProgress(item.id, position, book.chapterCount)
-    }
-    window.addEventListener('pagehide', save)
-    document.addEventListener('visibilitychange', save)
-    return () => {
-      save()
-      window.removeEventListener('pagehide', save)
-      document.removeEventListener('visibilitychange', save)
-    }
-  }, [])
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (info.position !== saved.current) {
-        saved.current = info.position
-        updateProgress(item.id, info.position, book.chapterCount)
-      }
-    }, 800)
-    return () => clearTimeout(timer)
-  }, [info.position])
-
+  const [info, setInfo] = useState({ position: initial.position, chapter: 0, atEnd: false })
+  const { item, prefs, changePrefs, finish, savePosition } = useBook(initial, initialPrefs, book.chapterCount, () => handle.current?.position() ?? info.position)
+  useDebouncedSave(info.position, savePosition)
   const textSize = (delta: number) => changePrefs({ textSize: Math.min(MAX_TEXT_SIZE, Math.max(MIN_TEXT_SIZE, prefs.textSize + delta)) })
-  const finish = async (done: boolean) => {
-    await setFinished(item.id, done)
-    setItem({ ...item, finishedAt: done ? Date.now() : 0 })
-    toast(done ? `"${displayTitle(item.name)}" foi para a Estante.` : `"${displayTitle(item.name)}" voltou para "Lendo agora".`)
-  }
   const contents = async () => {
     const names = book.chapterTitles.map((t, i) => (i === info.chapter ? '▸ ' : '') + (t ?? `Capítulo ${i + 1}`))
     const choice = await menuDialog('Sumário', names)
     if (choice !== null) handle.current?.goToChapter(choice)
   }
-  const menu = async () => {
-    const actions: [string, () => void][] = [
-      ['Sumário', contents],
-      [prefs.paged ? 'Modo: rolagem contínua' : 'Modo: páginas (setas, roda do mouse ou clique duplo na borda)', () => changePrefs({ paged: !prefs.paged })],
-      ['Letra menor', () => textSize(-1)],
-      ['Letra maior', () => textSize(1)],
-      ['Cor da página…', async () => {
-        const themes = Object.entries(THEMES)
-        const choice = await menuDialog('Cor da página', themes.map(([key, t]) => (key === prefs.comfort.theme ? `▸ ${t.label}` : t.label)))
-        if (choice !== null) changePrefs({ comfort: { ...prefs.comfort, theme: themes[choice][0] as keyof typeof THEMES } })
-      }],
-      [isFinished(item) ? 'Voltar para "Lendo agora"' : 'Concluir livro', () => finish(!isFinished(item))]
-    ]
-    const choice = await menuDialog('Opções de leitura', actions.map((a) => a[0]))
-    if (choice !== null) actions[choice][1]()
-  }
-
   const title = book.chapterTitles[info.chapter]
-  const label = `Cap. ${info.chapter + 1} de ${book.chapterCount} · ${Math.trunc(info.position / 100)}%`
   return (
-    <div class="reader">
-      <header class="reader-bar">
-        <a href="#/biblioteca" class="bar-button" aria-label="Voltar para a biblioteca">‹</a>
-        <div class="reader-title">
-          <strong>{book.title ?? item.name}</strong>
-        </div>
-        <button type="button" class="bar-button" aria-label="Sumário" title="Sumário" onClick={contents}>☰</button>
-        <button type="button" class="bar-button" aria-label="Mais opções" onClick={menu}>⋮</button>
-      </header>
-      <div class="reader-body">
+    <ReaderChrome
+      title={book.title ?? item.name}
+      prefs={prefs}
+      onPrefs={changePrefs}
+      typography
+      menu={[
+        ['Sumário', contents],
+        [prefs.paged ? 'Modo: rolagem contínua' : 'Modo: páginas (setas, roda do mouse ou clique duplo na borda)', () => changePrefs({ paged: !prefs.paged })],
+        ['Letra menor', () => textSize(-1)],
+        ['Letra maior', () => textSize(1)],
+        ['Cor da página…', () => chooseTheme(prefs, changePrefs)]
+      ]}
+      headerExtra={<button type="button" class="bar-button" aria-label="Sumário" title="Sumário" onClick={contents}>☰</button>}
+      footer={
+        <>
+          <button type="button" class="foot-button" disabled={info.chapter <= 0} aria-label="Capítulo anterior" onClick={() => handle.current?.turnChapter(-1)}>‹ Cap.</button>
+          <span class="muted small foot-label">{title ? <><strong>{title}</strong><br /></> : null}Cap. {info.chapter + 1} de {book.chapterCount} · {Math.trunc(info.position / 100)}%</span>
+          <button type="button" class="foot-button" disabled={info.chapter >= book.chapterCount - 1} aria-label="Próximo capítulo" onClick={() => handle.current?.turnChapter(1)}>Cap. ›</button>
+        </>
+      }
+      finished={item.finishedAt > 0}
+      atEnd={info.atEnd}
+      onFinish={finish}
+    >
+      {(api) => (
         <EpubReader
           book={book}
           paged={prefs.paged}
@@ -318,62 +279,20 @@ function ReflowBookView({ item: initial, book, initialPrefs }: { item: LibraryIt
           onPosition={(i) => setInfo({ position: i.position, chapter: i.chapter, atEnd: i.atEnd })}
           onTextSize={(size) => changePrefs({ textSize: size })}
           handle={(h) => (handle.current = h)}
+          onTap={api.tap}
+          onDoubleTap={api.cancelTap}
         />
-      </div>
-      {info.atEnd && !isFinished(item) && (
-        <div class="finish-banner">
-          <span>Você chegou ao fim.</span>
-          <button type="button" onClick={() => finish(true)}>🏁 Concluir livro</button>
-        </div>
       )}
-      <footer class="reader-foot">
-        <button type="button" class="foot-button" disabled={info.chapter <= 0} aria-label="Capítulo anterior" onClick={() => handle.current?.turnChapter(-1)}>‹ Cap.</button>
-        <span class="muted small foot-label">{title ? <><strong>{title}</strong><br /></> : null}{label}</span>
-        <button type="button" class="foot-button" disabled={info.chapter >= book.chapterCount - 1} aria-label="Próximo capítulo" onClick={() => handle.current?.turnChapter(1)}>Cap. ›</button>
-      </footer>
-    </div>
+    </ReaderChrome>
   )
 }
 
-/** Moldura do leitor de PDF, quadrinhos e DJVU: páginas, zoom, bloqueio lateral, ir para a página. */
+/** Leitor de PDF, quadrinhos e DJVU. */
 function PageBookView({ item: initial, source, initialPrefs }: { item: LibraryItem; source: PageSource; initialPrefs: ReadingPrefs }) {
-  const [item, setItem] = useState(initial)
-  const [prefs, setPrefs] = useState(initialPrefs)
-  const [info, setInfo] = useState({ page: Math.min(source.pageCount - 1, initial.position), atEnd: false, zoom: 1 })
   const handle = useRef<PageReaderHandle | null>(null)
-  const saved = useRef(initial.position)
-
-  const changePrefs = (change: Partial<ReadingPrefs>) => {
-    const next = { ...prefs, ...change }
-    setPrefs(next)
-    savePrefs(next)
-  }
-
-  useEffect(() => {
-    updateProgress(item.id, info.page, source.pageCount)
-    const save = () => updateProgress(item.id, handle.current?.current() ?? saved.current, source.pageCount)
-    window.addEventListener('pagehide', save)
-    document.addEventListener('visibilitychange', save)
-    return () => {
-      save()
-      window.removeEventListener('pagehide', save)
-      document.removeEventListener('visibilitychange', save)
-    }
-  }, [])
-  useEffect(() => {
-    if (info.page === saved.current) return
-    const timer = setTimeout(() => {
-      saved.current = info.page
-      updateProgress(item.id, info.page, source.pageCount)
-    }, 600)
-    return () => clearTimeout(timer)
-  }, [info.page])
-
-  const finish = async (done: boolean) => {
-    await setFinished(item.id, done)
-    setItem({ ...item, finishedAt: done ? Date.now() : 0 })
-    toast(done ? `"${displayTitle(item.name)}" foi para a Estante.` : `"${displayTitle(item.name)}" voltou para "Lendo agora".`)
-  }
+  const [info, setInfo] = useState({ page: Math.min(source.pageCount - 1, initial.position), atEnd: false, zoom: 1 })
+  const { item, prefs, changePrefs, finish, savePosition } = useBook(initial, initialPrefs, source.pageCount, () => handle.current?.current() ?? info.page)
+  useDebouncedSave(info.page, savePosition, 600)
   const askPage = async () => {
     const typed = await promptDialog('Ir para a página', `Página (1 a ${source.pageCount})`, String(info.page + 1), [], 'Ir')
     const number = typed ? Number.parseInt(typed, 10) : NaN
@@ -384,42 +303,27 @@ function PageBookView({ item: initial, source, initialPrefs }: { item: LibraryIt
     changePrefs({ sideLock: locked })
     toast(locked ? 'Movimento para os lados bloqueado. Zoom e rolagem para cima e para baixo continuam.' : 'Movimento para os lados liberado.')
   }
-  const menu = async () => {
-    const actions: [string, () => void][] = [
-      ['Ir para a página…', askPage],
-      [prefs.paged ? 'Modo: rolagem contínua' : 'Modo: páginas (página inteira na tela)', () => changePrefs({ paged: !prefs.paged })],
-      ['Cor da página…', async () => {
-        const themes = Object.entries(THEMES)
-        const choice = await menuDialog('Cor da página', themes.map(([key, t]) => (key === prefs.comfort.theme ? `▸ ${t.label}` : t.label)))
-        if (choice !== null) changePrefs({ comfort: { ...prefs.comfort, theme: themes[choice][0] as keyof typeof THEMES } })
-      }],
-      [prefs.sideLock ? 'Liberar movimento para os lados' : 'Bloquear movimento para os lados', toggleLock],
-      [isFinished(item) ? 'Voltar para "Lendo agora"' : 'Concluir livro', () => finish(!isFinished(item))]
-    ]
-    const choice = await menuDialog('Opções de leitura', actions.map((a) => a[0]))
-    if (choice !== null) actions[choice][1]()
-  }
-
   const zoomText = info.zoom > 1.05 ? ` · ${Math.round(info.zoom * 100)}%` : ''
   return (
-    <div class="reader">
-      <header class="reader-bar">
-        <a href="#/biblioteca" class="bar-button" aria-label="Voltar para a biblioteca">‹</a>
-        <div class="reader-title">
-          <strong>{item.name}</strong>
-        </div>
-        <button type="button" class="bar-button" aria-label="Mais opções" onClick={menu}>⋮</button>
-      </header>
-      <div class="reader-body">
-        <PageReader
-          source={source}
-          paged={prefs.paged}
-          sideLock={prefs.sideLock}
-          comfort={prefs.comfort}
-          start={Math.min(source.pageCount - 1, initial.position)}
-          onPage={(page, atEnd, zoom) => setInfo({ page, atEnd, zoom })}
-          handle={(h) => (handle.current = h)}
-        />
+    <ReaderChrome
+      title={item.name}
+      prefs={prefs}
+      onPrefs={changePrefs}
+      typography={false}
+      menu={[
+        ['Ir para a página…', askPage],
+        [prefs.paged ? 'Modo: rolagem contínua' : 'Modo: páginas (página inteira na tela)', () => changePrefs({ paged: !prefs.paged })],
+        ['Cor da página…', () => chooseTheme(prefs, changePrefs)],
+        [prefs.sideLock ? 'Liberar movimento para os lados' : 'Bloquear movimento para os lados', toggleLock]
+      ]}
+      footer={
+        <>
+          <button type="button" class="foot-button" disabled={info.page <= 0} onClick={() => handle.current?.goTo(info.page - 1)}>‹ Anterior</button>
+          <button type="button" class="page-label" title="Ir para a página" onClick={askPage}>Página {info.page + 1} de {source.pageCount}{zoomText}</button>
+          <button type="button" class="foot-button" disabled={info.page >= source.pageCount - 1} onClick={() => handle.current?.goTo(info.page + 1)}>Próxima ›</button>
+        </>
+      }
+      overlay={
         <button
           type="button"
           class={prefs.sideLock ? 'lock-button locked' : 'lock-button'}
@@ -429,18 +333,22 @@ function PageBookView({ item: initial, source, initialPrefs }: { item: LibraryIt
           <span class="arrow">⟷</span>
           {prefs.sideLock ? 'Bloqueado' : 'Bloquear'}
         </button>
-      </div>
-      {info.atEnd && !isFinished(item) && (
-        <div class="finish-banner">
-          <span>Você chegou ao fim.</span>
-          <button type="button" onClick={() => finish(true)}>🏁 Concluir livro</button>
-        </div>
+      }
+      finished={item.finishedAt > 0}
+      atEnd={info.atEnd}
+      onFinish={finish}
+    >
+      {() => (
+        <PageReader
+          source={source}
+          paged={prefs.paged}
+          sideLock={prefs.sideLock}
+          comfort={prefs.comfort}
+          start={Math.min(source.pageCount - 1, initial.position)}
+          onPage={(page, atEnd, zoom) => setInfo({ page, atEnd, zoom })}
+          handle={(h) => (handle.current = h)}
+        />
       )}
-      <footer class="reader-foot">
-        <button type="button" class="foot-button" disabled={info.page <= 0} onClick={() => handle.current?.goTo(info.page - 1)}>‹ Anterior</button>
-        <button type="button" class="page-label" title="Ir para a página" onClick={askPage}>Página {info.page + 1} de {source.pageCount}{zoomText}</button>
-        <button type="button" class="foot-button" disabled={info.page >= source.pageCount - 1} onClick={() => handle.current?.goTo(info.page + 1)}>Próxima ›</button>
-      </footer>
-    </div>
+    </ReaderChrome>
   )
 }
