@@ -2,7 +2,7 @@
 
 > Documento de planejamento e acompanhamento. Base: app Android 0.15.0 (≈9.200 linhas de Kotlin, 20 arquivos de teste).
 >
-> **Situação:** Etapa 0 pronta (pasta `web/`, publicação automática). Demais etapas por fazer.
+> **Situação:** Etapas 0 e 1 prontas (base do site, publicação automática, regras do app portadas com testes).
 
 ## 0. Decisões do dono do projeto
 
@@ -213,7 +213,7 @@ Tamanho relativo: P (pequena), M (média), G (grande).
 - Primeiro porte com testes: `ReadingTime` (formatação, cronômetro e `spreadRemoval`).
 - **Pronto quando:** o endereço do site abre a casca do app (abas vazias), instala no navegador e abre sem internet.
 
-### Etapa 1 — Lógica portada com testes (M)
+### Etapa 1 — Lógica portada com testes (M) ✅
 Portar para `web/src/core/`, com os testes equivalentes do Kotlin:
 `ReadingTime` (inclui `spreadRemoval`), `Days`, `Streak`, `ReadingClock`, `Glossary` (normalização e marcação),
 `PageTurn`, `LinePager`, `ReadingStatus`, `Shelves`, `Formats`, `Comfort` (modelo, cores, CSS), `TextDecoding`,
