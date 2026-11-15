@@ -1104,6 +1104,7 @@ class MainActivity : Activity() {
             SECTION_SETTINGS to R.drawable.ic_tab_settings
         )
         private val LICENSES = listOf(
+            "Alexandria — GNU AGPL 3.0 ou posterior" to "AGPL-3.0.txt",
             "EraPDF (MuPDF), EraMOBI e EraDjVu — GNU AGPL 3.0" to "AGPL-3.0.txt",
             "EraComic — GNU GPL 2.0" to "GPL-2.0.txt",
             "libmobi — GNU LGPL 3.0" to "LGPL-3.0.txt",

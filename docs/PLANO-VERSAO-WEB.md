@@ -11,7 +11,7 @@
 2. **Foco no computador** (Chrome, Edge, Firefox; Safari no Mac). Mouse, teclado e trackpad em primeiro lugar;
    telas de toque continuam funcionando, mas não são a prioridade. Ver seção 2.1.
 3. **Sem migração** da biblioteca do app para o site (a antiga Etapa 10 saiu do plano).
-4. **Licença sugerida para o Alexandria: AGPL-3.0-or-later** (seção 4.1), aguardando a escolha do dono.
+4. **Licença do Alexandria: AGPL-3.0-or-later** (seção 4.1), aprovada e aplicada (`LICENSE`).
 
 ## 1. Objetivo e princípios
 
@@ -136,7 +136,7 @@ guardadas para uso offline.
 **Licenças:** a página de licenças do site lista todas, como em Ajustes do app. O DjVu.js é GPL-2.0 **ou posterior**
 (confirmado no `LICENSE.md` do projeto), então pode ser combinado com código GPL-3.0/AGPL-3.0.
 
-### 4.1 Licença sugerida para o Alexandria: AGPL-3.0-or-later
+### 4.1 Licença do Alexandria: AGPL-3.0-or-later (aprovada)
 
 - **Compatível com tudo o que já é usado**: os motores do app (EraPDF, EraMOBI, EraDjVu: AGPL-3.0; EraComic:
   GPL-2.0-or-later), pdf.js (Apache-2.0), DjVu.js (GPL-2.0-or-later), foliate-js, fflate e libarchive.js (MIT/BSD)
@@ -288,6 +288,4 @@ Portar para `web/src/core/`, com os testes equivalentes do Kotlin:
 
 ## 9. Pendências
 
-- **Licença**: aprovar a sugestão da seção 4.1 (ou escolher outra).
-- **Ativar o GitHub Pages uma vez**: em Settings → Pages → *Build and deployment* → Source: **Deploy from a branch**,
-  branch **gh-pages**, pasta **/ (root)**. Depois disso, cada atualização publica sozinha.
+- ~~Ativar o GitHub Pages~~ (feito: o site está no ar).

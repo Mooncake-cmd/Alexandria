@@ -20,4 +20,4 @@ MOBI, DJVU e CBR em RAR usam os motores EraMOBI, EraDjVu e EraComic (OpenReadEra
 abertas que estão em app/src/main/cpp/openreadera. Licenças e obrigações: TERCEIROS.md.
 
 A VALIDAR EM APARELHO REAL: execução dos motores no Android, gestos do PDF/CBZ/DJVU, exibição do EPUB/MOBI no WebView.
-PENDENTE (decisão do dono do projeto): licença do código do próprio Alexandria.
+Licença do Alexandria (app e site): AGPL-3.0-or-later (arquivo LICENSE).

@@ -43,9 +43,10 @@ repositório público, ou o código entregue junto com o APK). Alterações nos 
 
 ## O código do próprio Alexandria
 
-Pelo que o OpenReadEra descreve (programas independentes, processos separados, comunicação só por pipes), as
-licenças dos motores se aplicam aos motores, não obrigatoriamente ao restante do app. A licença do código do
-Alexandria é uma decisão do dono do projeto; este repositório ainda não define uma.
+O código do Alexandria (app Android em `app/` e site em `web/`) é distribuído sob a **GNU Affero General Public
+License, versão 3 ou (a seu critério) qualquer versão posterior** (AGPL-3.0-or-later), texto em [`LICENSE`](LICENSE).
+É a mesma licença dos motores principais (EraPDF, EraMOBI, EraDjVu) e é compatível com as demais bibliotecas usadas
+(GPL-2.0-or-later, LGPL, Apache-2.0, MIT/BSD). As fontes (SIL OFL) e as imagens da Estante mantêm as próprias licenças.
 
 ## Amostras de teste
 

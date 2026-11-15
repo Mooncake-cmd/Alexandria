@@ -203,7 +203,12 @@ Os relatórios ficam em `app/build/reports/`.
 2. Busca e seleção de texto no DJVU (o EraDjVu já oferece os comandos).
 3. Exportar/importar backup da biblioteca e das anotações.
 4. Ajustes: tema, tamanho de letra padrão, ordem da biblioteca.
-5. Definir a licença do código do próprio Alexandria (veja `TERCEIROS.md`).
+
+## Licença
+
+Alexandria (app e site) é software livre sob a **AGPL-3.0-or-later**: pode ser usado, estudado, modificado e
+redistribuído, desde que o código-fonte acompanhe com a mesma licença. Texto completo em [`LICENSE`](LICENSE);
+componentes de terceiros em [`TERCEIROS.md`](TERCEIROS.md).
 
 ## Ícone
 
