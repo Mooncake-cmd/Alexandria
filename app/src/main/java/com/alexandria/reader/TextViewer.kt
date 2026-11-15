@@ -77,7 +77,12 @@ class TextViewer(host: ReaderHost, private val load: (LibraryItem) -> TextConten
         setPadding(0, context.dp(10), 0, context.dp(10))
     }
 
-    override val body: View = list
+    /** Cobre a linha cortada no fim da página (modo páginas). */
+    private val mask = PageMask(context)
+    override val body: View = android.widget.FrameLayout(context).apply {
+        addView(list, android.widget.FrameLayout.LayoutParams(-1, -1))
+        addView(mask, android.widget.FrameLayout.LayoutParams(-1, -1))
+    }
     override val footer: View = footerBar().apply {
         addView(barButton("A-", Palette.ink, "Diminuir letra") { changeTextSize(-1f) })
         addView(progressLabel, LinearLayout.LayoutParams(0, -2, 1f))
@@ -88,6 +93,16 @@ class TextViewer(host: ReaderHost, private val load: (LibraryItem) -> TextConten
 
     init {
         applyColors()
+        if (ReadingPrefs.paged(context)) {
+            // No modo páginas o texto fica só dentro da janela (as margens não mostram pedaços de linha).
+            list.clipToPadding = true
+            list.viewTreeObserver.addOnPreDrawListener {
+                updateMask()
+                true
+            }
+        } else {
+            mask.visibility = View.GONE
+        }
     }
 
     override fun open(item: LibraryItem, start: Int) {
@@ -177,13 +192,107 @@ class TextViewer(host: ReaderHost, private val load: (LibraryItem) -> TextConten
         return null
     }
 
-    /** "Vira a página": rola uma tela, deixando uma linha e meia da tela anterior como contexto. */
+    // ---------- páginas com linhas inteiras ----------
+
+    /** Faixa da tela onde o texto aparece no modo páginas (dentro das margens da lista). */
+    private fun windowTop() = list.paddingTop.toFloat()
+    private fun windowBottom() = (list.height - list.paddingBottom).toFloat()
+
+    /** Linha [line] do bloco [position] da lista (imagem: linha 0 = o bloco inteiro). */
+    private data class LineRef(val position: Int, val line: Int)
+
+    /** Linhas visíveis (e um pouco além), em pixels da lista. Imagens contam como um bloco. */
+    private fun visibleLines(refs: MutableList<LineRef>? = null): List<LineSpan> {
+        val lines = ArrayList<LineSpan>()
+        for (i in 0 until list.childCount) {
+            val child = list.getChildAt(i)
+            if (child.bottom < -list.height || child.top > list.height * 2) continue
+            val position = list.firstVisiblePosition + i
+            val view = child as? TextView
+            val layout = view?.layout
+            if (view == null || layout == null || view.text.isEmpty()) {
+                if (child.height > 0) {
+                    lines += LineSpan(child.top.toFloat(), child.bottom.toFloat())
+                    refs?.add(LineRef(position, 0))
+                }
+                continue
+            }
+            val base = child.top + view.totalPaddingTop
+            for (line in 0 until layout.lineCount) {
+                val top = base + layout.getLineTop(line)
+                val height = layout.getLineBottom(line) - layout.getLineTop(line)
+                // O espaço extra entre linhas fica embaixo de cada linha: não conta como texto.
+                val glyphs = ((height - view.lineSpacingExtra) / view.lineSpacingMultiplier.coerceAtLeast(0.1f)).coerceIn(1f, height.toFloat())
+                lines += LineSpan(top.toFloat(), top + glyphs)
+                refs?.add(LineRef(position, line))
+            }
+        }
+        return lines
+    }
+
+    /** Topo atual da linha [ref], se ela está na tela. */
+    private fun lineTop(ref: LineRef): Float? {
+        val child = list.getChildAt(ref.position - list.firstVisiblePosition) ?: return null
+        val view = child as? TextView
+        val layout = view?.layout ?: return child.top.toFloat()
+        if (ref.line >= layout.lineCount) return null
+        return (child.top + view.totalPaddingTop + layout.getLineTop(ref.line)).toFloat()
+    }
+
+    /**
+     * Na última página o texto não sobe até o topo (acabou o livro): as linhas já lidas que
+     * continuam na tela ficam cobertas até [readCover], enquanto a lista estiver nesta posição.
+     */
+    private var readCover = 0f
+    private var readCoverAnchor: Pair<Int, Int>? = null
+
+    private fun anchor(): Pair<Int, Int>? = list.getChildAt(0)?.let { list.firstVisiblePosition to it.top }
+
+    private fun updateMask() {
+        if (!ready || list.height == 0) return
+        val top = windowTop()
+        val bottom = windowBottom()
+        if (readCoverAnchor != null && readCoverAnchor != anchor()) {
+            readCover = 0f
+            readCoverAnchor = null
+        }
+        mask.cover(readCover, LinePager.maskStart(visibleLines(), top, bottom))
+    }
+
+    /** Ao abrir ou pular para um ponto: começa com a linha inteira no topo. */
+    private fun alignToLine() {
+        if (!paged || !ready) return
+        val delta = LinePager.alignDelta(visibleLines(), windowTop(), windowBottom()).roundToInt()
+        if (delta != 0) scrollByAny(delta)
+    }
+
+    /** Vira a página: a próxima começa na linha seguinte à última inteira desta. */
     private fun turnPage(direction: Int) {
-        val visible = list.height - list.paddingTop - list.paddingBottom
-        val line = (textSizeSp * context.resources.displayMetrics.scaledDensity * 1.35f).toInt()
-        val step = PageTurn.scrollStep(visible, (line * 1.5f).toInt())
-        if (!list.canScrollVertically(direction)) return
-        scrollByAny(step * direction)
+        val top = windowTop()
+        val bottom = windowBottom()
+        readCover = 0f
+        readCoverAnchor = null
+        if (direction > 0) {
+            if (atEnd()) return
+            val refs = ArrayList<LineRef>()
+            val lines = visibleLines(refs)
+            val delta = LinePager.nextDelta(lines, top, bottom)
+            // A linha que deve abrir a próxima página (a cortada, ou a primeira abaixo da janela).
+            val target = lines.indexOfFirst { it.top >= top + delta - 0.5f }.takeIf { it >= 0 }?.let { refs[it] }
+            scrollByAny(delta.roundToInt())
+            // Perto do fim a lista não sobe tudo: cobre as linhas já lidas acima da que abre a página.
+            val now = target?.let { lineTop(it) }
+            if (now != null && now > top + 1) {
+                readCover = now
+                readCoverAnchor = anchor()
+            }
+        } else {
+            if (!list.canScrollVertically(-1)) return
+            scrollByAny(-(bottom - top).roundToInt())
+            val delta = LinePager.afterBackDelta(visibleLines(), top, bottom).roundToInt()
+            if (delta != 0) scrollByAny(delta)
+        }
+        updateMask()
         flash(list)
     }
 
@@ -309,6 +418,7 @@ class TextViewer(host: ReaderHost, private val load: (LibraryItem) -> TextConten
 
     private fun applyColors() {
         val background = comfort.theme.background
+        mask.setColor(background)
         list.setBackgroundColor(background)
         list.cacheColorHint = background
     }
@@ -375,16 +485,23 @@ class TextViewer(host: ReaderHost, private val load: (LibraryItem) -> TextConten
         list.setSelectionFromTop(index, 0)
         list.viewTreeObserver.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
             private var layouts = 0
+            private var fixes = 0
             override fun onGlobalLayout() {
                 val child = list.getChildAt(index - list.firstVisiblePosition)
                 val placed = child != null && index >= list.firstVisiblePosition
                 if (!placed && ++layouts < MAX_RESTORE_LAYOUTS) return
+                // Pedido antes da primeira medida, o ListView ignora a margem de cima: posiciona de novo.
+                if (placed && child!!.top != list.paddingTop && ++fixes <= 2) {
+                    list.setSelectionFromTop(index, 0)
+                    return
+                }
                 list.viewTreeObserver.removeOnGlobalLayoutListener(this)
                 if (placed) {
                     val pixels = extra(child!!)
                     if (pixels > 0) scrollBy(pixels)
                 }
                 list.post {
+                    alignToLine()
                     updateProgressLabel()
                     host.onPositionChanged()
                 }

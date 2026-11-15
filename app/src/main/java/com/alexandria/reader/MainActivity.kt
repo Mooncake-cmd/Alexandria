@@ -366,6 +366,24 @@ class MainActivity : Activity() {
         return if (Formats.detect(name, null) != null && extension.isNotEmpty()) name.dropLast(extension.length + 1) else name
     }
 
+    /** Apaga o tempo lido de um livro só; o total das estatísticas cai na mesma medida. */
+    private fun confirmClearBookTime(entry: LibraryItem) {
+        AlertDialog.Builder(this)
+            .setTitle("Apagar tempo de leitura?")
+            .setMessage(
+                "Apaga ${ReadingTime.format(entry.readingSeconds)} de leitura de \"${displayTitle(entry.name)}\". " +
+                    "O total das estatísticas diminui na mesma medida e os dias de leitura (calendário e sequência) são ajustados. " +
+                    "O livro, o progresso, as anotações e o glossário continuam. Não dá para desfazer."
+            )
+            .setPositiveButton("Apagar") { _, _ ->
+                val removed = database.clearBookTime(entry.id)
+                Toast.makeText(this, "${ReadingTime.format(removed)} apagados de \"${displayTitle(entry.name)}\".", Toast.LENGTH_SHORT).show()
+                showSection(section)
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+
     private fun itemOptions(entry: LibraryItem) {
         val options = mutableListOf<Pair<String, () -> Unit>>()
         options += (if (entry.shelf.isEmpty()) "Mover para prateleira…" else "Prateleira: ${entry.shelf}…") to { chooseShelf(entry) }
@@ -377,6 +395,7 @@ class MainActivity : Activity() {
         }
         if (entry.finished && !entry.archived) options += "Liberar espaço (manter na Estante)…" to { confirmFreeSpace(entry) }
         options += "Trocar capa…" to { chooseCover(entry) }
+        if (entry.readingSeconds > 0) options += "Apagar tempo de leitura (⏱ ${ReadingTime.format(entry.readingSeconds)})…" to { confirmClearBookTime(entry) }
         if (BookFiles.hasCustomCover(this, entry.id)) options += "Restaurar capa original" to {
             BookFiles.removeCustomCover(this, entry.id)
             showLibrary()
@@ -846,10 +865,15 @@ class MainActivity : Activity() {
             reading.forEach { item ->
                 content.addView(label("${displayTitle(item.name)}  ·  ${ReadingTime.format(item.readingSeconds)}", 13f, ink).apply {
                     setPadding(0, dp(2), 0, dp(2))
+                    minHeight = dp(40)
+                    gravity = Gravity.CENTER_VERTICAL
                     maxLines = 1
                     ellipsize = TextUtils.TruncateAt.END
+                    contentDescription = "${displayTitle(item.name)}, ${ReadingTime.format(item.readingSeconds)}. Toque para apagar o tempo deste livro."
+                    setOnClickListener { confirmClearBookTime(item) }
                 })
             }
+            content.addView(label("Toque num livro para apagar só o tempo dele.", 11f, muted).apply { setPadding(0, dp(2), 0, 0) })
         }
         if (items.isNotEmpty()) {
             content.addView(label("POR FORMATO", 10f, muted, true).apply { setPadding(0, dp(14), 0, dp(6)) })

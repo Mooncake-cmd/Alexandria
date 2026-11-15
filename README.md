@@ -1,6 +1,6 @@
 # Alexandria — projeto Android
 
-**Versão:** 0.14.0  
+**Versão:** 0.15.0  
 **Pacote:** `com.alexandria.reader`  
 **Plataforma:** Android 6.0 ou superior (API 23+)  
 **Idioma da interface:** Português (Brasil)
@@ -59,6 +59,13 @@ Em todos os formatos:
 - **Régua de leitura** (menu ⋮): faixa sobre a linha lida. A alça fica escondida: **toque na régua** para ela aparecer
   à direita por 3 segundos e arraste-a (com o leitor de tela ligado, a alça fica sempre à vista). Espessura (1, 2 ou 3
   linhas), cor, opacidade e o que fazer fora da régua (normal, escurecer ou preto) ficam no Conforto visual.
+- **Páginas com linhas inteiras** (modo páginas de EPUB, MOBI, TXT e DOCX): cada página termina na última linha que
+  cabe inteira (a cortada fica coberta com a cor da página) e a próxima começa exatamente na linha seguinte, sem repetir
+  nem pular. Título ou imagem que não cabe vai inteiro para a próxima página. Ao abrir, mudar a letra ou pular para
+  uma anotação, a primeira linha também fica inteira no topo.
+- **Apagar o tempo de um livro**: toque longo no livro → "Apagar tempo de leitura…", ou toque no livro em Estatísticas →
+  "Mais tempo de leitura". O tempo dele é zerado e sai do total, do calendário e da sequência (o tempo de antes da 0.15,
+  que não tem dia por livro, sai dos dias antigos na mesma proporção).
 - **Tela limpa**: o livro abre ocupando a tela inteira, sem barras (nem as do sistema). **Um toque no meio** mostra a barra
   de cima e os controles de baixo; outro toque esconde. Toque duplo (virar página, zoom), toque num termo do glossário,
   na régua ou numa seleção não mexem nos controles. Prefere as barras sempre à vista? Menu ⋮ → "Controles sempre
@@ -143,6 +150,7 @@ Os testes rodam na JVM, sem emulador (115 no total):
 - `ZipFormatsTest` (Robolectric): EPUB 2 e 3 (capítulos, sumário, capa), DOCX (títulos com estilos em português, listas, estilos, tabelas, caixas de texto), CBZ.
 - `LibraryDatabaseTest` (Robolectric): migrações 0.2 → 0.4 e 0.3 → 0.4 sem perda de dados, anotações, Estante e prateleiras.
 - `TextReaderTest`, `ReaderFormatsTest` (Robolectric): abre TXT, DOCX e EPUB no leitor, salva e restaura posição, busca, CBR em RAR com erro claro.
+- `LinePagerTest` e `ReadingModesTest`: página termina na linha inteira e a próxima começa na seguinte.
 - `ReaderChromeTest` (Robolectric): tela limpa (toque mostra/esconde, toque duplo não), controles sempre visíveis sem cobrir o livro, bloqueio lateral com zoom.
 - `MainActivityTest` (Robolectric): biblioteca com prateleiras e Estante de madeira (placas que abrem e fecham, troca de capa pela galeria), abas Notas, Estatísticas e Ajustes.
 - `ShelfPreviewTest`: gera imagens da Estante quando `SHELF_PREVIEW` aponta para uma pasta com capas de exemplo (sem a variável, é pulado).

@@ -56,7 +56,7 @@ data class Note(
     val createdAt: Long
 )
 
-class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.db", null, 6) {
+class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.db", null, 7) {
     override fun onConfigure(db: SQLiteDatabase) {
         db.setForeignKeyConstraintsEnabled(true)
     }
@@ -81,6 +81,15 @@ class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.
         """.trimIndent())
         createNotesTable(db)
         createReadingTables(db)
+        createReadingLog(db)
+    }
+
+    /**
+     * Tempo de cada livro em cada dia (desde a 0.15). Permite apagar o tempo de um livro só,
+     * descontando dos dias certos. Sem chave estrangeira: remover o livro da biblioteca não muda o total.
+     */
+    private fun createReadingLog(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE reading_log (item_id INTEGER NOT NULL, day TEXT NOT NULL, seconds INTEGER NOT NULL, PRIMARY KEY (item_id, day))")
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -105,6 +114,7 @@ class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.
             db.execSQL("ALTER TABLE library_items ADD COLUMN file_size INTEGER NOT NULL DEFAULT 0")
             db.execSQL("ALTER TABLE library_items ADD COLUMN archived_at INTEGER NOT NULL DEFAULT 0")
         }
+        if (oldVersion < 7) createReadingLog(db)
     }
 
     /** Tempo lido por dia (para a sequência de dias) e glossário de termos por livro. */
@@ -240,6 +250,7 @@ class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.
         db.beginTransaction()
         try {
             db.execSQL("DELETE FROM reading_days")
+            db.execSQL("DELETE FROM reading_log")
             db.execSQL("UPDATE library_items SET reading_seconds = 0")
             db.setTransactionSuccessful()
         } finally {
@@ -248,7 +259,52 @@ class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.
     }
 
     fun remove(id: Long) {
-        writableDatabase.delete("library_items", "id = ?", arrayOf(id.toString()))
+        val db = writableDatabase
+        db.delete("library_items", "id = ?", arrayOf(id.toString()))
+        // O tempo continua no total; só deixa de estar ligado a este livro.
+        db.delete("reading_log", "item_id = ?", arrayOf(id.toString()))
+    }
+
+    /**
+     * Apaga o tempo de leitura de um livro: zera o dele e desconta dos dias em que foi lido, o que
+     * baixa o total, o calendário e (se for o caso) a sequência. O tempo de antes da 0.15 não tem
+     * dia registrado por livro: sai dos dias que têm tempo sem livro conhecido, na mesma proporção.
+     * Devolve quantos segundos foram apagados.
+     */
+    fun clearBookTime(id: Long): Long {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val total = db.rawQuery("SELECT reading_seconds FROM library_items WHERE id = ?", arrayOf(id.toString())).use { c ->
+                if (c.moveToFirst()) c.getLong(0) else 0L
+            }
+            val logged = HashMap<String, Long>()
+            db.rawQuery("SELECT day, seconds FROM reading_log WHERE item_id = ?", arrayOf(id.toString())).use { c ->
+                while (c.moveToNext()) logged[c.getString(0)] = c.getLong(1)
+            }
+            for ((day, seconds) in logged) {
+                db.execSQL("UPDATE reading_days SET seconds = MAX(0, seconds - ?) WHERE day = ?", arrayOf<Any>(seconds, day))
+            }
+            db.delete("reading_log", "item_id = ?", arrayOf(id.toString()))
+            val legacy = (total - logged.values.sum()).coerceAtLeast(0)
+            if (legacy > 0) {
+                // Tempo de cada dia que não pertence a nenhum livro registrado.
+                val unattributed = HashMap<String, Long>()
+                db.rawQuery(
+                    "SELECT d.day, d.seconds - COALESCE((SELECT SUM(l.seconds) FROM reading_log l WHERE l.day = d.day), 0) FROM reading_days d",
+                    null
+                ).use { c -> while (c.moveToNext()) unattributed[c.getString(0)] = c.getLong(1) }
+                for ((day, seconds) in ReadingTime.spreadRemoval(unattributed, legacy)) {
+                    db.execSQL("UPDATE reading_days SET seconds = MAX(0, seconds - ?) WHERE day = ?", arrayOf<Any>(seconds, day))
+                }
+            }
+            db.execSQL("DELETE FROM reading_days WHERE seconds <= 0")
+            db.execSQL("UPDATE library_items SET reading_seconds = 0 WHERE id = ?", arrayOf<Any>(id))
+            db.setTransactionSuccessful()
+            return total
+        } finally {
+            db.endTransaction()
+        }
     }
 
     private fun update(id: Long, values: ContentValues) {
@@ -266,6 +322,8 @@ class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.
             db.execSQL("UPDATE library_items SET reading_seconds = reading_seconds + ? WHERE id = ?", arrayOf<Any>(seconds, itemId))
             db.execSQL("INSERT OR IGNORE INTO reading_days (day, seconds) VALUES (?, 0)", arrayOf<Any>(day))
             db.execSQL("UPDATE reading_days SET seconds = seconds + ? WHERE day = ?", arrayOf<Any>(seconds, day))
+            db.execSQL("INSERT OR IGNORE INTO reading_log (item_id, day, seconds) VALUES (?, ?, 0)", arrayOf<Any>(itemId, day))
+            db.execSQL("UPDATE reading_log SET seconds = seconds + ? WHERE item_id = ? AND day = ?", arrayOf<Any>(seconds, itemId, day))
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()

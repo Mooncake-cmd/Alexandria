@@ -173,4 +173,56 @@ class LibraryDatabaseTest {
         database.remove(id)
         assertTrue(database.all().isEmpty())
     }
+
+    @Test
+    fun clearingOneBookTimeLowersTotalAndItsDays() {
+        database = LibraryDatabase(context)
+        val a = database.add("A.epub", "content://a", "epub")!!
+        val b = database.add("B.epub", "content://b", "epub")!!
+        database.addReadingTime(a, "2026-11-10", 300)
+        database.addReadingTime(a, "2026-11-11", 300)
+        database.addReadingTime(b, "2026-11-11", 1_200)
+        database.addReadingTime(b, "2026-11-12", 600)
+        assertEquals(2_400L, database.readingDays().values.sum())
+
+        assertEquals(600L, database.clearBookTime(a))
+        assertEquals(0L, database.find(a)!!.readingSeconds)
+        assertEquals(1_800L, database.find(b)!!.readingSeconds)
+        // O dia só do livro A some; o dia dividido fica só com o tempo do B.
+        assertEquals(mapOf("2026-11-11" to 1_200L, "2026-11-12" to 600L), database.readingDays())
+        assertEquals(1_800L, database.readingDays().values.sum())
+    }
+
+    @Test
+    fun timeFromBeforeTheLogIsRemovedFromTheTotalToo() {
+        // Banco da 0.14 (versão 6): o tempo por dia existe, mas não se sabe de qual livro.
+        val file = context.getDatabasePath("alexandria.db").apply { parentFile?.mkdirs() }
+        LibraryDatabase(context).use { it.writableDatabase }
+        SQLiteDatabase.openOrCreateDatabase(file, null).use { old ->
+            old.execSQL("DROP TABLE reading_log")
+            old.execSQL("INSERT INTO library_items (name, uri, format, added_at, reading_seconds) VALUES ('A.pdf', 'content://a', 'pdf', 0, 600)")
+            old.execSQL("INSERT INTO library_items (name, uri, format, added_at, reading_seconds) VALUES ('B.pdf', 'content://b', 'pdf', 0, 1800)")
+            old.execSQL("INSERT INTO reading_days (day, seconds) VALUES ('2026-11-01', 1200), ('2026-11-02', 1200)")
+            old.version = 6
+        }
+        database = LibraryDatabase(context)
+        val a = database.all().first { it.name == "A.pdf" }
+        // Depois da atualização, um tempo novo do livro A já fica registrado no dia.
+        database.addReadingTime(a.id, "2026-11-03", 120)
+        assertEquals(2_520L, database.readingDays().values.sum())
+
+        assertEquals(720L, database.clearBookTime(a.id))
+        // Total cai exatamente 12 min: 2 min do dia registrado e 10 min repartidos entre os dias antigos.
+        assertEquals(1_800L, database.readingDays().values.sum())
+        assertEquals(setOf("2026-11-01", "2026-11-02"), database.readingDays().keys)
+        assertEquals(1_800L, database.all().first { it.name == "B.pdf" }.readingSeconds)
+    }
+
+    @Test
+    fun spreadRemovalIsProportionalAndExact() {
+        assertEquals(mapOf("a" to 75L, "b" to 25L), ReadingTime.spreadRemoval(mapOf("a" to 300L, "b" to 100L), 100))
+        assertEquals(10L, ReadingTime.spreadRemoval(mapOf("a" to 7L, "b" to 7L, "c" to 7L), 10).values.sum())
+        assertEquals(mapOf("a" to 5L), ReadingTime.spreadRemoval(mapOf("a" to 5L, "b" to 0L), 50))
+        assertEquals(emptyMap<String, Long>(), ReadingTime.spreadRemoval(emptyMap(), 50))
+    }
 }

@@ -46,6 +46,10 @@ class EpubViewer(
     @Volatile
     private var cssSnapshot = ""
     private var chapterReady = false
+    /** Modo páginas: o paginador por linhas foi instalado no capítulo aberto. */
+    private var pagerReady = false
+    /** Modo páginas: a tela mostra a última página do capítulo. */
+    private var pagerLast = false
     private var textSizeSp = ReadingPrefs.textSize(context)
     private var comfort = ComfortStore.load(context)
 
@@ -138,7 +142,8 @@ class EpubViewer(
         openChapter(index, (exact - index).coerceIn(0.0, 1.0))
     }
 
-    override fun atEnd() = chapterReady && chapter == pageCount() - 1 && !web.canScrollVertically(1)
+    override fun atEnd() = chapterReady && chapter == pageCount() - 1 &&
+        if (paged && pagerReady) pagerLast else !web.canScrollVertically(1)
 
     override fun describe(position: Int): String {
         val total = pageCount()
@@ -194,6 +199,29 @@ class EpubViewer(
     /** Rola uma tela; no fim (ou começo) do capítulo, passa para o próximo (ou o anterior, já no fim). */
     private fun turnPage(direction: Int) {
         if (!chapterReady) return
+        if (pagerReady) {
+            // Páginas com linhas inteiras: o paginador do capítulo diz se ainda há página ou se acabou.
+            web.evaluateJavascript(if (direction > 0) "alxPager.next()" else "alxPager.prev()") { raw ->
+                when (raw?.trim('"')) {
+                    "end" -> if (chapter < pageCount() - 1) {
+                        openChapter(chapter + 1, 0.0)
+                        flash(web)
+                    }
+                    "start" -> if (chapter > 0) {
+                        openChapter(chapter - 1, 1.0)
+                        flash(web)
+                    }
+                    null, "null" -> Unit
+                    else -> {
+                        pagerLast = raw.trim('"') == "last"
+                        flash(web)
+                        updateLabel()
+                        host.onPositionChanged()
+                    }
+                }
+            }
+            return
+        }
         val line = (textSizeSp * context.resources.displayMetrics.scaledDensity * 1.55f).toInt()
         val step = PageTurn.scrollStep(web.height, (line * 1.5f).toInt())
         when {
@@ -216,8 +244,12 @@ class EpubViewer(
 
     // ---------- capítulos ----------
 
+    /** Quanto o texto do capítulo rola (sem a folga em branco que o modo páginas põe no fim). */
+    private fun contentRange(): Int =
+        (web.scrollableHeight() - if (pagerReady) web.height else 0).coerceAtLeast(0)
+
     private fun chapterFraction(): Double {
-        val range = web.scrollableHeight()
+        val range = contentRange()
         return if (range <= 0) 0.0 else (web.scrollY.toDouble() / range).coerceIn(0.0, 1.0)
     }
 
@@ -226,6 +258,8 @@ class EpubViewer(
         val file = zip ?: return
         if (index !in chapters.indices) return
         chapter = index
+        pagerReady = false
+        pagerLast = false
         pendingFraction = fraction
         pendingAnchor = anchor
         chapterReady = false
@@ -286,7 +320,7 @@ class EpubViewer(
         web.postVisualStateCallback(chapter.toLong(), object : WebView.VisualStateCallback() {
             override fun onComplete(requestId: Long) {
                 if (requestId != chapter.toLong()) return
-                web.scrollTo(0, (fraction * web.scrollableHeight()).roundToInt())
+                web.scrollTo(0, (fraction * contentRange()).roundToInt())
                 // Imagens carregadas por último podem mudar a altura: confere de novo um pouco depois.
                 web.postDelayed({
                     val anchor = pendingAnchor
@@ -295,9 +329,10 @@ class EpubViewer(
                         val id = org.json.JSONObject.quote(anchor)
                         web.evaluateJavascript("var e=document.getElementById($id); if(e) e.scrollIntoView();", null)
                     } else if (fraction > 0) {
-                        web.scrollTo(0, (fraction * web.scrollableHeight()).roundToInt())
+                        web.scrollTo(0, (fraction * contentRange()).roundToInt())
                     }
                     chapterReady = true
+                    installPager()
                     updateLabel()
                     host.onPositionChanged()
                     pendingFind?.let { (term, nth) -> findInChapter(term, nth) }
@@ -392,6 +427,8 @@ class EpubViewer(
     private fun findInChapter(term: String, nth: Int) {
         web.setFindListener { active, matches, done ->
             if (!done || matches == 0) return@setFindListener
+            // Depois de pular para o resultado, a página volta a começar numa linha inteira.
+            if (pagerReady) web.postDelayed({ if (pagerReady) web.evaluateJavascript("alxPager.snap()", null) }, 400)
             val target = nth.coerceIn(0, matches - 1)
             if (active != target) {
                 web.setFindListener(null)
@@ -404,6 +441,22 @@ class EpubViewer(
     override fun clearSearch() {
         web.setFindListener(null)
         web.clearMatches()
+    }
+
+    // ---------- páginas com linhas inteiras ----------
+
+    /** Instala o paginador no capítulo aberto (só no modo páginas) e encaixa a primeira linha. */
+    private fun installPager() {
+        if (!paged) return
+        val color = String.format(java.util.Locale.ROOT, "#%06X", 0xFFFFFF and comfort.theme.background)
+        web.evaluateJavascript("$PAGER_JS;alxPager.setup('$color');alxPager.snap()") { raw ->
+            val state = raw?.trim('"') ?: return@evaluateJavascript
+            if (state == "last" || state == "more") {
+                pagerReady = true
+                pagerLast = state == "last"
+                host.onPositionChanged()
+            }
+        }
     }
 
     // ---------- conteúdo servido de dentro do ZIP ----------
@@ -476,6 +529,105 @@ class EpubViewer(
     enum class Route { PASS, BOOK, BLOCK }
 
     companion object {
+        /**
+         * Paginador por linhas, injetado em cada capítulo no modo páginas. Acha a linha cortada na
+         * borda de baixo (pelo ponto na tela), cobre-a com a cor da página e, ao virar, rola até ela
+         * ficar no topo. Uma folga em branco no fim deixa a última página subir sem repetir linhas.
+         */
+        private val PAGER_JS = """
+            (function(){
+            if (window.alxPager) return;
+            var P = {top: 10, bottom: 10, masks: null, color: '#ffffff', raf: 0, spacer: null};
+            function win(){ var b = window.innerHeight - P.bottom; return {t: P.top, b: b, h: b - P.top}; }
+            function box(el, y){ var r = el.getBoundingClientRect(); return (r.top <= y && r.bottom >= y) ? {top: r.top, bottom: r.bottom} : null; }
+            function lineAt(y){
+              var xs = [0.5, 0.3, 0.7, 0.15, 0.85], W = window.innerWidth;
+              for (var i = 0; i < xs.length; i++) {
+                var x = W * xs[i], el = document.elementFromPoint(x, y);
+                if (!el) continue;
+                var tag = (el.tagName || '').toLowerCase();
+                if (tag == 'img' || tag == 'svg' || tag == 'image' || tag == 'video' || tag == 'canvas') { var b = box(el, y); if (b) return b; continue; }
+                var c = document.caretRangeFromPoint ? document.caretRangeFromPoint(x, y) : null;
+                if (!c || c.startContainer.nodeType != 3) continue;
+                var n = c.startContainer;
+                for (var d = 0; d >= -1; d--) {
+                  var o = Math.min(c.startOffset + d, n.length - 1);
+                  if (o < 0) continue;
+                  var rg = document.createRange(); rg.setStart(n, o); rg.setEnd(n, o + 1);
+                  var rs = rg.getClientRects();
+                  for (var k = 0; k < rs.length; k++) {
+                    var r = rs[k];
+                    if (r.height > 0 && r.top <= y && r.bottom >= y) {
+                      var lh = parseFloat(getComputedStyle(n.parentElement).lineHeight);
+                      if (isNaN(lh)) lh = r.height * 1.2;
+                      var half = Math.max(0, (lh - r.height) / 2);
+                      return {top: r.top - half, bottom: r.bottom + half};
+                    }
+                  }
+                }
+              }
+              return null;
+            }
+            function contentEnd(){ return P.spacer ? P.spacer.getBoundingClientRect().top : document.documentElement.scrollHeight - window.scrollY; }
+            function state(){ return contentEnd() <= win().b + 1 ? 'last' : 'more'; }
+            function cut(w){ var l = lineAt(w.b - 0.5); return (l && l.bottom > w.b + 0.5 && l.top > w.t + 0.5) ? l : null; }
+            function mask(){
+              var d = document.createElement('div'), s = d.style;
+              d.setAttribute('aria-hidden', 'true');
+              s.position = 'fixed'; s.left = '0'; s.right = '0'; s.zIndex = '2147483647'; s.pointerEvents = 'none'; s.background = P.color;
+              document.documentElement.appendChild(d);
+              return d;
+            }
+            function update(){
+              if (!P.masks) P.masks = [mask(), mask()];
+              var w = win(), c = cut(w), start = c ? c.top : w.b;
+              var a = P.masks[0].style, z = P.masks[1].style;
+              a.top = '0px'; a.height = w.t + 'px';
+              z.top = start + 'px'; z.height = Math.max(0, window.innerHeight - start) + 'px';
+            }
+            function later(){ if (!P.raf) P.raf = requestAnimationFrame(function(){ P.raf = 0; update(); }); }
+            window.alxPager = {
+              setup: function(color){
+                P.color = color;
+                if (!P.spacer && document.body) {
+                  P.spacer = document.createElement('div');
+                  P.spacer.setAttribute('aria-hidden', 'true');
+                  P.spacer.style.height = window.innerHeight + 'px';
+                  document.body.appendChild(P.spacer);
+                }
+                window.addEventListener('scroll', later, {passive: true});
+                window.addEventListener('resize', later);
+                update();
+                return state();
+              },
+              next: function(){
+                var w = win();
+                if (contentEnd() <= w.b + 1) return 'end';
+                var c = cut(w), d = c ? c.top - w.t : w.h;
+                if (d < w.h * 0.25) d = w.h;
+                window.scrollBy(0, Math.round(d));
+                update();
+                return state();
+              },
+              prev: function(){
+                if (window.scrollY <= 0) return 'start';
+                var w = win();
+                window.scrollBy(0, -Math.round(w.h));
+                var s = lineAt(w.t + 0.5);
+                if (s && s.top < w.t - 0.5 && s.bottom - w.t < w.h * 0.75) window.scrollBy(0, Math.round(s.bottom - w.t));
+                update();
+                return state();
+              },
+              snap: function(){
+                var w = win(), s = lineAt(w.t + 0.5);
+                if (s && s.top < w.t - 0.5 && w.t - s.top < w.h * 0.5) window.scrollBy(0, Math.floor(s.top - w.t));
+                update();
+                return state();
+              }
+            };
+            })()
+        """.trimIndent()
+
         private const val BASE = "https://book.alexandria/"
         private const val APP_FONTS = "__alexandria/fonts/"
 

@@ -2,6 +2,29 @@ package com.alexandria.reader
 
 /** Formatação de tempo de leitura. Kotlin puro. */
 object ReadingTime {
+    /**
+     * Divide [amount] segundos entre os dias de [available] (segundos disponíveis em cada dia), na
+     * proporção de cada um, sem passar do que cada dia tem. O que sobra do arredondamento sai dos
+     * dias com mais tempo. Se não houver tempo suficiente, tira tudo o que há.
+     */
+    fun spreadRemoval(available: Map<String, Long>, amount: Long): Map<String, Long> {
+        val days = available.filterValues { it > 0 }
+        val total = days.values.sum()
+        if (amount <= 0 || total <= 0) return emptyMap()
+        if (amount >= total) return days
+        val result = HashMap<String, Long>()
+        for ((day, seconds) in days) result[day] = seconds * amount / total
+        var left = amount - result.values.sum()
+        for ((day, seconds) in days.entries.sortedByDescending { it.value }) {
+            if (left <= 0) break
+            val room = seconds - result.getValue(day)
+            val take = minOf(room, left)
+            result[day] = result.getValue(day) + take
+            left -= take
+        }
+        return result.filterValues { it > 0 }
+    }
+
     /** "45 s", "12 min", "2 h 05 min". */
     fun format(seconds: Long): String = when {
         seconds < 60 -> "${seconds.coerceAtLeast(0)} s"

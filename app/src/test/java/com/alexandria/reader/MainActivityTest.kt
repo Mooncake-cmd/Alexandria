@@ -171,6 +171,32 @@ class MainActivityTest {
     }
 
     @Test
+    fun readingTimeOfOneBookCanBeDeletedFromStats() {
+        val (a, b) = LibraryDatabase(context).use { db ->
+            val all = db.all()
+            val a = all.first { it.name == "Dom Casmurro.epub" }.id
+            val b = all.first { it.name == "Manual.pdf" }.id
+            db.addReadingTime(a, Days.today(), 600)
+            db.addReadingTime(b, Days.today(), 1_800)
+            a to b
+        }
+        val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        click(activity.window.decorView, "Estatísticas")
+        assertTrue(texts(activity.window.decorView).contains("40 min"))
+        click(activity.window.decorView, "Dom Casmurro  ·  10 min")
+        val dialog = org.robolectric.shadows.ShadowDialog.getLatestDialog() as android.app.AlertDialog
+        dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick()
+        shadowOf(Looper.getMainLooper()).idle()
+        val shown = texts(activity.window.decorView)
+        assertTrue("total cai para 30 min: $shown", shown.contains("30 min"))
+        assertFalse(shown.any { it.startsWith("Dom Casmurro  ·") })
+        LibraryDatabase(context).use { db ->
+            assertEquals(0L, db.find(a)!!.readingSeconds)
+            assertEquals(1_800L, db.find(b)!!.readingSeconds)
+        }
+    }
+
+    @Test
     fun notesAndStatsTabs() {
         val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
         click(activity.window.decorView, "Notas")

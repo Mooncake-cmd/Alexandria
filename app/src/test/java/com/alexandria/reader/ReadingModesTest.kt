@@ -177,6 +177,44 @@ class ReadingModesTest {
         controller.pause().stop().destroy()
     }
 
+    /** Linhas na tela: (bloco, linha) → topo, em pixels da lista. */
+    private fun lineTops(list: ListView): Map<Pair<Int, Int>, Int> {
+        val result = HashMap<Pair<Int, Int>, Int>()
+        for (i in 0 until list.childCount) {
+            val view = list.getChildAt(i) as? TextView ?: continue
+            val layout = view.layout ?: continue
+            for (line in 0 until layout.lineCount) result[(list.firstVisiblePosition + i) to line] = view.top + view.totalPaddingTop + layout.getLineTop(line)
+        }
+        return result
+    }
+
+    @Test
+    fun pagesEndOnAWholeLineAndTheNextStartsRightAfter() {
+        val text = (1..600).joinToString("\n") { "Parágrafo $it com texto suficiente para quebrar em mais de uma linha na tela do leitor." }
+        val file = File(context.cacheDir, "linhas.txt").apply { writeText(text) }
+        val controller = launch(add(file, "txt"))
+        val activity = controller.get()
+        val root = activity.window.decorView
+        val list = all(root).filterIsInstance<ListView>().single()
+        val mask = all(root).filterIsInstance<PageMask>().single()
+        waitUntil { list.adapter.count > 0 && list.childCount > 0 }
+        shadowOf(Looper.getMainLooper()).idle()
+        // O livro começa com a primeira linha inteira, logo abaixo da margem.
+        assertEquals(list.paddingTop, lineTops(list)[0 to 0])
+        repeat(3) {
+            val windowBottom = list.height - list.paddingBottom
+            val cover = mask.coverBottom
+            assertTrue("a cobertura fica dentro da janela", cover <= windowBottom + 0.5f)
+            // A linha que começa onde a cobertura começa (ou a primeira abaixo da janela) abre a próxima página.
+            val next = lineTops(list).entries.filter { it.value >= cover - 1 }.minByOrNull { it.value }!!.key
+            doubleTap(activity, list, 0.95f)
+            val first = lineTops(list).entries.filter { it.value >= list.paddingTop - 1 }.minByOrNull { it.value }!!
+            assertEquals("a página começa na linha seguinte", next, first.key)
+            assertEquals(list.paddingTop.toFloat(), first.value.toFloat(), 1f)
+        }
+        controller.pause().stop().destroy()
+    }
+
     @Test
     fun rulerTogglesAndRemembersPosition() {
         val file = File(context.cacheDir, "regua.txt").apply { writeText("Texto curto.\nOutra linha.") }
