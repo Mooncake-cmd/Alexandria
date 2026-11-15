@@ -412,6 +412,12 @@ class PageViewer(host: ReaderHost, private val openSource: (LibraryItem) -> Page
         return Pair(windowX - location[0], windowY - location[1])
     }
 
+    private var sideLocked = ReadingPrefs.sideLock(context)
+    override val supportsSideLock = true
+    override fun setSideLock(locked: Boolean) {
+        sideLocked = locked
+    }
+
     /** Todos os toques na página são tratados aqui: zoom, arrastar e toque duplo. */
     override fun dispatchTouch(event: MotionEvent): Boolean? {
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
@@ -460,7 +466,7 @@ class PageViewer(host: ReaderHost, private val openSource: (LibraryItem) -> Page
             override fun onDown(e: MotionEvent) = true
 
             override fun onScroll(e1: MotionEvent?, e2: MotionEvent, distanceX: Float, distanceY: Float): Boolean {
-                pageView.panBy(distanceX, distanceY)
+                pageView.panBy(if (sideLocked) 0f else distanceX, distanceY)
                 return true
             }
 
@@ -481,7 +487,7 @@ class PageViewer(host: ReaderHost, private val openSource: (LibraryItem) -> Page
             }
 
             override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
-                pageView.fling(velocityX, velocityY)
+                pageView.fling(if (sideLocked) 0f else velocityX, velocityY)
                 return true
             }
 
@@ -871,6 +877,12 @@ class PageScrollViewer(host: ReaderHost, private val openSource: (LibraryItem) -
         return Pair(windowX - location[0], windowY - location[1])
     }
 
+    private var sideLocked = ReadingPrefs.sideLock(context)
+    override val supportsSideLock = true
+    override fun setSideLock(locked: Boolean) {
+        sideLocked = locked
+    }
+
     private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScale(detector: ScaleGestureDetector): Boolean {
             val (x, y) = local(detector.focusX, detector.focusY)
@@ -881,7 +893,7 @@ class PageScrollViewer(host: ReaderHost, private val openSource: (LibraryItem) -
 
     private val tapDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
         override fun onScroll(e1: MotionEvent?, e2: MotionEvent, distanceX: Float, distanceY: Float): Boolean {
-            if (zoom > 1.01f) {
+            if (zoom > 1.01f && !sideLocked) {
                 list.translationX -= distanceX
                 clampTranslation()
             }

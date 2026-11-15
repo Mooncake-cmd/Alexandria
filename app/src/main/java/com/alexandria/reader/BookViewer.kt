@@ -77,6 +77,12 @@ abstract class BookViewer(protected val host: ReaderHost) {
     /** Aplica cores, tipografia etc. do painel "Conforto visual" (chamado também enquanto se ajusta). */
     open fun applyComfort(comfort: Comfort) = Unit
 
+    /** Formatos de página (PDF, DJVU, quadrinhos) aceitam travar o movimento para os lados. */
+    open val supportsSideLock: Boolean = false
+
+    /** Trava ([locked]) o arrastar para os lados; zoom e movimento vertical continuam livres. */
+    open fun setSideLock(locked: Boolean) = Unit
+
     /** Gestos próprios (zoom, deslizar). Retorna true se consumiu o evento, null para seguir o normal. */
     open fun dispatchTouch(event: MotionEvent): Boolean? = null
 
@@ -140,6 +146,9 @@ object ReadingPrefs {
     private const val KEY_PAGED = "paged_mode"
     private const val KEY_RULER = "ruler_on"
     private const val KEY_RULER_Y = "ruler_y"
+    private const val KEY_CLEAN = "clean_screen"
+    private const val KEY_CLEAN_HINT = "clean_screen_hint"
+    private const val KEY_SIDE_LOCK = "side_lock"
 
     /**
      * Modo de leitura: true = páginas (uma tela por vez, vira com toque duplo na borda);
@@ -156,6 +165,24 @@ object ReadingPrefs {
     fun rulerY(context: Activity) = context.getSharedPreferences(PREFS, Activity.MODE_PRIVATE).getFloat(KEY_RULER_Y, 0.4f)
     fun setRulerY(context: Activity, value: Float) =
         context.getSharedPreferences(PREFS, Activity.MODE_PRIVATE).edit().putFloat(KEY_RULER_Y, value).apply()
+
+    /** Tela limpa: o livro abre sem as barras; um toque no meio da tela mostra e esconde. */
+    fun cleanScreen(context: Activity) = context.getSharedPreferences(PREFS, Activity.MODE_PRIVATE).getBoolean(KEY_CLEAN, true)
+    fun setCleanScreen(context: Activity, value: Boolean) =
+        context.getSharedPreferences(PREFS, Activity.MODE_PRIVATE).edit().putBoolean(KEY_CLEAN, value).apply()
+
+    /** Mostra uma única vez a dica "toque para mostrar os controles". true = é a primeira vez. */
+    fun firstCleanScreenHint(context: Activity): Boolean {
+        val prefs = context.getSharedPreferences(PREFS, Activity.MODE_PRIVATE)
+        if (prefs.getBoolean(KEY_CLEAN_HINT, false)) return false
+        prefs.edit().putBoolean(KEY_CLEAN_HINT, true).apply()
+        return true
+    }
+
+    /** Bloqueio lateral (PDF, DJVU, quadrinhos): com zoom, o dedo só move a página para cima e para baixo. */
+    fun sideLock(context: Activity) = context.getSharedPreferences(PREFS, Activity.MODE_PRIVATE).getBoolean(KEY_SIDE_LOCK, false)
+    fun setSideLock(context: Activity, value: Boolean) =
+        context.getSharedPreferences(PREFS, Activity.MODE_PRIVATE).edit().putBoolean(KEY_SIDE_LOCK, value).apply()
 }
 
 /**

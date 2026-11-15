@@ -41,6 +41,15 @@ class ReaderActivity : Activity(), ReaderHost {
     private lateinit var searchInfo: TextView
     private lateinit var finishBanner: LinearLayout
     private var ruler: ReadingRuler? = null
+    /** Barra de cima (título, busca) e controles de baixo: somem na tela limpa. */
+    private lateinit var topGroup: LinearLayout
+    private lateinit var bottomControls: LinearLayout
+    private lateinit var bottomGroup: LinearLayout
+    private var lockButton: TextView? = null
+    private lateinit var bodyFrame: FrameLayout
+    private var controlsShown = true
+    private var selectionActive = false
+    private var lastTermTap = 0L
     private var hits: List<SearchHit> = emptyList()
     private var hitIndex = -1
     private var searchTerm = ""
@@ -69,8 +78,17 @@ class ReaderActivity : Activity(), ReaderHost {
         }
         current = item
         viewer = created
+        prepareFullScreen()
         setContentView(withComfortLayers(frame(item, created)))
         applyComfort(ComfortStore.load(this))
+        if (ReadingPrefs.cleanScreen(this)) {
+            showControls(false)
+            if (ReadingPrefs.firstCleanScreenHint(this)) {
+                Toast.makeText(this, "Toque no meio da tela para mostrar os controles.", Toast.LENGTH_LONG).show()
+            }
+        } else {
+            showControls(true)
+        }
         bookSecondsAtOpen = item.readingSeconds
         reloadGlossary()
         // Uma anotação aberta pela aba Notas leva direto ao ponto dela.
@@ -156,6 +174,11 @@ class ReaderActivity : Activity(), ReaderHost {
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         if (ev.actionMasked == MotionEvent.ACTION_DOWN) clock.interaction(System.currentTimeMillis())
+        if (current == null) return super.dispatchTouchEvent(ev)
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
+            controlGesture = hits(topGroup, ev) || hits(bottomControls, ev) || hits(finishBanner, ev) || lockButton?.let { hits(it, ev) } == true
+        }
+        if (controlGesture) return super.dispatchTouchEvent(ev)
         if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
             rulerGesture = ruler?.let { r ->
                 val location = IntArray(2)
@@ -177,6 +200,8 @@ class ReaderActivity : Activity(), ReaderHost {
             bandDown = null
         }
         if (ev.actionMasked == MotionEvent.ACTION_CANCEL) bandDown = null
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN) tapCanToggle = !rulerGesture && bandDown == null && !selectionActive
+        if (tapCanToggle) controlTaps.onTouchEvent(ev)
         if (rulerGesture) return super.dispatchTouchEvent(ev)
         return viewer?.dispatchTouch(ev) ?: super.dispatchTouchEvent(ev)
     }
@@ -196,10 +221,15 @@ class ReaderActivity : Activity(), ReaderHost {
             setOnClickListener { onClick(it) }
         }
 
-    private fun frame(item: LibraryItem, viewer: BookViewer): LinearLayout {
-        val root = LinearLayout(this).apply {
+    /**
+     * Moldura: o livro ocupa a tela inteira e as barras ficam por cima dele, para que mostrar ou
+     * esconder os controles (tela limpa) não mude o tamanho da página nem a posição da leitura.
+     */
+    private fun frame(item: LibraryItem, viewer: BookViewer): FrameLayout {
+        val root = FrameLayout(this).apply { setBackgroundColor(Palette.paper) }
+        topGroup = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Palette.paper)
+            setBackgroundColor(Palette.ink)
         }
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -228,18 +258,19 @@ class ReaderActivity : Activity(), ReaderHost {
         if (viewer.searchable) bar.addView(barButton("🔍", "Buscar no livro") { toggleSearch() })
         bar.addView(barButton("📝", "Anotações") { showNotes() })
         bar.addView(barButton("⋮", "Mais opções") { showMenu(it) })
-        root.addView(bar)
+        topGroup.addView(bar)
 
         searchBar = buildSearchBar()
-        root.addView(searchBar)
+        topGroup.addView(searchBar)
         // A régua fica por cima do conteúdo do livro.
-        val bodyFrame = FrameLayout(this)
+        bodyFrame = FrameLayout(this)
         bodyFrame.addView(viewer.body, FrameLayout.LayoutParams(-1, -1))
         ruler = ReadingRuler(this, ReadingPrefs.rulerY(this)) { ReadingPrefs.setRulerY(this, it) }.apply {
             visibility = if (ReadingPrefs.ruler(this@ReaderActivity)) View.VISIBLE else View.GONE
         }
         bodyFrame.addView(ruler, FrameLayout.LayoutParams(-1, -1))
-        root.addView(bodyFrame, LinearLayout.LayoutParams(-1, 0, 1f))
+        root.addView(bodyFrame, FrameLayout.LayoutParams(-1, -1))
+        root.addView(topGroup, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
 
         finishBanner = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -259,15 +290,181 @@ class ReaderActivity : Activity(), ReaderHost {
                 setOnClickListener { markFinished(true) }
             })
         }
-        root.addView(finishBanner)
-
-        val footer = LinearLayout(this).apply {
+        bottomGroup = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        // Bloquear o movimento para os lados (só formatos de página), no canto de baixo à direita.
+        if (viewer.supportsSideLock) {
+            val button = TextView(this).apply {
+                textSize = 12f
+                gravity = Gravity.CENTER
+                minWidth = dp(76)
+                minHeight = dp(56)
+                setPadding(dp(10), dp(6), dp(10), dp(6))
+                setOnClickListener { toggleSideLock() }
+            }
+            lockButton = button
+            styleLockButton()
+            bottomGroup.addView(button, LinearLayout.LayoutParams(-2, -2).apply {
+                gravity = Gravity.END
+                setMargins(0, 0, dp(12), dp(10))
+            })
+        }
+        bottomGroup.addView(finishBanner)
+        bottomControls = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.WHITE)
             addView(viewer.footer)
         }
-        root.addView(footer)
-        installSystemBarInsets(root, bar, footer)
+        bottomGroup.addView(bottomControls)
+        root.addView(bottomGroup, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+        installReaderInsets(root)
+        val relayout = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> fitBodyBetweenBars() }
+        topGroup.addOnLayoutChangeListener(relayout)
+        bottomGroup.addOnLayoutChangeListener(relayout)
         return root
+    }
+
+    /** As barras ficam longe da barra de status e dos botões do sistema; o livro vai até a borda. */
+    @Suppress("DEPRECATION")
+    private fun installReaderInsets(root: View) {
+        val topPadding = topGroup.paddingTop
+        val bottomPadding = bottomControls.paddingBottom
+        root.setOnApplyWindowInsetsListener { _, insets ->
+            topGroup.setPadding(insets.systemWindowInsetLeft, topPadding + insets.systemWindowInsetTop, insets.systemWindowInsetRight, 0)
+            bottomGroup.setPadding(insets.systemWindowInsetLeft, 0, insets.systemWindowInsetRight, 0)
+            bottomControls.setPadding(0, 0, 0, bottomPadding + insets.systemWindowInsetBottom)
+            // Na tela limpa (sem os controles) o aviso de fim também fica acima dos botões do sistema.
+            (finishBanner.layoutParams as? LinearLayout.LayoutParams)?.let {
+                it.bottomMargin = if (controlsShown) 0 else insets.systemWindowInsetBottom
+                finishBanner.layoutParams = it
+            }
+            insets
+        }
+    }
+
+    // ---------- tela limpa ----------
+
+    /** Desenha por trás das barras do sistema, para poder escondê-las junto com as do leitor. */
+    @Suppress("DEPRECATION")
+    private fun prepareFullScreen() {
+        window.statusBarColor = Palette.ink
+        window.navigationBarColor = Color.BLACK
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            window.setDecorFitsSystemWindows(false)
+        } else {
+            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+        }
+    }
+
+    /** Barras do sistema (status e navegação) somem junto com os controles do leitor. */
+    @Suppress("DEPRECATION")
+    private fun applySystemBars() {
+        val hide = !controlsShown
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            val controller = window.insetsController ?: return
+            val types = android.view.WindowInsets.Type.statusBars() or android.view.WindowInsets.Type.navigationBars()
+            if (hide) {
+                controller.systemBarsBehavior = android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                controller.hide(types)
+            } else {
+                controller.show(types)
+            }
+        } else {
+            val layout = View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+            window.decorView.systemUiVisibility = if (hide) {
+                layout or View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+            } else layout
+        }
+    }
+
+    /**
+     * Com "controles sempre visíveis", o livro fica entre as barras (nada escondido atrás delas).
+     * Na tela limpa, as barras aparecem por cima do livro, sem mudar o tamanho da página.
+     */
+    private fun fitBodyBetweenBars() {
+        val clean = ReadingPrefs.cleanScreen(this)
+        val top = if (clean || topGroup.visibility != View.VISIBLE) 0 else topGroup.height
+        val bottom = if (clean) 0 else bottomGroup.height - (lockButton?.let { it.height + dp(10) } ?: 0)
+        val params = bodyFrame.layoutParams as FrameLayout.LayoutParams
+        if (params.topMargin == top && params.bottomMargin == bottom.coerceAtLeast(0)) return
+        params.topMargin = top
+        params.bottomMargin = bottom.coerceAtLeast(0)
+        bodyFrame.post { bodyFrame.layoutParams = params }
+    }
+
+    /** Mostra ou esconde barra de cima, controles de baixo e o botão de bloquear. */
+    private fun showControls(show: Boolean) {
+        controlsShown = show
+        val visibility = if (show) View.VISIBLE else View.GONE
+        topGroup.visibility = visibility
+        bottomControls.visibility = visibility
+        lockButton?.visibility = visibility
+        applySystemBars()
+        topGroup.rootView?.requestApplyInsets()
+    }
+
+    /** Com a busca aberta, os controles ficam. */
+    private fun toggleControls() {
+        if (controlsShown && searchBar.visibility == View.VISIBLE) return
+        showControls(!controlsShown)
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // Ao voltar de um diálogo ou de outro app, o Android pode ter mostrado as barras do sistema.
+        if (hasFocus && current != null) applySystemBars()
+    }
+
+    private fun toggleSideLock() {
+        val locked = !ReadingPrefs.sideLock(this)
+        ReadingPrefs.setSideLock(this, locked)
+        viewer?.setSideLock(locked)
+        styleLockButton()
+        Toast.makeText(
+            this,
+            if (locked) "Movimento para os lados bloqueado. Zoom e rolagem para cima e para baixo continuam." else "Movimento para os lados liberado.",
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    private fun styleLockButton() {
+        val button = lockButton ?: return
+        val locked = ReadingPrefs.sideLock(this)
+        button.text = android.text.SpannableString(if (locked) "⟷\nBloqueado" else "⟷\nBloquear").apply {
+            setSpan(android.text.style.RelativeSizeSpan(2f), 0, 1, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        button.contentDescription = if (locked) "Desbloquear o movimento para os lados" else "Bloquear o movimento para os lados"
+        button.setTextColor(if (locked) Color.WHITE else Palette.ink)
+        button.background = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = dp(10).toFloat()
+            setColor(if (locked) Palette.ink else Color.WHITE)
+            setStroke(dp(2), Palette.ink)
+        }
+    }
+
+    /** Toque simples no livro (sem ser num termo, numa seleção ou na régua) mostra/esconde os controles. */
+    private val controlTaps by lazy {
+        android.view.GestureDetector(this, object : android.view.GestureDetector.SimpleOnGestureListener() {
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                val time = android.os.SystemClock.uptimeMillis()
+                // O toque num termo do glossário (no EPUB a resposta vem um pouco depois) não mexe nos controles.
+                timerHandler.postDelayed({
+                    if (!closed && lastTermTap < time - TERM_TAP_WINDOW && !selectionActive) toggleControls()
+                }, TERM_TAP_WINDOW)
+                return false
+            }
+        })
+    }
+    /** O gesto começou num controle visível (barras, botão, aviso de fim): é dele, não do livro. */
+    private var controlGesture = false
+    /** O gesto atual pode mostrar/esconder os controles (não começou na régua nem com seleção). */
+    private var tapCanToggle = false
+
+    private fun hits(view: View, ev: MotionEvent): Boolean {
+        if (view.visibility != View.VISIBLE || view.width == 0 || !view.isShown) return false
+        val location = IntArray(2)
+        view.getLocationInWindow(location)
+        return ev.x >= location[0] && ev.x < location[0] + view.width && ev.y >= location[1] && ev.y < location[1] + view.height
     }
 
     // ---------- conforto visual ----------
@@ -324,6 +521,12 @@ class ReaderActivity : Activity(), ReaderHost {
         actions += (if (paged) "Modo: rolagem contínua" else "Modo: páginas (toque duplo na borda)") to { switchMode(!paged) }
         val rulerOn = ruler?.visibility == View.VISIBLE
         actions += (if (rulerOn) "Esconder régua de leitura" else "Mostrar régua de leitura") to { toggleRuler() }
+        val clean = ReadingPrefs.cleanScreen(this)
+        actions += (if (clean) "Controles sempre visíveis" else "Tela limpa (toque para mostrar os controles)") to {
+            ReadingPrefs.setCleanScreen(this, !clean)
+            showControls(clean)
+            fitBodyBetweenBars()
+        }
         val focus = ComfortStore.load(this).rulerOutside == Comfort.RulerOutside.FOCO
         actions += (if (focus && rulerOn) "Desligar modo foco" else "Modo foco (só o texto da régua)") to { toggleFocus(!(focus && rulerOn)) }
         actions.add(0, "Conforto visual…" to { showComfort() })
@@ -449,6 +652,7 @@ class ReaderActivity : Activity(), ReaderHost {
             hitIndex = -1
             searchInfo.text = ""
         } else {
+            if (!controlsShown) showControls(true)
             searchBar.visibility = View.VISIBLE
             searchInput.requestFocus()
             input.showSoftInput(searchInput, InputMethodManager.SHOW_IMPLICIT)
@@ -498,8 +702,15 @@ class ReaderActivity : Activity(), ReaderHost {
     // ---------- anotações ----------
 
     /** Ao selecionar texto do livro, o menu da seleção ganha a opção "Anotar". */
+    override fun onActionModeFinished(mode: ActionMode) {
+        super.onActionModeFinished(mode)
+        // Um instante depois: o toque que fecha a seleção não deve também mostrar os controles.
+        timerHandler.postDelayed({ selectionActive = false }, TERM_TAP_WINDOW * 3)
+    }
+
     override fun onActionModeStarted(mode: ActionMode) {
         super.onActionModeStarted(mode)
+        selectionActive = true
         val view = viewer ?: return
         if (!view.selectsText || currentFocus == searchInput) return
         mode.menu.add(Menu.NONE, MENU_TERM, 0, "Definir termo").setOnMenuItemClickListener {
@@ -536,7 +747,10 @@ class ReaderActivity : Activity(), ReaderHost {
     private fun reloadGlossary() {
         val item = current ?: return
         terms = database.termsFor(item.id)
-        viewer?.setGlossary(terms) { showTerm(it) }
+        viewer?.setGlossary(terms) {
+            lastTermTap = android.os.SystemClock.uptimeMillis()
+            showTerm(it)
+        }
     }
 
     /** Cartão da definição, aberto ao tocar numa palavra sublinhada. */
@@ -710,5 +924,7 @@ class ReaderActivity : Activity(), ReaderHost {
         const val EXTRA_POSITION = "position"
         private const val MENU_ANNOTATE = 0x414e
         private const val MENU_TERM = 0x5445
+        /** Espera curta depois do toque, para saber se ele caiu num termo do glossário. */
+        private const val TERM_TAP_WINDOW = 120L
     }
 }

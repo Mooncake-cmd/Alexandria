@@ -107,4 +107,44 @@ class ShelfPreviewTest {
         (find(root) { it is ReadingRuler } as ReadingRuler).revealHandle()
         save(root, File(dir, "foco-alca.png"))
     }
+
+    @Test
+    fun chromePreview() {
+        val dir = File(System.getenv("SHELF_PREVIEW") ?: "")
+        assumeTrue(dir.isDirectory)
+        context.deleteDatabase("alexandria.db")
+        context.getSharedPreferences("reader", Context.MODE_PRIVATE).edit().clear().commit()
+        val comic = File(context.cacheDir, "Quadrinho de exemplo.cbz")
+        java.util.zip.ZipOutputStream(comic.outputStream()).use { zip ->
+            for (name in listOf("lusiadas.png", "verne.png")) {
+                zip.putNextEntry(java.util.zip.ZipEntry(name))
+                File(dir, name).inputStream().use { it.copyTo(zip) }
+                zip.closeEntry()
+            }
+        }
+        val id = LibraryDatabase(context).use { it.add(comic.name, android.net.Uri.fromFile(comic).toString(), "cbz")!! }
+        val controller = Robolectric.buildActivity(
+            ReaderActivity::class.java,
+            android.content.Intent(context, ReaderActivity::class.java).putExtra(ReaderActivity.EXTRA_ITEM_ID, id)
+        ).setup().visible()
+        val activity = controller.get()
+        val deadline = System.currentTimeMillis() + 4_000
+        while (System.currentTimeMillis() < deadline) {
+            Thread.sleep(50)
+            shadowOf(Looper.getMainLooper()).idle()
+        }
+        val root = activity.window.decorView
+        save(root, File(dir, "limpa.png"))
+        val page = find(root) { it is ZoomPageView }!!
+        val location = IntArray(2)
+        page.getLocationInWindow(location)
+        val x = location[0] + page.width / 2f
+        val y = location[1] + page.height / 2f
+        val t = android.os.SystemClock.uptimeMillis()
+        activity.dispatchTouchEvent(android.view.MotionEvent.obtain(t, t, android.view.MotionEvent.ACTION_DOWN, x, y, 0))
+        activity.dispatchTouchEvent(android.view.MotionEvent.obtain(t, t + 40, android.view.MotionEvent.ACTION_UP, x, y, 0))
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(700))
+        save(root, File(dir, "controles.png"))
+        controller.pause().stop().destroy()
+    }
 }
