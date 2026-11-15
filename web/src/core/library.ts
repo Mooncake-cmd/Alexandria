@@ -52,3 +52,11 @@ function decodePath(value: string): string {
     return value
   }
 }
+
+/** Nome do livro sem a extensão conhecida ("Dom Casmurro.epub" → "Dom Casmurro"). */
+export function displayTitle(name: string): string {
+  const dot = name.lastIndexOf('.')
+  if (dot <= 0) return name
+  const extension = name.slice(dot + 1).toLowerCase()
+  return ['pdf', 'epub', 'mobi', 'azw', 'azw3', 'djvu', 'djv', 'docx', 'txt', 'cbz', 'cbr'].includes(extension) ? name.slice(0, dot) : name
+}

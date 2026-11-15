@@ -2,7 +2,7 @@
   "name": "alexandria-web",
   "private": true,
   "license": "AGPL-3.0-or-later",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Alexandria no navegador: leitor de livros que funciona sem servidor e sem internet.",
   "type": "module",
   "scripts": {
@@ -17,6 +17,7 @@
   },
   "devDependencies": {
     "@preact/preset-vite": "2.10.1",
+    "fake-indexeddb": "6.0.1",
     "jsdom": "26.1.0",
     "typescript": "5.8.3",
     "vite": "6.4.6",

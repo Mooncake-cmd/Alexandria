@@ -2,7 +2,7 @@
 
 > Documento de planejamento e acompanhamento. Base: app Android 0.15.0 (≈9.200 linhas de Kotlin, 20 arquivos de teste).
 >
-> **Situação:** Etapas 0 e 1 prontas (base do site, publicação automática, regras do app portadas com testes).
+> **Situação:** Etapas 0, 1 e 2 prontas (base do site, regras do app com testes, biblioteca guardada no navegador com backup).
 
 ## 0. Decisões do dono do projeto
 
@@ -220,8 +220,8 @@ Portar para `web/src/core/`, com os testes equivalentes do Kotlin:
 `ComicArchive`, `EpubPackage`, leitor de DOCX.
 - **Pronto quando:** os testes de unidade portados passam e dão os mesmos resultados que os do app.
 
-### Etapa 2 — Armazenamento e biblioteca (M)
-- Banco (IndexedDB + OPFS), migrações, pedido de armazenamento persistente.
+### Etapa 2 — Armazenamento e biblioteca (M) ✅
+- Banco no IndexedDB (livros e capas como Blobs; o OPFS fica para depois, se o IndexedDB não der conta de livros muito grandes), migrações, pedido de armazenamento persistente.
 - Importar (vários, arrastar e soltar), sem duplicar, cartões, Lendo agora/Estante (ainda em lista), prateleiras,
   concluir, remover, liberar espaço, espaço usado.
 - **Backup e restauração** (arquivo `.zip` com dados, capas e, opcionalmente, os livros).
