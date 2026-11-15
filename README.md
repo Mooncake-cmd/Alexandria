@@ -5,6 +5,9 @@
 **Plataforma:** Android 6.0 ou superior (API 23+)  
 **Idioma da interface:** Português (Brasil)
 
+> **Versão web em construção:** a pasta [`web/`](web) tem o Alexandria para navegador (computador), publicado em
+> https://mooncake-cmd.github.io/Alexandria/. Plano e andamento: [`docs/PLANO-VERSAO-WEB.md`](docs/PLANO-VERSAO-WEB.md).
+
 ## O que esta versão contém
 
 - Aplicativo Android nativo em Kotlin, sem dependências externas no APK.

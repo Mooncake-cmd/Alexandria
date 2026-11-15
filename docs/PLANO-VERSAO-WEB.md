@@ -1,7 +1,17 @@
 # Plano: Alexandria na web (GitHub Pages)
 
-> Documento de planejamento. Nada da versão web foi implementado ainda.
-> Base: app Android 0.15.0 (≈9.200 linhas de Kotlin, 20 arquivos de teste).
+> Documento de planejamento e acompanhamento. Base: app Android 0.15.0 (≈9.200 linhas de Kotlin, 20 arquivos de teste).
+>
+> **Situação:** Etapa 0 pronta (pasta `web/`, publicação automática). Demais etapas por fazer.
+
+## 0. Decisões do dono do projeto
+
+1. **Publicação automática**, sem precisar juntar ao `main`: a cada atualização da pasta `web/` no branch de
+   desenvolvimento (ou no `main`), o GitHub Actions testa, gera o site e o publica no branch `gh-pages`.
+2. **Foco no computador** (Chrome, Edge, Firefox; Safari no Mac). Mouse, teclado e trackpad em primeiro lugar;
+   telas de toque continuam funcionando, mas não são a prioridade. Ver seção 2.1.
+3. **Sem migração** da biblioteca do app para o site (a antiga Etapa 10 saiu do plano).
+4. **Licença sugerida para o Alexandria: AGPL-3.0-or-later** (seção 4.1), aguardando a escolha do dono.
 
 ## 1. Objetivo e princípios
 
@@ -26,14 +36,32 @@ Levar **todas as funcionalidades do app Android** para um site em
 |---|---|---|---|
 | Brilho | Controla o brilho da tela | Navegador não controla o brilho | "Brilho do app" vira só escurecimento (uma camada escura); pode ficar abaixo do mínimo do sistema, mas não acima do brilho atual |
 | Barras do sistema | Somem na tela limpa | API de tela cheia (Android: sim; iPhone: só com o site instalado na tela inicial) | Tela limpa completa no Android; no iPhone, só instalado |
-| "Abrir com" | Aparece na lista do Android | Só no computador (Chrome/Edge, site instalado) | No celular, abrir pelo botão Importar ou por "Compartilhar" |
-| "Compartilhar" | Aparece na lista | Android + Chrome com o site instalado (Web Share Target) | Não existe no iPhone |
+| "Abrir com" | Aparece na lista do Android | Computador: arrastar para a janela; com o site instalado (Chrome/Edge), "Abrir com" do sistema | Firefox e Safari: só importar ou arrastar |
+| "Compartilhar" | Aparece na lista | Não se aplica ao computador | — |
 | Liberar espaço | Apaga a cópia e, com permissão, o arquivo do celular | Apaga só a cópia guardada no site | O arquivo original do celular nunca é tocado |
 | Armazenamento | SQLite + pastas do app | IndexedDB + OPFS do navegador | Limpar dados do navegador apaga a biblioteca → backup |
 | iPhone/Safari | — | Safari apaga dados de sites **não instalados** após ~7 dias sem uso | No iPhone, instalar na tela inicial é obrigatório para uso contínuo |
 | Leitor de tela | O app detecta e deixa a alça da régua visível | Navegador não informa se há leitor de tela | Ajuste manual "Alça da régua sempre visível" |
 | Motores | Programas nativos (MuPDF, libmobi, DjVuLibre, EraComic) | Bibliotecas JavaScript/WebAssembly | Mesmos formatos, outras bibliotecas (seção 4) |
-| Sincronizar com o app | — | Não há servidor | Os dois não se sincronizam sozinhos; ver Fase 10 (exportar/importar) |
+| Sincronizar com o app | — | Não há servidor | Os dois não se sincronizam; não haverá migração (decisão 3) |
+
+### 2.1 Computador primeiro: como os gestos do app viram mouse e teclado
+
+| No app (toque) | No site (computador) |
+|---|---|
+| Toque duplo na borda direita/esquerda vira a página | Setas → e ←, Page Down/Up, espaço; clique duplo nas bordas; roda do mouse no modo páginas |
+| Rolagem com o dedo | Roda do mouse, trackpad, barra de rolagem, setas ↑ ↓ |
+| Pinça / toque duplo no meio = zoom | Ctrl + roda (e pinça no trackpad), Ctrl + "+"/"−"/"0", clique duplo no meio |
+| Arrastar a página com zoom | Arrastar com o mouse, roda (vertical) e Shift + roda (lateral) |
+| Toque no meio mostra/esconde controles (tela limpa) | Clique no meio; as barras também aparecem ao levar o mouse ao topo; tecla F ou F11 para tela cheia; Esc sai |
+| Toque longo num livro = opções | Clique com o botão direito (e um botão "⋯" no cartão) |
+| Toque longo numa palavra seleciona | Seleção normal com o mouse (clique duplo seleciona a palavra) + barra com Copiar, Definir termo e Anotar |
+| Tocar na régua mostra a alça | Passar o mouse sobre a régua mostra a alça; arrastar com o mouse; Alt + ↑/↓ move a régua |
+| Abrir com / Compartilhar | Arrastar arquivos para a janela; "Abrir com" do sistema quando o site está instalado (Chrome/Edge) |
+
+O layout aproveita telas largas: biblioteca em grade, abas numa barra lateral, texto numa coluna de largura
+confortável e painéis (sumário, busca, anotações, glossário) ao lado do texto em vez de por cima. Em janelas
+estreitas, volta a ficar como no celular (abas embaixo).
 
 ## 3. Arquitetura
 
@@ -67,7 +95,7 @@ web/
   tests/e2e/         Playwright
 ```
 
-O app Android continua em `app/`, sem mudanças (exceto a exportação da Fase 10).
+O app Android continua em `app/`, sem mudanças.
 
 ### 3.3 Dados (equivalente ao banco v7 do app)
 
@@ -105,9 +133,21 @@ Com versão de esquema e migrações (como o `onUpgrade` do app).
 As bibliotecas WebAssembly (DJVU, RAR) só são baixadas quando um livro desse formato é aberto, e depois ficam
 guardadas para uso offline.
 
-**Licenças:** a página de licenças do site lista todas, como em Ajustes do app. O DjVu.js é GPL-2.0: como o código
-do site é público no repositório, a obrigação de oferecer o código está cumprida, mas a licença do próprio
-Alexandria (ainda pendente, ver `PROJECT_STATUS.txt`) precisa ser compatível com GPL/AGPL.
+**Licenças:** a página de licenças do site lista todas, como em Ajustes do app. O DjVu.js é GPL-2.0 **ou posterior**
+(confirmado no `LICENSE.md` do projeto), então pode ser combinado com código GPL-3.0/AGPL-3.0.
+
+### 4.1 Licença sugerida para o Alexandria: AGPL-3.0-or-later
+
+- **Compatível com tudo o que já é usado**: os motores do app (EraPDF, EraMOBI, EraDjVu: AGPL-3.0; EraComic:
+  GPL-2.0-or-later), pdf.js (Apache-2.0), DjVu.js (GPL-2.0-or-later), foliate-js, fflate e libarchive.js (MIT/BSD)
+  e as fontes (SIL OFL, que ficam com a própria licença).
+- **Uma licença só para app e site**, a mesma dos motores principais: não há dúvida sobre misturar os códigos.
+- **O que ela permite e exige**: qualquer pessoa pode usar, estudar, modificar e redistribuir (inclusive vender),
+  desde que entregue o código-fonte com a mesma licença; quem oferecer uma versão modificada como serviço na
+  internet também precisa publicar o código.
+- **Alternativa**: GPL-3.0-or-later (igual, sem a cláusula de serviço na internet). Licenças permissivas (MIT,
+  Apache) não servem para o app, por causa dos motores AGPL.
+- Ao aprovar: arquivo `LICENSE` na raiz, aviso no README e nas telas de licenças do app e do site.
 
 ## 5. Lista completa de funcionalidades e como cada uma vai para a web
 
@@ -124,7 +164,7 @@ Cada linha é um item de verificação: a etapa só termina quando todos os iten
 | Prateleiras (mover, renomear, recolher) | Igual | 2 |
 | Marcar concluído / voltar para "Lendo agora", remover | Igual | 2 |
 | Liberar espaço mantendo na Estante; reimportar traz de volta | Igual (apaga a cópia guardada) | 2 |
-| Abrir com / Compartilhar | File Handling (computador) e Web Share Target (Android, instalado) | 9 |
+| Abrir com | Arrastar para a janela (2); "Abrir com" do sistema com o site instalado — File Handling, Chrome/Edge (9) | 2/9 |
 | Sequência "🔥 N dias seguidos" na biblioteca | Igual | 7 |
 | Estante de madeira (madeira, livros em pé em 3D, sombra, giro ao tocar, capa de couro) | Madeira em Canvas (mesmo gerador de veios); livros com CSS 3D; planta e globo | 8 |
 | Placas de latão que abrem/fecham e renomeiam | Igual | 8 |
@@ -165,11 +205,13 @@ Cada linha é um item de verificação: a etapa só termina quando todos os iten
 Cada etapa termina com: testes passando, site publicado (ou prévia), e um resumo para você testar no celular.
 Tamanho relativo: P (pequena), M (média), G (grande).
 
-### Etapa 0 — Base do site (P)
-- Projeto `web/` com Vite + TypeScript + Preact, ícone do farol, cores, abas com os mesmos ícones.
+### Etapa 0 — Base do site (P) ✅
+- Projeto `web/` com Vite + TypeScript + Preact, ícone do farol, cores e abas com os mesmos ícones do app
+  (barra lateral no computador, abas embaixo em janela estreita).
 - PWA: manifesto, service worker, funciona offline, instalável.
-- GitHub Actions: testa, gera e publica no Pages a cada atualização.
-- **Pronto quando:** o endereço do site abre a casca do app (abas vazias), instala no celular e abre sem internet.
+- GitHub Actions (`.github/workflows/web.yml`): testa, gera e publica no branch `gh-pages` a cada atualização.
+- Primeiro porte com testes: `ReadingTime` (formatação, cronômetro e `spreadRemoval`).
+- **Pronto quando:** o endereço do site abre a casca do app (abas vazias), instala no navegador e abre sem internet.
 
 ### Etapa 1 — Lógica portada com testes (M)
 Portar para `web/src/core/`, com os testes equivalentes do Kotlin:
@@ -220,15 +262,10 @@ Portar para `web/src/core/`, com os testes equivalentes do Kotlin:
 - **Pronto quando:** a prévia do site fica igual às imagens aprovadas da Estante do app.
 
 ### Etapa 9 — Acabamento de app (M)
-- "Abrir com" (computador) e "Compartilhar" (Android), atalhos de teclado, acessibilidade (rótulos, foco,
-  leitor de tela), desempenho com livros grandes, testes em Chrome/Samsung Internet (Android), Firefox,
-  Safari (iPhone instalado) e computador.
+- "Abrir com" do sistema (site instalado, Chrome/Edge), todos os atalhos de teclado, acessibilidade (rótulos,
+  foco visível, navegação só por teclado, leitor de tela), desempenho com livros grandes, testes em Chrome, Edge,
+  Firefox e Safari (Mac), em telas grandes e janelas estreitas.
 - **Pronto quando:** a lista completa da seção 5 está marcada.
-
-### Etapa 10 — Levar a biblioteca do app para o site (P, opcional)
-- No app Android: "Exportar biblioteca" (mesmo formato de backup do site).
-- No site: "Importar backup" traz livros, posições, anotações, glossário, tempo e Estante.
-- **Pronto quando:** uma biblioteca exportada do app aparece igual no site.
 
 ## 7. Como vai ser testado
 
@@ -236,7 +273,7 @@ Portar para `web/src/core/`, com os testes equivalentes do Kotlin:
 - **Testes de ponta a ponta** (Playwright, Chromium com emulação de celular): abrir cada amostra, virar página,
   zoom, régua, glossário, anotar, buscar, tempo, Estante, backup.
 - **Imagens de prévia** a cada etapa (como as da Estante e do modo foco), para você aprovar a aparência.
-- **Teste no seu celular** a cada etapa publicada: os gestos e a tela cheia só se confirmam num aparelho real.
+- **Teste no seu computador** a cada etapa publicada, no navegador que você usa.
 
 ## 8. Riscos e como reduzir
 
@@ -249,11 +286,8 @@ Portar para `web/src/core/`, com os testes equivalentes do Kotlin:
 | Bibliotecas de terceiros mudarem | Versões fixadas; cópia do foliate-js dentro do repositório |
 | Licenças | Página de licenças completa; definir a licença do Alexandria antes de publicar |
 
-## 9. Decisões que dependem do dono do projeto
+## 9. Pendências
 
-1. **Publicação**: o GitHub Pages publica a partir do branch principal (`main`). As etapas são feitas no branch de
-   desenvolvimento; para cada etapa aparecer no site é preciso juntá-la ao `main` (um pull request por etapa), ou
-   liberar a publicação a partir do branch de desenvolvimento.
-2. **Prioridade de aparelhos**: Android (Chrome) primeiro? iPhone e computador também precisam estar perfeitos?
-3. **Etapa 10** (levar a biblioteca do app para o site): fazer ou não.
-4. **Licença do Alexandria**: precisa ser compatível com GPL/AGPL por causa do DjVu.js (e, no app, dos motores).
+- **Licença**: aprovar a sugestão da seção 4.1 (ou escolher outra).
+- **Ativar o GitHub Pages uma vez**: em Settings → Pages → *Build and deployment* → Source: **Deploy from a branch**,
+  branch **gh-pages**, pasta **/ (root)**. Depois disso, cada atualização publica sozinha.
