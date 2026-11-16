@@ -4,6 +4,9 @@ import { isArchived, isFinished, type LibraryItem } from '../storage/library'
 import { useLibrary } from '../storage/useLibrary'
 import { ACCEPT, importFiles } from '../library/importBooks'
 import { BookCard } from '../library/BookCard'
+import { WoodenShelf } from '../library/WoodenShelf'
+import { renameShelf } from '../storage/library'
+import { promptDialog } from '../ui/dialogs'
 import { itemOptions } from '../library/itemOptions'
 import { ensureCovers } from '../library/covers'
 import { toast } from '../ui/dialogs'
@@ -15,6 +18,8 @@ import { formatReadingTime } from '../core/readingTime'
 
 /** Prateleiras abertas (como no app, começam fechadas); lembradas enquanto o site está aberto. */
 const openShelves = new Set<string>()
+/** Prateleiras abertas dentro da Estante (independentes das de "Lendo agora"). */
+const openEstante = new Set<string>()
 let estanteOpen = false
 
 export function openBook(item: LibraryItem) {
@@ -125,11 +130,33 @@ export function Library() {
             (finished.length === 0 ? (
               <p class="muted small">Nenhum livro concluído ainda. Ao chegar no fim de um livro, use "Concluir livro".</p>
             ) : (
-              grouped(finished)
+              <WoodenShelf
+                sections={[
+                  { title: null, books: finished.filter((i) => !i.shelf), open: true },
+                  ...[...new Set(finished.filter((i) => i.shelf).map((i) => i.shelf))].sort(shelfCompare).map((name) => ({
+                    title: name,
+                    books: finished.filter((i) => i.shelf === name),
+                    open: openEstante.has(name)
+                  }))
+                ]}
+                onOpen={openBook}
+                onOptions={(item) => itemOptions(item)}
+                onToggleShelf={(name) => {
+                  if (!openEstante.delete(name)) openEstante.add(name)
+                  redraw((n) => n + 1)
+                }}
+                onRenameShelf={async (name) => {
+                  const typed = await promptDialog('Renomear prateleira', 'Novo nome', name)
+                  if (!typed) return
+                  const target = await renameShelf(name, typed)
+                  if (openEstante.delete(name)) openEstante.add(target)
+                  if (openShelves.delete(name)) openShelves.add(target)
+                }}
+              />
             ))}
         </section>
       )}
-      {items.length > 0 && <p class="muted small hint">Clique num livro para abri-lo. Clique com o botão direito (ou em ⋯) para mover de prateleira, concluir ou remover.</p>}
+      {items.length > 0 && <p class="muted small hint">Clique num livro para abri-lo. Clique com o botão direito (ou em ⋯) para mover de prateleira, concluir, trocar a capa ou remover. Na Estante, o botão direito na placa renomeia a prateleira.</p>}
     </>
   )
 }

@@ -307,3 +307,45 @@ button.link { background: none; border: 0; padding: 0; color: var(--gold); font:
 .glossary summary { cursor: pointer; font-weight: 700; font-size: 14px; }
 .term-row { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
 .streak { display: inline-block; color: var(--gold); font-weight: 700; font-size: 13px; margin: 0 0 12px; text-decoration: none; }
+
+/* ---------- Estante de madeira ---------- */
+.wood-shelf { position: relative; margin: 8px 0 4px; border-radius: 6px; overflow: hidden; box-shadow: 0 8px 26px rgba(0, 0, 0, 0.28); user-select: none; }
+.wood-crown, .wood-plinth { height: 20px; background: var(--wood-board); background-color: #8a5a34; box-shadow: inset 0 7px 0 -6px rgba(255, 225, 180, 0.35), inset 0 -2px 0 rgba(20, 10, 4, 0.55); }
+.wood-plinth { height: 18px; }
+.wood-inner { position: relative; background: var(--wood-back); background-color: #3b2416; padding: 0 12px; }
+.wood-inner::before, .wood-inner::after { content: ''; position: absolute; top: 0; bottom: 0; width: 12px; background: var(--wood-frame); background-color: #6e4528; z-index: 2; }
+.wood-inner::before { left: 0; box-shadow: inset -3px 0 4px rgba(0, 0, 0, 0.35), inset 2px 0 0 rgba(255, 220, 170, 0.18); }
+.wood-inner::after { right: 0; box-shadow: inset 3px 0 4px rgba(0, 0, 0, 0.4); }
+.wood-row { position: relative; display: grid; align-items: end; justify-items: center; padding-top: 22px; }
+.wood-row::before { content: ''; position: absolute; inset: 0 0 auto; height: 30px; background: linear-gradient(rgba(0, 0, 0, 0.55), transparent); pointer-events: none; }
+.wood-row::after { content: ''; position: absolute; inset: auto 0 0; height: 26px; background: linear-gradient(transparent, rgba(0, 0, 0, 0.3)); pointer-events: none; }
+.wood-board { position: relative; height: 15px; margin: 0 -14px; background: var(--wood-board); background-color: #8a5a34; z-index: 3;
+  box-shadow: inset 0 5px 0 rgba(178, 124, 76, 0.85), inset 0 6px 0 rgba(255, 225, 180, 0.3), inset 0 -1px 0 rgba(20, 10, 4, 0.5), 0 6px 10px rgba(0, 0, 0, 0.35); }
+.wood-decor { display: flex; align-items: flex-end; justify-content: space-around; padding: 10px 6% 0; }
+.wood-decor img { height: 96%; width: auto; filter: drop-shadow(0 6px 6px rgba(0, 0, 0, 0.45)); position: relative; z-index: 1; }
+.wood-decor .decor-globe { height: 88%; }
+.wood-plate-row { position: relative; display: flex; justify-content: center; align-items: center; height: 44px; }
+.wood-plate { display: inline-flex; align-items: center; gap: 10px; height: 28px; padding: 0 22px; border-radius: 5px; border: 1px solid #6e4c1e; cursor: pointer;
+  background: linear-gradient(#ecce86, #c4984e 55%, #966c30); color: #3a2410; font: 700 13px Georgia, 'Noto Serif', serif; box-shadow: 2px 3px 6px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 245, 210, 0.6); }
+.wood-plate:hover { filter: brightness(1.06); }
+.wood-plate:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.plate-arrow { font-size: 10px; }
+.shelf-slot { position: relative; z-index: 1; display: flex; justify-content: center; }
+.shelf-slot::after { content: ''; position: absolute; bottom: -6px; left: 8%; right: -6%; height: 12px; background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.6), transparent 70%); z-index: -1; }
+.shelf-book { position: relative; display: block; padding: 0; border: 0; background: none; cursor: pointer; transform-origin: left center; transition: transform 0.25s ease; transform: perspective(900px) rotateY(0deg); }
+.shelf-book::before { content: ''; position: absolute; top: 8px; bottom: 0; left: 100%; width: 14px; background: linear-gradient(to right, rgba(0, 0, 0, 0.45), transparent); }
+.shelf-book:hover, .shelf-book:focus-visible { transform: perspective(900px) rotateY(-22deg); outline: none; }
+.shelf-book:focus-visible .book-cover { box-shadow: 0 0 0 3px #f5d58a; }
+.book-pages { position: absolute; top: 3px; bottom: 2px; right: -4px; width: 6px; border-radius: 0 2px 2px 0;
+  background: repeating-linear-gradient(#e2d6ba 0 1px, #cfc1a0 1px 2px); box-shadow: inset -3px 0 4px rgba(0, 0, 0, 0.3); }
+.book-cover { position: absolute; inset: 0; overflow: hidden; border-radius: 1px 3px 3px 1px; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45); background: #ddd; }
+.book-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.book-spine { position: absolute; top: 0; bottom: 0; left: 0; width: 11%; pointer-events: none;
+  background: linear-gradient(to right, rgba(0, 0, 0, 0.67), rgba(255, 255, 255, 0.16) 32%, rgba(0, 0, 0, 0.35) 55%, transparent); }
+.book-light { position: absolute; inset: 0; pointer-events: none; border-radius: 1px 3px 3px 1px;
+  background: linear-gradient(rgba(255, 245, 220, 0.13), transparent 40%, rgba(0, 0, 0, 0.27)), linear-gradient(to left, rgba(0, 0, 0, 0.3), transparent 6%); }
+.leather { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 14% 12%; text-align: center; color: #d6b26a; }
+.leather-frame { position: absolute; inset: 8% 8% 8% 11%; border: 1px solid #c9a45c; box-shadow: inset 0 0 0 3px transparent, inset 0 0 0 4px rgba(201, 164, 92, 0.75); }
+.leather-title { font: 700 1em Georgia, 'Noto Serif', serif; letter-spacing: 0.04em; line-height: 1.12; overflow-wrap: normal; display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; position: relative; }
+.leather-ornament { font-size: 10px; letter-spacing: 0.2em; position: relative; }
+.leather-format { position: absolute; bottom: 13%; font: 9px Georgia, serif; letter-spacing: 0.25em; opacity: 0.8; }

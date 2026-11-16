@@ -2,7 +2,7 @@
 
 > Documento de planejamento e acompanhamento. Base: app Android 0.15.0 (≈9.200 linhas de Kotlin, 20 arquivos de teste).
 >
-> **Situação:** Etapas 0 a 7 prontas (base do site, regras do app com testes, biblioteca com backup, leitores de todos os formatos, ferramentas do leitor, tempo e estatísticas).
+> **Situação:** Etapas 0 a 8 prontas (base do site, regras do app com testes, biblioteca com backup, leitores de todos os formatos, ferramentas do leitor, tempo e estatísticas, Estante de madeira). Falta a Etapa 9.
 
 ## 0. Decisões do dono do projeto
 
@@ -256,7 +256,7 @@ Portar para `web/src/core/`, com os testes equivalentes do Kotlin:
 - **Pronto quando:** os cenários de `GlossaryAndTimeTest`, `LibraryDatabaseTest` (tempo) e `MainActivityTest`
   têm equivalentes passando.
 
-### Etapa 8 — Estante de madeira e capas (M)
+### Etapa 8 — Estante de madeira e capas (M) ✅
 - Madeira gerada em Canvas, livros 3D com CSS (giro ao tocar), sombras, planta e globo, placas de latão,
   capa de couro, trocar/restaurar capa.
 - **Pronto quando:** a prévia do site fica igual às imagens aprovadas da Estante do app.

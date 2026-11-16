@@ -113,3 +113,31 @@ function bitmapCanvas(drawn: HTMLCanvasElement | ImageBitmap): HTMLCanvasElement
   canvas.getContext('2d')!.drawImage(drawn, 0, 0)
   return canvas
 }
+
+/** Tamanho da capa escolhida pelo leitor: a proporção (2:3) dos livros na Estante. */
+export const CUSTOM_COVER = { width: 400, height: 600 }
+
+/**
+ * Prepara uma imagem escolhida pelo leitor como capa: endireitada pela orientação da foto (o
+ * navegador já aplica o EXIF), cortada no centro em 2:3 e reduzida. null se não der para ler.
+ */
+export async function customCover(file: Blob): Promise<Blob | null> {
+  let bitmap: ImageBitmap
+  try {
+    bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' })
+  } catch {
+    return null
+  }
+  const { width, height } = CUSTOM_COVER
+  const scale = Math.max(width / bitmap.width, height / bitmap.height)
+  const cropW = Math.min(bitmap.width, width / scale)
+  const cropH = Math.min(bitmap.height, height / scale)
+  const canvas = new OffscreenCanvas(width, height)
+  const context = canvas.getContext('2d')!
+  context.fillStyle = '#fff'
+  context.fillRect(0, 0, width, height)
+  context.imageSmoothingQuality = 'high'
+  context.drawImage(bitmap, (bitmap.width - cropW) / 2, (bitmap.height - cropH) / 2, cropW, cropH, 0, 0, width, height)
+  bitmap.close()
+  return canvas.convertToBlob({ type: 'image/jpeg', quality: 0.86 })
+}

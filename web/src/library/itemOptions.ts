@@ -1,6 +1,7 @@
 import { displayTitle, resolveShelf } from '../core/library'
 import { formatReadingTime } from '../core/readingTime'
-import { archive, clearBookTime, isArchived, isFinished, removeItem, setFinished, setShelf, shelves, type LibraryItem } from '../storage/library'
+import { archive, clearBookTime, hasCustomCover, isArchived, isFinished, removeItem, setCover, setFinished, setShelf, shelves, type LibraryItem } from '../storage/library'
+import { customCover } from './covers'
 import { confirmDialog, menuDialog, promptDialog, toast } from '../ui/dialogs'
 import { statusText } from './BookCard'
 
@@ -15,6 +16,8 @@ export async function itemOptions(item: LibraryItem, extra: { label: string; run
     })
   }
   options.push(...extra)
+  options.push({ label: 'Trocar capa…', run: () => chooseCover(item) })
+  if (await hasCustomCover(item.id)) options.push({ label: 'Restaurar capa original', run: () => setCover(item.id, null, true) })
   if (item.readingSeconds > 0) options.push({ label: `Apagar tempo de leitura (⏱ ${formatReadingTime(item.readingSeconds)})…`, run: () => confirmClearBookTime(item) })
   if (isFinished(item) && !isArchived(item)) options.push({ label: 'Liberar espaço (manter na Estante)…', run: () => confirmFreeSpace(item) })
   options.push({ label: isArchived(item) ? 'Remover da Estante' : 'Remover da biblioteca', run: () => confirmRemove(item) })
@@ -66,4 +69,20 @@ async function confirmRemove(item: LibraryItem) {
     true
   )
   if (ok) await removeItem(item.id)
+}
+
+/** Escolhe uma imagem do computador como capa do livro. */
+function chooseCover(item: LibraryItem) {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = 'image/*'
+  input.onchange = async () => {
+    const file = input.files?.[0]
+    if (!file) return
+    const cover = await customCover(file)
+    if (!cover) return toast('Não foi possível usar essa imagem como capa.')
+    await setCover(item.id, cover, true)
+    toast(`Capa de "${displayTitle(item.name)}" trocada.`)
+  }
+  input.click()
 }
