@@ -2,7 +2,7 @@
 
 > Documento de planejamento e acompanhamento. Base: app Android 0.15.0 (≈9.200 linhas de Kotlin, 20 arquivos de teste).
 >
-> **Situação:** Etapas 0 a 6 prontas (base do site, regras do app com testes, biblioteca com backup, leitores de todos os formatos, ferramentas do leitor).
+> **Situação:** Etapas 0 a 7 prontas (base do site, regras do app com testes, biblioteca com backup, leitores de todos os formatos, ferramentas do leitor, tempo e estatísticas).
 
 ## 0. Decisões do dono do projeto
 
@@ -250,7 +250,7 @@ Portar para `web/src/core/`, com os testes equivalentes do Kotlin:
   busca com lista, anotações, glossário em todos os formatos.
 - **Pronto quando:** cada item da tabela 5.2 tem teste de ponta a ponta.
 
-### Etapa 7 — Tempo, estatísticas, Notas e Ajustes (M)
+### Etapa 7 — Tempo, estatísticas, Notas e Ajustes (M) ✅
 - Cronômetro com pausa, sequência, calendário, estatísticas, apagar tempo de um livro, limpar estatísticas,
   aba Notas, Ajustes e licenças.
 - **Pronto quando:** os cenários de `GlossaryAndTimeTest`, `LibraryDatabaseTest` (tempo) e `MainActivityTest`

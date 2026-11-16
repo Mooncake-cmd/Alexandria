@@ -10,6 +10,7 @@ import { confirmDialog } from '../ui/dialogs'
 import { menuDialog, toast } from '../ui/dialogs'
 import { ComfortPanel } from './ComfortPanel'
 import { Ruler } from './Ruler'
+import { useReadingClock } from './useReadingClock'
 import type { ReadingPrefs } from './prefs'
 
 export interface ChromeApi {
@@ -22,6 +23,8 @@ export interface ChromeApi {
   onTerm: (termId: number) => void
   /** Seleção dentro de um iframe (EPUB): texto e retângulo na tela, ou null. */
   selection: (text: string | null, rect?: DOMRect) => void
+  /** Tecla, clique ou rolagem dentro de um iframe: o cronômetro continua contando. */
+  interaction: () => void
 }
 
 interface Props {
@@ -39,6 +42,8 @@ interface Props {
   onFinish: (done: boolean) => void
   overlay?: VNode | null
   tools?: ReaderTools
+  /** Tempo de leitura do livro antes desta sessão. */
+  readingSeconds: number
   children: (api: ChromeApi) => ComponentChildren
 }
 
@@ -47,7 +52,8 @@ interface Props {
  * filtro, régua, painel de conforto e tela limpa (as barras ficam por cima do livro e somem; um
  * clique no meio mostra e esconde; Esc mostra; F põe em tela cheia).
  */
-export function ReaderChrome({ title, prefs, onPrefs, typography, menu, headerExtra, footer, finished, atEnd, onFinish, overlay, tools, children }: Props) {
+export function ReaderChrome({ title, prefs, onPrefs, typography, menu, headerExtra, footer, finished, atEnd, onFinish, overlay, tools, readingSeconds, children }: Props) {
+  const timer = useReadingClock(tools?.itemId ?? -1, readingSeconds)
   const [shown, setShown] = useState(!prefs.cleanScreen)
   const [panel, setPanelState] = useState<null | 'comfort' | 'search' | 'notes'>(null)
   const setPanel = (v: boolean) => setPanelState(v ? 'comfort' : null)
@@ -97,6 +103,7 @@ export function ReaderChrome({ title, prefs, onPrefs, typography, menu, headerEx
     cancelTap: () => clearTimeout(pendingTap.current),
     terms,
     onTerm: (termId) => showTerm(termId),
+    interaction: timer.interaction,
     selection: (text, rect) => {
       const box = body.current?.getBoundingClientRect()
       if (!text || !rect || !box) return setSelection(null)
@@ -175,7 +182,10 @@ export function ReaderChrome({ title, prefs, onPrefs, typography, menu, headerEx
     <div class={clean ? 'reader clean' : 'reader'}>
       <header class="reader-bar" hidden={!bars}>
         <a href="#/biblioteca" class="bar-button" aria-label="Voltar para a biblioteca">‹</a>
-        <div class="reader-title"><strong>{title}</strong></div>
+        <div class="reader-title">
+          <strong>{title}</strong>
+          <span class="reader-timer" aria-label="Tempo de leitura">{timer.label}</span>
+        </div>
         {headerExtra}
         {tools?.search && <button type="button" class="bar-button" aria-label="Buscar no livro" title="Buscar no livro (Ctrl + F)" onClick={() => setPanelState((p) => (p === 'search' ? null : 'search'))}>🔍</button>}
         {tools && <button type="button" class="bar-button" aria-label="Anotações e glossário" title="Anotações e glossário" onClick={() => setPanelState((p) => (p === 'notes' ? null : 'notes'))}>📝</button>}

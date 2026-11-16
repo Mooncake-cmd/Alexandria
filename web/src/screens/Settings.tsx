@@ -5,6 +5,17 @@ import { confirmDialog, toast } from '../ui/dialogs'
 const size = (bytes: number) =>
   bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1).replace('.', ',')} GB` : bytes >= 1e6 ? `${(bytes / 1e6).toFixed(1).replace('.', ',')} MB` : `${Math.round(bytes / 1e3)} KB`
 
+const LICENSES: [string, string][] = [
+  ['Alexandria — GNU AGPL 3.0 ou posterior', 'AGPL-3.0.txt'],
+  ['pdf.js (Mozilla) — Apache 2.0', 'pdfjs-Apache-2.0.txt'],
+  ['DjVu.js — GNU GPL 2.0 ou posterior', 'djvujs-GPL-2.0-or-later.txt'],
+  ['foliate-js (MOBI/AZW3) — MIT', 'foliate-js-MIT.txt'],
+  ['libarchive.js (CBR/RAR) — MIT', 'libarchive.js-MIT.txt'],
+  ['fflate (ZIP) — MIT', 'fflate-MIT.txt'],
+  ['Preact — MIT', 'preact-MIT.txt'],
+  ['Fonte Atkinson Hyperlegible — SIL OFL 1.1', 'OFL-1.1-Atkinson.txt']
+]
+
 export function Settings() {
   const [info, setInfo] = useState<{ usage: number; quota: number; persisted: boolean } | null>(null)
   const [withBooks, setWithBooks] = useState(true)
@@ -93,6 +104,13 @@ export function Settings() {
           <a href="https://github.com/Mooncake-cmd/Alexandria" rel="noopener">github.com/Mooncake-cmd/Alexandria</a>
         </dd>
       </dl>
+
+      <h2>Licenças de código aberto</h2>
+      <ul class="plain-list licenses">
+        {LICENSES.map(([name, file]) => (
+          <li key={file}><a href={`${import.meta.env.BASE_URL}licenses/${file}`} target="_blank" rel="noopener">{name}</a></li>
+        ))}
+      </ul>
 
       <h2>Backup</h2>
       <p class="muted">Limpar os dados do navegador apaga a biblioteca. Faça backups de vez em quando.</p>

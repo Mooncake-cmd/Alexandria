@@ -36,6 +36,7 @@ interface Props {
   terms?: GlossaryTerm[]
   onTerm?: (termId: number) => void
   onSelection?: (text: string | null, rect?: DOMRect) => void
+  onInteraction?: () => void
 }
 
 /**
@@ -43,7 +44,7 @@ interface Props {
  * internet), com o CSS de leitura do conforto visual. Modo páginas com linhas inteiras e
  * passagem automática de capítulo; rolagem contínua dentro do capítulo.
  */
-export function EpubReader({ book, paged, textSize, comfort, start, onPosition, onTextSize, handle, onTap, onDoubleTap, terms = [], onTerm, onSelection }: Props) {
+export function EpubReader({ book, paged, textSize, comfort, start, onPosition, onTextSize, handle, onTap, onDoubleTap, terms = [], onTerm, onSelection, onInteraction }: Props) {
   const frame = useRef<HTMLIFrameElement>(null)
   const [chapter, setChapter] = useState(() => Math.min(book.chapterCount - 1, Math.floor((start * book.chapterCount) / 10000 + 1e-6)))
   const [src, setSrc] = useState<string | null>(null)
@@ -235,8 +236,8 @@ export function EpubReader({ book, paged, textSize, comfort, start, onPosition, 
       wheel.current.last = now
     }
   }
-  const handlers = useRef({ onKey, onWheel, onTap, onDoubleTap, onTerm, onSelection })
-  handlers.current = { onKey, onWheel, onTap, onDoubleTap, onTerm, onSelection }
+  const handlers = useRef({ onKey, onWheel, onTap, onDoubleTap, onTerm, onSelection, onInteraction })
+  handlers.current = { onKey, onWheel, onTap, onDoubleTap, onTerm, onSelection, onInteraction }
   useEffect(() => {
     const key = (e: KeyboardEvent) => handlers.current.onKey(e)
     window.addEventListener('keydown', key)
@@ -279,6 +280,7 @@ export function EpubReader({ book, paged, textSize, comfort, start, onPosition, 
       handlers.current.onSelection?.(text, new DOMRect(r.left + frameBox.left, r.top + frameBox.top, r.width, r.height))
     })
 
+    for (const type of ['keydown', 'pointerdown', 'wheel', 'scroll']) w.addEventListener(type, () => handlers.current.onInteraction?.(), { capture: true, passive: true })
     w.addEventListener('keydown', (e) => handlers.current.onKey(e))
     w.addEventListener('wheel', (e) => handlers.current.onWheel(e), { passive: false })
     w.addEventListener('scroll', () => requestAnimationFrame(report), { passive: true })

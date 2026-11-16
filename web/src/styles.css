@@ -282,3 +282,28 @@ button.link { background: none; border: 0; padding: 0; color: var(--gold); font:
 .selection-bar { position: absolute; z-index: 40; display: flex; gap: 2px; background: var(--ink); border-radius: 10px; padding: 3px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3); transform: translate(-50%, 8px); }
 .selection-bar button { background: none; border: 0; color: #fff; font-size: 13px; padding: 7px 10px; border-radius: 8px; cursor: pointer; white-space: nowrap; }
 .selection-bar button:hover { background: rgba(255, 255, 255, 0.12); }
+.reader-timer { display: block; color: #cacfd6; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---------- estatísticas e notas ---------- */
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 9px; margin: 10px 0; }
+.tile { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; display: flex; flex-direction: column; gap: 2px; }
+.tile strong { font-size: 26px; }
+.tile span { color: var(--muted); font-size: 12px; }
+.calendar { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px; max-width: 420px; margin-top: 10px; }
+.calendar-title { margin: 0 0 8px 4px; font-weight: 700; font-size: 14px; }
+.calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; text-align: center; }
+.calendar-head { color: var(--muted); font-size: 11px; font-weight: 700; }
+.calendar-day { display: flex; align-items: center; justify-content: center; height: 34px; font-size: 12px; border-radius: 50%; }
+.calendar-day.read { background: var(--gold); color: #fff; }
+.calendar-day.today { box-shadow: inset 0 0 0 2px var(--ink); }
+.calendar-day.future { color: #bebebe; }
+.clear-stats { margin: 14px 0 4px; display: inline-block; }
+.plain-list { list-style: none; padding: 0; margin: 4px 0; font-size: 14px; display: flex; flex-direction: column; gap: 4px; }
+.list-button { background: none; border: 0; padding: 6px 0; color: var(--text); font-size: 14px; cursor: pointer; text-align: left; }
+.list-button:hover { color: var(--gold); text-decoration: underline; }
+.book-heading { font-size: 15px; margin: 18px 0 6px; }
+.note-card { position: relative; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 40px 12px 12px; }
+.glossary { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; margin: 6px 0; }
+.glossary summary { cursor: pointer; font-weight: 700; font-size: 14px; }
+.term-row { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.streak { display: inline-block; color: var(--gold); font-weight: 700; font-size: 13px; margin: 0 0 12px; text-decoration: none; }

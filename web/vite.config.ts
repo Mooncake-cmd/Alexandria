@@ -56,7 +56,7 @@ export default defineConfig({
       workbox: {
         // Todo o site fica guardado para funcionar sem internet.
         globPatterns: ['**/*.{js,mjs,css,html,png,svg,woff2,webmanifest}'],
-        globIgnores: ['vendor/**'],
+        globIgnores: ['vendor/**', 'licenses/**'],
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         navigateFallback: 'index.html',
         // Arquivos das bibliotecas de leitura: guardados na primeira vez que um livro precisa deles.

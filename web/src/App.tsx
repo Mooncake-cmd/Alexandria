@@ -10,11 +10,12 @@ import { Reader } from './screens/Reader'
 import { importFiles } from './library/importBooks'
 
 /** Rota pelo endereço: #/notas, #/ler/12… Recarregar a página volta para o mesmo lugar. */
-function currentRoute(): { section: string; bookId: number | null } {
+function currentRoute(): { section: string; bookId: number | null; position: number | null } {
   const path = location.hash.replace(/^#\/?/, '')
-  const reading = /^ler\/(\d+)$/.exec(path)
-  if (reading) return { section: 'ler', bookId: Number(reading[1]) }
-  return { section: SECTIONS.some((s) => s.id === path) ? path : SECTIONS[0].id, bookId: null }
+  // #/ler/12 abre no ponto salvo; #/ler/12/4200 abre numa posição (uma anotação, por exemplo).
+  const reading = /^ler\/(\d+)(?:\/(\d+))?$/.exec(path)
+  if (reading) return { section: 'ler', bookId: Number(reading[1]), position: reading[2] !== undefined ? Number(reading[2]) : null }
+  return { section: SECTIONS.some((s) => s.id === path) ? path : SECTIONS[0].id, bookId: null, position: null }
 }
 
 export function App() {
@@ -68,7 +69,7 @@ export function App() {
   if (route.section === 'ler' && route.bookId !== null) {
     return (
       <>
-        <Reader bookId={route.bookId} />
+        <Reader key={`${route.bookId}/${route.position}`} bookId={route.bookId} startAt={route.position} />
         <DialogHost />
       </>
     )

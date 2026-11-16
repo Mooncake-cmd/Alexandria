@@ -8,6 +8,10 @@ import { itemOptions } from '../library/itemOptions'
 import { ensureCovers } from '../library/covers'
 import { toast } from '../ui/dialogs'
 import { Empty } from './Empty'
+import { readingDays } from '../storage/library'
+import { useLibraryData } from '../storage/useLibrary'
+import { STREAK_MIN_SECONDS, streakSummary, today } from '../core/days'
+import { formatReadingTime } from '../core/readingTime'
 
 /** Prateleiras abertas (como no app, começam fechadas); lembradas enquanto o site está aberto. */
 const openShelves = new Set<string>()
@@ -64,10 +68,17 @@ export function Library() {
 
   const card = (item: LibraryItem) => <BookCard key={item.id} item={item} onOpen={() => openBook(item)} onOptions={() => itemOptions(item)} />
 
+  const days = useLibraryData<Record<string, number>>(readingDays, {})
+  const streak = streakSummary(days, today())
   return (
     <>
       <h2>Minha biblioteca</h2>
       <p class="muted">Seus documentos ficam guardados só neste navegador, no seu computador.</p>
+      {(streak.current > 0 || streak.todaySeconds > 0) && (
+        <a class="streak" href="#/estatisticas">
+          🔥 {streak.current === 1 ? '1 dia seguido' : `${streak.current} dias seguidos`} · {streak.readToday ? 'hoje ✓' : `leia ${formatReadingTime(STREAK_MIN_SECONDS)} hoje para manter`}
+        </a>
+      )}
       <div class="import-row">
         <button class="primary" type="button" onClick={() => input.current?.click()}>＋ Importar documentos</button>
         <span class="muted small">ou arraste os arquivos para esta janela</span>

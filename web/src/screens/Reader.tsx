@@ -51,7 +51,7 @@ async function openPages(format: string, file: Blob): Promise<PageSource | null>
   return format === 'cbr' ? comics.openCbr(file) : comics.openCbz(file)
 }
 
-export function Reader({ bookId }: { bookId: number }) {
+export function Reader({ bookId, startAt = null }: { bookId: number; startAt?: number | null }) {
   const [state, setState] = useState<State>({ status: 'loading' })
 
   useEffect(() => {
@@ -60,8 +60,9 @@ export function Reader({ bookId }: { bookId: number }) {
     let reflow: ReflowBook | null = null
     let pages: PageSource | null = null
     ;(async () => {
-      const item = await findItem(bookId)
-      if (!item) return setState({ status: 'error', message: 'Documento não encontrado na biblioteca.' })
+      const found = await findItem(bookId)
+      if (!found) return setState({ status: 'error', message: 'Documento não encontrado na biblioteca.' })
+      const item = startAt !== null ? { ...found, position: startAt } : found
       if (!TEXT_FORMATS.has(item.format) && !REFLOW_FORMATS.has(item.format) && !PAGE_FORMATS.has(item.format)) return setState({ status: 'pending', item })
       const file = await bookFile(bookId)
       if (!file) return setState({ status: 'error', message: 'O arquivo deste livro não está guardado neste navegador. Importe-o de novo.' })
@@ -211,6 +212,7 @@ function TextBook({ item: initial, content, initialPrefs }: { item: LibraryItem;
       onPrefs={changePrefs}
       typography
       tools={tools}
+      readingSeconds={initial.readingSeconds}
       menu={[
         [prefs.paged ? 'Modo: rolagem contínua' : 'Modo: páginas (setas, roda do mouse ou clique duplo na borda)', () => changePrefs({ paged: !prefs.paged })],
         ['Letra menor', () => textSize(-1)],
@@ -276,6 +278,7 @@ function ReflowBookView({ item: initial, book, initialPrefs }: { item: LibraryIt
       onPrefs={changePrefs}
       typography
       tools={tools}
+      readingSeconds={initial.readingSeconds}
       menu={[
         ['Sumário', contents],
         [prefs.paged ? 'Modo: rolagem contínua' : 'Modo: páginas (setas, roda do mouse ou clique duplo na borda)', () => changePrefs({ paged: !prefs.paged })],
@@ -307,6 +310,7 @@ function ReflowBookView({ item: initial, book, initialPrefs }: { item: LibraryIt
           handle={(h) => (handle.current = h)}
           onTap={api.tap}
           onDoubleTap={api.cancelTap}
+          onInteraction={api.interaction}
           terms={api.terms}
           onTerm={api.onTerm}
           onSelection={api.selection}
@@ -350,6 +354,7 @@ function PageBookView({ item: initial, source, initialPrefs }: { item: LibraryIt
       onPrefs={changePrefs}
       typography={false}
       tools={tools}
+      readingSeconds={initial.readingSeconds}
       menu={[
         ['Ir para a página…', askPage],
         [prefs.paged ? 'Modo: rolagem contínua' : 'Modo: páginas (página inteira na tela)', () => changePrefs({ paged: !prefs.paged })],
