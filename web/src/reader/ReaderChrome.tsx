@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from 'preact/hooks'
 import type { ComponentChildren, VNode } from 'preact'
 import { dimAlpha, overlayColor, warmColor } from '../core/comfort'
-import { getPref, setPref, termsFor } from '../storage/library'
+import { addBookmark, bookmarksFor, getPref, removeBookmark, renameBookmark, setPref, termsFor } from '../storage/library'
+import { indexOnScreen, onScreen, type Bookmark } from '../core/bookmarks'
+import { BookmarkBar, BookmarkCorner, BookmarkList } from './Bookmarks'
+import type { NoteContent } from './notes'
+import { noteDialog, promptDialog } from '../ui/dialogs'
 import { useLibraryData } from '../storage/useLibrary'
 import type { GlossaryTerm } from '../core/glossary'
 import { annotate, defineTerm, NotesPanel, SearchPanel, type ReaderTools } from './ToolsPanel'
@@ -25,6 +29,10 @@ export interface ChromeApi {
   selection: (text: string | null, rect?: DOMRect) => void
   /** Tecla, clique ou rolagem dentro de um iframe: o cronômetro continua contando. */
   interaction: () => void
+  /** Nota de rodapé (EPUB/MOBI) numa janela; [goTo] mostra a nota no lugar. */
+  note: (title: string, note: NoteContent, goTo: (() => void) | null) => void
+  /** O livro pulou por um link: oferece "↩ Voltar" para [returnTo] (posição precisa). */
+  jump: (returnTo: number) => void
 }
 
 interface Props {
@@ -63,6 +71,79 @@ export function ReaderChrome({ title, prefs, onPrefs, typography, menu, headerEx
   const pendingTap = useRef(0)
   const clean = prefs.cleanScreen
 
+  // ---------- marcadores ----------
+  const marks = useLibraryData<Bookmark[]>(() => (tools ? bookmarksFor(tools.itemId) : Promise.resolve([])), [], [tools?.itemId])
+  const [markMode, setMarkMode] = useState(false)
+  const [markId, setMarkId] = useState<number | null>(null)
+  const [listOpen, setListOpen] = useState(false)
+  const [snack, setSnack] = useState<{ text: string; action?: { label: string; run: () => void } } | null>(null)
+  const snackTimer = useRef(0)
+  const [returnTo, setReturnTo] = useState<number | null>(null)
+  const here = tools ? indexOnScreen(marks, tools.exact(), tools.span()) : -1
+  const markIndex = marks.findIndex((m) => m.id === markId)
+  // Andando pelo livro com a barra aberta, "1 de 3" segue o marcador da tela.
+  useEffect(() => {
+    if (markMode && here >= 0 && marks[here].id !== markId) setMarkId(marks[here].id)
+    if (markMode && !marks.length) setMarkMode(false)
+  })
+
+  const showSnack = (text: string, action?: { label: string; run: () => void }) => {
+    clearTimeout(snackTimer.current)
+    setSnack({ text, action })
+    snackTimer.current = window.setTimeout(() => setSnack(null), 4500)
+  }
+  const renameMark = async (mark: Bookmark, reopen = false) => {
+    const name = await promptDialog('Nome do marcador', 'Nome', mark.name)
+    if (name) await renameBookmark(mark.id, name)
+    if (reopen) setListOpen(true)
+  }
+  /** Clique no canto (ou tecla B): marca a página da tela, ou desmarca se ela já tem marcador. */
+  const toggleBookmark = async () => {
+    if (!tools) return
+    const top = tools.exact()
+    const span = tools.span()
+    const on = marks.filter((m) => onScreen(m.position, top, span))
+    if (on.length) {
+      for (const m of on) await removeBookmark(m.id)
+      showSnack(`Marcador "${on[0].name}" removido`)
+    } else {
+      const mark = await addBookmark(tools.itemId, top)
+      showSnack(`Adicionado marcador "${mark.name}"`, { label: 'MUDAR', run: () => renameMark(mark) })
+    }
+  }
+  const openMark = (index: number) => {
+    const mark = marks[index]
+    if (!mark || !tools) return
+    setListOpen(false)
+    setSnack(null)
+    setMarkId(mark.id)
+    setMarkMode(true)
+    tools.goToExact(mark.position)
+  }
+  const prevMark = () => (markIndex >= 0 ? markIndex - 1 : marks.map((m) => m.position < (tools?.exact() ?? 0)).lastIndexOf(true))
+  const nextMark = () => {
+    if (markIndex >= 0) return markIndex + 1 < marks.length ? markIndex + 1 : -1
+    const top = tools?.exact() ?? 0
+    return marks.findIndex((m) => m.position > top)
+  }
+  const markOptions = async (mark: Bookmark) => {
+    setListOpen(false)
+    const choice = await menuDialog(mark.name, ['Editar nome', 'Excluir'])
+    if (choice === 0) return renameMark(mark, true)
+    if (choice === 1) {
+      await removeBookmark(mark.id)
+      toast(`"${mark.name}" excluído.`)
+    }
+    setListOpen(true)
+  }
+  const goBack = () => {
+    if (returnTo === null || !tools) return
+    setReturnTo(null)
+    tools.goToExact(returnTo)
+  }
+  const shortcuts = useRef({ toggleBookmark })
+  shortcuts.current = { toggleBookmark }
+
   useEffect(() => {
     if (!clean) return
     getPref<boolean>('cleanHint').then((seen) => {
@@ -86,6 +167,10 @@ export function ReaderChrome({ title, prefs, onPrefs, typography, menu, headerEx
         setPanelState('search')
         return
       }
+      if ((e.key === 'b' || e.key === 'B') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        shortcuts.current.toggleBookmark()
+        return
+      }
       if (e.key === 'Escape' && clean && !shown) setShown(true)
       else if ((e.key === 'f' || e.key === 'F') && !e.ctrlKey && !e.metaKey && !e.altKey) toggleFullscreen()
     }
@@ -103,6 +188,15 @@ export function ReaderChrome({ title, prefs, onPrefs, typography, menu, headerEx
     cancelTap: () => clearTimeout(pendingTap.current),
     terms,
     onTerm: (termId) => showTerm(termId),
+    note: async (title, note, goTo) => {
+      clearTimeout(pendingTap.current)
+      const go = await noteDialog(title, note.html, goTo ? 'Ir para a nota' : null)
+      if (go && goTo) goTo()
+    },
+    jump: (position) => {
+      clearTimeout(pendingTap.current)
+      setReturnTo(position)
+    },
     interaction: timer.interaction,
     selection: (text, rect) => {
       const box = body.current?.getBoundingClientRect()
@@ -188,6 +282,7 @@ export function ReaderChrome({ title, prefs, onPrefs, typography, menu, headerEx
         </div>
         {headerExtra}
         {tools?.search && <button type="button" class="bar-button" aria-label="Buscar no livro" title="Buscar no livro (Ctrl + F)" onClick={() => setPanelState((p) => (p === 'search' ? null : 'search'))}>🔍</button>}
+        {tools && <button type="button" class="bar-button" aria-label="Marcadores" title="Marcadores" onClick={() => setListOpen(true)}>🔖</button>}
         {tools && <button type="button" class="bar-button" aria-label="Anotações e glossário" title="Anotações e glossário" onClick={() => setPanelState((p) => (p === 'notes' ? null : 'notes'))}>📝</button>}
         <button type="button" class="bar-button" aria-label="Conforto visual" title="Conforto visual" onClick={() => setPanelState((p) => (p === 'comfort' ? null : 'comfort'))}>Aa</button>
         <button type="button" class="bar-button" aria-label="Mais opções" onClick={openMenu}>⋮</button>
@@ -220,6 +315,7 @@ export function ReaderChrome({ title, prefs, onPrefs, typography, menu, headerEx
               }}>Anotar</button>
             </div>
           )}
+          {tools && <BookmarkCorner marked={here >= 0} onToggle={toggleBookmark} />}
           {prefs.ruler && <Ruler comfort={prefs.comfort} fraction={prefs.rulerY} alwaysShowHandle={false} onMove={(y) => onPrefs({ rulerY: y })} />}
           {overlay}
         </div>
@@ -237,14 +333,51 @@ export function ReaderChrome({ title, prefs, onPrefs, typography, menu, headerEx
         )}
       </div>
       <div class="reader-bottom">
+        {returnTo !== null && (
+          <div class="return-chip">
+            <button type="button" onClick={goBack}>↩ Voltar</button>
+            <button type="button" class="dismiss" aria-label="Dispensar o Voltar" onClick={() => setReturnTo(null)}>✕</button>
+          </div>
+        )}
+        {snack && (
+          <div class="snack" role="status">
+            <span>{snack.text}</span>
+            {snack.action && <button type="button" onClick={() => {
+              setSnack(null)
+              snack.action!.run()
+            }}>{snack.action.label}</button>}
+          </div>
+        )}
         {atEnd && !finished && (
           <div class="finish-banner">
             <span>Você chegou ao fim.</span>
             <button type="button" onClick={() => onFinish(true)}>🏁 Concluir livro</button>
           </div>
         )}
+        {markMode && (
+          <BookmarkBar
+            label={markIndex >= 0 ? `${markIndex + 1} de ${marks.length}` : `${marks.length} marcador(es)`}
+            canPrev={prevMark() >= 0}
+            canNext={nextMark() >= 0}
+            onExit={() => setMarkMode(false)}
+            onList={() => setListOpen(true)}
+            onStep={(d) => {
+              const target = d < 0 ? prevMark() : nextMark()
+              if (target >= 0) openMark(target)
+            }}
+          />
+        )}
         <footer class="reader-foot" hidden={!bars}>{footer}</footer>
       </div>
+      {listOpen && tools && (
+        <BookmarkList
+          marks={marks}
+          describe={(p) => tools.describe(p / tools.exactScale)}
+          onOpen={openMark}
+          onOptions={markOptions}
+          onClose={() => setListOpen(false)}
+        />
+      )}
       <div class="comfort-layer" style={{ background: overlayColor(prefs.comfort) }} aria-hidden="true" />
       <div class="comfort-layer" style={{ background: warmColor(prefs.comfort) }} aria-hidden="true" />
       <div class="comfort-layer" style={{ background: `rgba(0, 0, 0, ${dimAlpha(prefs.comfort)})` }} aria-hidden="true" />

@@ -4,9 +4,9 @@ import { notifyLibraryChanged } from './library'
 
 /**
  * Backup da biblioteca num arquivo .zip: dados (livros, posições, prateleiras, anotações,
- * glossário, tempo de leitura, preferências), capas e, se pedido, os próprios livros.
+ * glossário, marcadores, tempo de leitura, preferências), capas e, se pedido, os próprios livros.
  */
-const DATA_STORES: StoreName[] = ['items', 'notes', 'terms', 'readingDays', 'readingLog', 'prefs']
+const DATA_STORES: StoreName[] = ['items', 'notes', 'terms', 'readingDays', 'readingLog', 'prefs', 'bookmarks']
 const BLOB_STORES: StoreName[] = ['covers', 'files']
 export const BACKUP_FORMAT = 'alexandria-backup'
 export const BACKUP_VERSION = 1
@@ -71,7 +71,7 @@ export async function importBackup(file: Blob): Promise<RestoreSummary> {
           const meta = values[i] as { path: string; type: string }
           const bytes = entries[meta.path]
           if (bytes) await put(tx, store as StoreName, new Blob([bytes], { type: meta.type }), keys[i])
-        } else if (store === 'items' || store === 'notes' || store === 'terms') {
+        } else if (store === 'items' || store === 'notes' || store === 'terms' || store === 'bookmarks') {
           await put(tx, store, values[i]) // chave dentro do objeto (id)
         } else {
           await put(tx, store as StoreName, values[i], keys[i])

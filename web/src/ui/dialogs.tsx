@@ -9,6 +9,7 @@ type Dialog =
   | { kind: 'confirm'; title: string; message: string; ok: string; danger?: boolean; resolve: (v: boolean) => void }
   | { kind: 'prompt'; title: string; label: string; initial: string; suggestions: string[]; ok: string; resolve: (v: string | null) => void }
   | { kind: 'menu'; title: string; subtitle?: string; options: string[]; resolve: (v: number | null) => void }
+  | { kind: 'note'; title: string; html: string; go: string | null; resolve: (v: boolean) => void }
 
 let push: ((d: Dialog) => void) | null = null
 let toastPush: ((text: string) => void) | null = null
@@ -20,6 +21,12 @@ export const promptDialog = (title: string, label: string, initial = '', suggest
 export const menuDialog = (title: string, options: string[], subtitle?: string) =>
   new Promise<number | null>((resolve) => push?.({ kind: 'menu', title, subtitle, options, resolve }))
 export const toast = (text: string) => toastPush?.(text)
+/**
+ * Nota de rodapé numa janela. [html] já vem limpo (só itálico, negrito e quebras: ver notes.ts).
+ * true = o leitor pediu [go] ("Ir para a nota").
+ */
+export const noteDialog = (title: string, html: string, go: string | null) =>
+  new Promise<boolean>((resolve) => push?.({ kind: 'note', title, html, go, resolve }))
 
 export function DialogHost() {
   const [queue, setQueue] = useState<Dialog[]>([])
@@ -48,7 +55,7 @@ export function DialogHost() {
   )
 }
 
-function Modal({ title, subtitle, children, onCancel }: { title: string; subtitle?: string; children: ComponentChildren; onCancel: () => void }) {
+export function Modal({ title, subtitle, children, onCancel }: { title: string; subtitle?: string; children: ComponentChildren; onCancel: () => void }) {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null
@@ -84,6 +91,21 @@ function DialogView({ dialog, close }: { dialog: Dialog; close: () => void }) {
         <div class="modal-actions">
           <button type="button" onClick={() => answer(false)}>Cancelar</button>
           <button type="button" class={dialog.danger ? 'primary-action danger' : 'primary-action'} onClick={() => answer(true)}>{dialog.ok}</button>
+        </div>
+      </Modal>
+    )
+  }
+  if (dialog.kind === 'note') {
+    const answer = (v: boolean) => {
+      close()
+      dialog.resolve(v)
+    }
+    return (
+      <Modal title={dialog.title} onCancel={() => answer(false)}>
+        <div class="modal-text note-text" dangerouslySetInnerHTML={{ __html: dialog.html }} />
+        <div class="modal-actions">
+          {dialog.go && <button type="button" onClick={() => answer(true)}>{dialog.go}</button>}
+          <button type="button" class="primary-action" onClick={() => answer(false)}>Fechar</button>
         </div>
       </Modal>
     )

@@ -1,3 +1,4 @@
+import { EXACT_SCALE } from '../core/bookmarks'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks'
 import { afterBackDelta, alignDelta, maskStart, nextDelta, turnDirection } from '../core/pages'
 import { FONTS, LINE_WIDTHS, MARGINS, THEMES, hex, type Comfort } from '../core/comfort'
@@ -14,6 +15,10 @@ const WIN_BOTTOM = 24
 
 export interface TextReaderHandle {
   fraction: () => number
+  /** Posição precisa (0 a 1.000.000) e quanto dela cabe numa tela: marcadores. */
+  exact: () => number
+  span: () => number
+  goToExact: (value: number) => void
   goTo: (fraction: number) => void
   search: (term: string) => SearchHit[]
   showHit: (hit: SearchHit, term: string) => void
@@ -54,10 +59,15 @@ export function TextReader({ content, paged, textSize, comfort, start, onPositio
   /** Bloco na linha de leitura e quanto dele já passou: fração de 0 a 10000 (como o app). */
   const fraction = useCallback((): number => {
     const s = scroller.current
-    const list = blocks.current
-    if (!s || !list.length) return 0
+    if (!s || !blocks.current.length) return 0
     if (atEnd()) return 10000
-    const top = s.getBoundingClientRect().top + WIN_TOP
+    return Math.min(10000, Math.max(0, Math.round(fractionAt(s.getBoundingClientRect().top + WIN_TOP) * 10000)))
+  }, [])
+
+  /** Fração do texto (0 a 1) na altura [top] da tela. */
+  const fractionAt = (top: number): number => {
+    const list = blocks.current
+    if (!list.length) return 0
     // Busca binária pelo bloco que contém a linha de leitura.
     let lo = 0
     let hi = list.length - 1
@@ -68,8 +78,22 @@ export function TextReader({ content, paged, textSize, comfort, start, onPositio
     }
     const r = list[lo].getBoundingClientRect()
     const passed = r.height > 0 ? Math.min(1, Math.max(0, (top - r.top) / r.height)) : 0
-    return Math.min(10000, Math.max(0, Math.round(((lo + passed) / list.length) * 10000)))
-  }, [])
+    return Math.min(1, Math.max(0, (lo + passed) / list.length))
+  }
+  const exact = (): number => {
+    const s = scroller.current
+    if (!s || !blocks.current.length) return 0
+    if (atEnd()) return 10000 * EXACT_SCALE
+    return Math.round(fractionAt(s.getBoundingClientRect().top + WIN_TOP) * 10000 * EXACT_SCALE)
+  }
+  const span = (): number => {
+    const s = scroller.current
+    if (!s || !blocks.current.length) return 1
+    const box = s.getBoundingClientRect()
+    const top = fractionAt(box.top + WIN_TOP)
+    const bottom = fractionAt(box.top + winBottom())
+    return Math.max(1, Math.round((bottom - top) * 10000 * EXACT_SCALE))
+  }
 
   const updateMask = useCallback(() => {
     const s = scroller.current
@@ -210,7 +234,7 @@ export function TextReader({ content, paged, textSize, comfort, start, onPositio
     setHighlight(window, 'alx-search-current', [])
   }
 
-  handle?.({ fraction, goTo: (f) => restore(f), search, showHit, clearSearch })
+  handle?.({ fraction, exact, span, goToExact: (v) => restore(v / EXACT_SCALE), goTo: (f) => restore(f), search, showHit, clearSearch })
 
   // Abre na posição salva; muda de modo ou de letra mantendo o ponto de leitura.
   const lastFraction = useRef(start)

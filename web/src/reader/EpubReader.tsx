@@ -3,7 +3,10 @@ import { epubCss, THEMES, hex, type Comfort } from '../core/comfort'
 import { turnDirection } from '../core/pages'
 import { atkinsonFontFaces } from './fonts'
 import { ensureSpacer, FRAME_TOP, isLastPage, maskTop, nextPage, previousPage, snapToLine } from './framePager'
-import type { ReflowBook } from './reflowBook'
+import type { LinkTarget, ReflowBook } from './reflowBook'
+import { linkLooksLikeNote, nearestLink, noteContent, type LinkHit, type NoteContent } from './notes'
+import { looksLikeNoteMark, noteTitle } from '../core/links'
+import { EXACT_SCALE } from '../core/bookmarks'
 import { markHtml, type GlossaryTerm } from '../core/glossary'
 import { searchRanges, setHighlight, textMap } from './textRanges'
 import { fold } from '../core/text'
@@ -12,6 +15,10 @@ import { DEFAULT_TEXT_SIZE, MAX_TEXT_SIZE, MIN_TEXT_SIZE } from './prefs'
 
 export interface EpubReaderHandle {
   position: () => number
+  /** Posição precisa (0 a 1.000.000) e quanto dela cabe numa tela: marcadores e "Voltar". */
+  exact: () => number
+  span: () => number
+  goToExact: (value: number) => void
   goToChapter: (index: number) => void
   turnChapter: (direction: 1 | -1) => void
   goTo: (position: number) => void
@@ -37,19 +44,27 @@ interface Props {
   onTerm?: (termId: number) => void
   onSelection?: (text: string | null, rect?: DOMRect) => void
   onInteraction?: () => void
+  /** Nota de rodapé para mostrar em janela; [goTo] mostra no lugar (null: só a janela). */
+  onNote?: (title: string, note: NoteContent, goTo: (() => void) | null) => void
+  /** O livro vai pular por um link: [returnTo] (posição precisa) é o ponto para "Voltar". */
+  onJump?: (returnTo: number) => void
 }
+
+/** Raio (px) em que um clique ainda acerta um link (o número de uma nota é pequeno). */
+const LINK_RADIUS = 10
+type Anchor = ((doc: Document) => Element | null) | null
 
 /**
  * Leitor de EPUB/MOBI: cada capítulo num iframe protegido (sem scripts do livro, sem acesso à
  * internet), com o CSS de leitura do conforto visual. Modo páginas com linhas inteiras e
  * passagem automática de capítulo; rolagem contínua dentro do capítulo.
  */
-export function EpubReader({ book, paged, textSize, comfort, start, onPosition, onTextSize, handle, onTap, onDoubleTap, terms = [], onTerm, onSelection, onInteraction }: Props) {
+export function EpubReader({ book, paged, textSize, comfort, start, onPosition, onTextSize, handle, onTap, onDoubleTap, terms = [], onTerm, onSelection, onInteraction, onNote, onJump }: Props) {
   const frame = useRef<HTMLIFrameElement>(null)
   const [chapter, setChapter] = useState(() => Math.min(book.chapterCount - 1, Math.floor((start * book.chapterCount) / 10000 + 1e-6)))
   const [src, setSrc] = useState<string | null>(null)
   const [mask, setMask] = useState(1e6)
-  const pending = useRef<{ fraction: number; fragment: string | null }>({ fraction: (start * book.chapterCount) / 10000 - chapter, fragment: null })
+  const pending = useRef<{ fraction: number; anchor: Anchor }>({ fraction: (start * book.chapterCount) / 10000 - chapter, anchor: null })
   const ready = useRef(false)
   const lastPosition = useRef(start)
 
@@ -71,6 +86,28 @@ export function EpubReader({ book, paged, textSize, comfort, start, onPosition, 
     if (!w || !ready.current) return lastPosition.current
     return Math.min(10000, Math.max(0, Math.round(((chapter + chapterFraction(w)) / book.chapterCount) * 10000)))
   }, [chapter, paged])
+  const exact = () => {
+    const w = win()
+    if (!w || !ready.current) return lastPosition.current * EXACT_SCALE
+    return Math.min(10000 * EXACT_SCALE, Math.max(0, Math.round(((chapter + chapterFraction(w)) / book.chapterCount) * 10000 * EXACT_SCALE)))
+  }
+  const span = () => {
+    const w = win()
+    if (!w || !ready.current) return 1
+    const r = range(w)
+    const screen = r <= 0 ? 1 : Math.min(1, w.innerHeight / (r + w.innerHeight))
+    return Math.max(1, Math.round((screen / book.chapterCount) * 10000 * EXACT_SCALE))
+  }
+  const goToFraction = (value: number) => {
+    const exactChapter = Math.min(1, Math.max(0, value)) * book.chapterCount + 1e-9
+    const index = Math.min(book.chapterCount - 1, Math.floor(exactChapter))
+    if (index === chapter && win() && ready.current) {
+      const w = win()!
+      w.scrollTo(0, Math.round((exactChapter - index) * range(w)))
+      if (paged) snapToLine(w)
+      report()
+    } else openChapter(index, exactChapter - index)
+  }
 
   const report = () => {
     const w = win()
@@ -80,10 +117,10 @@ export function EpubReader({ book, paged, textSize, comfort, start, onPosition, 
     if (paged) setMask(maskTop(w))
   }
 
-  const openChapter = useCallback((index: number, fraction: number, fragment: string | null = null) => {
+  const openChapter = useCallback((index: number, fraction: number, anchor: Anchor = null) => {
     if (index < 0 || index >= book.chapterCount) return
     ready.current = false
-    pending.current = { fraction, fragment }
+    pending.current = { fraction, anchor }
     setChapter(index)
   }, [book])
 
@@ -113,7 +150,7 @@ export function EpubReader({ book, paged, textSize, comfort, start, onPosition, 
     if (appliedKey.current === styleKey) return
     appliedKey.current = styleKey
     const w = win()
-    if (w && ready.current) pending.current = { fraction: chapterFraction(w), fragment: null }
+    if (w && ready.current) pending.current = { fraction: chapterFraction(w), anchor: null }
     ready.current = false
     frame.current?.contentWindow?.location.reload()
   }, [styleKey])
@@ -152,18 +189,12 @@ export function EpubReader({ book, paged, textSize, comfort, start, onPosition, 
   }
   handle?.({
     position,
+    exact,
+    span,
+    goToExact: (value) => goToFraction(value / (10000 * EXACT_SCALE)),
     goToChapter: (index) => openChapter(index, 0),
     turnChapter: (direction) => openChapter(chapter + direction, 0),
-    goTo: (value) => {
-      const exact = (Math.min(10000, Math.max(0, value)) * book.chapterCount) / 10000 + 1e-6
-      const index = Math.min(book.chapterCount - 1, Math.floor(exact))
-      if (index === chapter && win()) {
-        const w = win()!
-        w.scrollTo(0, Math.round((exact - index) * range(w)))
-        if (paged) snapToLine(w)
-        report()
-      } else openChapter(index, exact - index)
-    },
+    goTo: (value) => goToFraction(value / 10000),
     async search(term, isCancelled) {
       const hits: SearchHit[] = []
       for (let i = 0; i < book.chapterCount && !isCancelled(); i++) {
@@ -236,8 +267,42 @@ export function EpubReader({ book, paged, textSize, comfort, start, onPosition, 
       wheel.current.last = now
     }
   }
-  const handlers = useRef({ onKey, onWheel, onTap, onDoubleTap, onTerm, onSelection, onInteraction })
-  handlers.current = { onKey, onWheel, onTap, onDoubleTap, onTerm, onSelection, onInteraction }
+  /** Segue um link do livro: nota em janela, pulo no capítulo ou outro capítulo (com "Voltar"). */
+  const followLink = async (hit: LinkHit) => {
+    const w = win()
+    const doc = w?.document
+    if (!w || !doc) return
+    const target: LinkTarget | null = await book.resolveLink(chapter, hit.href)
+    if (!target) return
+    const likely = linkLooksLikeNote(hit, looksLikeNoteMark)
+    const title = noteTitle(hit.text)
+    const here = target.index === chapter
+    const jump = () => {
+      handlers.current.onJump?.(exact())
+      if (!here) return openChapter(target.index, 0, target.anchor)
+      const el = target.anchor(doc)
+      if (el) {
+        el.scrollIntoView()
+        w.scrollBy(0, -12)
+      } else w.scrollTo(0, 0)
+      if (paged) snapToLine(w)
+      report()
+    }
+    const show = handlers.current.onNote
+    if (here) {
+      const note = likely && show ? noteContent(target.anchor(doc), true, false) : null
+      return note ? show!(title, note, jump) : jump()
+    }
+    if (target.index >= 0 && (!likely || !show)) return jump()
+    const other = await book.linkedDocument(target)
+    const outside = target.index < 0
+    const note = other && show ? noteContent(target.anchor(other) ?? (outside ? other.body : null), likely, outside) : null
+    if (note) show!(title, note, outside ? null : jump)
+    else if (!outside) jump()
+  }
+
+  const handlers = useRef({ onKey, onWheel, onTap, onDoubleTap, onTerm, onSelection, onInteraction, onNote, onJump, followLink })
+  handlers.current = { onKey, onWheel, onTap, onDoubleTap, onTerm, onSelection, onInteraction, onNote, onJump, followLink }
   useEffect(() => {
     const key = (e: KeyboardEvent) => handlers.current.onKey(e)
     window.addEventListener('keydown', key)
@@ -259,10 +324,12 @@ export function EpubReader({ book, paged, textSize, comfort, start, onPosition, 
       .alx-term { cursor: pointer; }`
     ;(doc.head ?? doc.documentElement).appendChild(style)
     if (paged) ensureSpacer(w)
-    const { fraction, fragment } = pending.current
-    const target = fragment ? doc.getElementById(fragment) : null
-    if (target) target.scrollIntoView()
-    else w.scrollTo(0, Math.round(fraction * range(w)))
+    const { fraction, anchor } = pending.current
+    const target = anchor ? anchor(doc) : null
+    if (target) {
+      target.scrollIntoView()
+      w.scrollBy(0, -12)
+    } else w.scrollTo(0, Math.round(fraction * range(w)))
     if (paged) snapToLine(w)
     ready.current = true
     if (pendingFind.current) {
@@ -293,26 +360,23 @@ export function EpubReader({ book, paged, textSize, comfort, start, onPosition, 
         turn(direction)
       }
     })
-    // Links internos (notas, sumário do livro) abrem o capítulo certo; externos são ignorados.
-    doc.addEventListener('click', async (e) => {
+    // Links internos: nota de rodapé em janela, pulo no capítulo ou outro capítulo; externos são
+    // ignorados. Vale o link mais perto do clique (o número de uma nota é pequeno).
+    doc.addEventListener('click', (e) => {
       const term = (e.target as Element | null)?.closest?.('.alx-term')
       if (term && handlers.current.onTerm) {
         handlers.current.onTerm(Number(term.getAttribute('data-term')))
         return
       }
-      const link = (e.target as Element | null)?.closest?.('a[href]')
-      if (!link) {
-        if (w.getSelection()?.isCollapsed ?? true) handlers.current.onTap?.()
+      const collapsed = w.getSelection()?.isCollapsed ?? true
+      const hit = collapsed ? nearestLink(doc, e.target as Element | null, e.clientX, e.clientY, LINK_RADIUS) : null
+      if (!hit) {
+        if ((e.target as Element | null)?.closest?.('a[href]')) e.preventDefault()
+        else if (collapsed) handlers.current.onTap?.()
         return
       }
       e.preventDefault()
-      const resolved = await book.resolveLink(chapter, link.getAttribute('href')!)
-      if (!resolved) return
-      if (resolved.index === chapter && resolved.fragment) {
-        doc.getElementById(resolved.fragment)?.scrollIntoView()
-        if (paged) snapToLine(w)
-        report()
-      } else openChapter(resolved.index, 0, resolved.fragment)
+      handlers.current.followLink(hit)
     })
     report()
   }

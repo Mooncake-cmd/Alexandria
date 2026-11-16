@@ -1,12 +1,12 @@
 /**
- * Banco do site no IndexedDB do navegador (equivalente ao SQLite do app, versão 7). Os arquivos dos
+ * Banco do site no IndexedDB do navegador (equivalente ao SQLite do app, versão 8). Os arquivos dos
  * livros e as capas ficam como Blobs; nada sai do computador.
  */
 export const DB_NAME = 'alexandria'
-export const DB_VERSION = 1
+export const DB_VERSION = 2
 
-export type StoreName = 'items' | 'files' | 'covers' | 'notes' | 'terms' | 'readingDays' | 'readingLog' | 'prefs'
-export const STORES: StoreName[] = ['items', 'files', 'covers', 'notes', 'terms', 'readingDays', 'readingLog', 'prefs']
+export type StoreName = 'items' | 'files' | 'covers' | 'notes' | 'terms' | 'readingDays' | 'readingLog' | 'prefs' | 'bookmarks'
+export const STORES: StoreName[] = ['items', 'files', 'covers', 'notes', 'terms', 'readingDays', 'readingLog', 'prefs', 'bookmarks']
 
 let opening: Promise<IDBDatabase> | null = null
 
@@ -24,6 +24,8 @@ export function openDb(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains('readingDays')) db.createObjectStore('readingDays')
       if (!db.objectStoreNames.contains('readingLog')) db.createObjectStore('readingLog').createIndex('itemId', 'itemId')
       if (!db.objectStoreNames.contains('prefs')) db.createObjectStore('prefs')
+      // Versão 2: marcadores de página.
+      if (!db.objectStoreNames.contains('bookmarks')) db.createObjectStore('bookmarks', { keyPath: 'id', autoIncrement: true }).createIndex('itemId', 'itemId')
     }
     request.onsuccess = () => {
       const db = request.result

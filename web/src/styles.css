@@ -349,3 +349,27 @@ button.link { background: none; border: 0; padding: 0; color: var(--gold); font:
 .leather-title { font: 700 1em Georgia, 'Noto Serif', serif; letter-spacing: 0.04em; line-height: 1.12; overflow-wrap: normal; display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; position: relative; }
 .leather-ornament { font-size: 10px; letter-spacing: 0.2em; position: relative; }
 .leather-format { position: absolute; bottom: 13%; font: 9px Georgia, serif; letter-spacing: 0.25em; opacity: 0.8; }
+
+/* ---------- marcadores, "Voltar" e notas de rodapé ---------- */
+.bookmark-corner { position: absolute; top: 0; right: 0; width: 64px; height: 64px; z-index: 15; border: 0; padding: 0 14px 0 0; background: transparent; cursor: pointer; display: flex; justify-content: flex-end; align-items: flex-start; }
+.bookmark-corner:focus-visible { outline: 2px solid #4285f4; outline-offset: -4px; }
+.bookmark-corner:not(.marked):hover::after { content: ''; width: 18px; height: 30px; background: rgba(66, 133, 244, 0.25); clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 73%, 0 100%); }
+.bookmark-corner svg { fill: #4285f4; filter: drop-shadow(1px 1px 0 rgba(0, 0, 0, 0.2)); }
+.bookmark-bar { display: flex; align-items: center; gap: 4px; padding: 4px; background: #fff; }
+.bookmark-bar button { flex: 1; min-height: 44px; border: 0; border-radius: 3px; color: #fff; font-size: 20px; cursor: pointer; }
+.bookmark-bar .mark-action { background: #00607a; }
+.bookmark-bar .mark-step { background: #555; }
+.bookmark-bar .mark-step:disabled { opacity: 0.4; cursor: default; }
+.bookmark-bar .mark-label { flex: 1.4; text-align: center; color: var(--muted); font-size: 15px; }
+.snack { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: #323232; color: #fff; padding: 6px 8px 6px 18px; font-size: 14px; }
+.snack button { background: none; border: 0; color: #ffc107; font-weight: 700; font-size: 14px; padding: 10px 12px; cursor: pointer; }
+.return-chip { align-self: flex-start; display: flex; align-items: center; margin: 0 0 10px 12px; background: var(--ink); border-radius: 22px; box-shadow: 0 3px 10px rgba(0, 0, 0, 0.25); }
+.return-chip button { background: none; border: 0; color: #fff; font-weight: 700; font-size: 14px; padding: 11px 8px 11px 16px; cursor: pointer; }
+.return-chip .dismiss { color: #cacfd6; font-weight: 400; padding: 11px 14px 11px 6px; }
+.bookmark-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.bookmark-list li { display: flex; align-items: stretch; background: #ece9e2; border-radius: 8px; }
+.bookmark-open { flex: 1; display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 52px; padding: 0 8px 0 14px; background: none; border: 0; text-align: left; font-size: 15px; color: var(--ink); cursor: pointer; border-radius: 8px 0 0 8px; }
+.bookmark-open:hover, .bookmark-more:hover { background: rgba(0, 0, 0, 0.05); }
+.bookmark-name { overflow: hidden; text-overflow: ellipsis; }
+.bookmark-more { width: 44px; background: none; border: 0; font-size: 20px; color: var(--muted); cursor: pointer; border-radius: 0 8px 8px 0; }
+.note-text { max-height: 55vh; overflow: auto; }

@@ -1,3 +1,4 @@
+import { byPosition, nextBookmarkName, type Bookmark } from '../core/bookmarks'
 import { clear, del, get, getAll, getAllByIndex, getAllKeys, put, transaction, type StoreName } from './db'
 import { spreadRemoval } from '../core/readingTime'
 import { resolveShelf, shelfCompare } from '../core/library'
@@ -133,7 +134,7 @@ export async function archive(id: number, now = Date.now()) {
 
 /** Remove o livro, o arquivo, as capas, as anotações e o glossário. O tempo lido continua no total. */
 export async function removeItem(id: number) {
-  await transaction(['items', 'files', 'covers', 'notes', 'terms', 'readingLog'], 'readwrite', async (tx) => {
+  await transaction(['items', 'files', 'covers', 'notes', 'terms', 'readingLog', 'bookmarks'], 'readwrite', async (tx) => {
     await del(tx, 'items', id)
     await del(tx, 'files', id)
     await del(tx, 'covers', `${id}`)
@@ -141,6 +142,7 @@ export async function removeItem(id: number) {
     for (const n of await getAllByIndex<Note>(tx, 'notes', 'itemId', id)) await del(tx, 'notes', n.id)
     for (const t of await getAllByIndex<GlossaryTerm>(tx, 'terms', 'itemId', id)) await del(tx, 'terms', t.id)
     for (const key of await logKeysOf(tx, id)) await del(tx, 'readingLog', key)
+    for (const b of await getAllByIndex<Bookmark>(tx, 'bookmarks', 'itemId', id)) await del(tx, 'bookmarks', b.id)
   })
   changed()
 }
@@ -241,6 +243,35 @@ export async function removeNote(id: number) {
   changed()
 }
 
+// ---------- marcadores ----------
+
+export async function bookmarksFor(itemId: number): Promise<Bookmark[]> {
+  const marks = await transaction(['bookmarks'], 'readonly', (tx) => getAllByIndex<Bookmark>(tx, 'bookmarks', 'itemId', itemId))
+  return marks.sort(byPosition)
+}
+/** Cria um marcador com o próximo nome livre ("Marcador 1", "Marcador 2"…). */
+export async function addBookmark(itemId: number, position: number, now = Date.now()): Promise<Bookmark> {
+  const mark = await transaction(['bookmarks'], 'readwrite', async (tx) => {
+    const names = (await getAllByIndex<Bookmark>(tx, 'bookmarks', 'itemId', itemId)).map((b) => b.name)
+    const value = { itemId, name: nextBookmarkName(names), position, createdAt: now }
+    const id = (await put(tx, 'bookmarks', value)) as number
+    return { id, ...value }
+  })
+  changed()
+  return mark
+}
+export async function renameBookmark(id: number, name: string) {
+  await transaction(['bookmarks'], 'readwrite', async (tx) => {
+    const mark = await get<Bookmark>(tx, 'bookmarks', id)
+    if (mark && name.trim()) await put(tx, 'bookmarks', { ...mark, name: name.trim() })
+  })
+  changed()
+}
+export async function removeBookmark(id: number) {
+  await transaction(['bookmarks'], 'readwrite', (tx) => del(tx, 'bookmarks', id))
+  changed()
+}
+
 export const termsFor = (itemId: number) => transaction(['terms'], 'readonly', (tx) => getAllByIndex<GlossaryTerm>(tx, 'terms', 'itemId', itemId))
 export const allTerms = () => transaction(['terms'], 'readonly', (tx) => getAll<GlossaryTerm>(tx, 'terms'))
 
@@ -280,5 +311,5 @@ export const getPref = <T>(key: string) => transaction(['prefs'], 'readonly', (t
 export const setPref = (key: string, value: unknown) => transaction(['prefs'], 'readwrite', (tx) => put(tx, 'prefs', value, key))
 
 /** Todas as lojas, para o backup. */
-export const ALL_STORES: StoreName[] = ['items', 'files', 'covers', 'notes', 'terms', 'readingDays', 'readingLog', 'prefs']
+export const ALL_STORES: StoreName[] = ['items', 'files', 'covers', 'notes', 'terms', 'readingDays', 'readingLog', 'prefs', 'bookmarks']
 export { changed as notifyLibraryChanged }

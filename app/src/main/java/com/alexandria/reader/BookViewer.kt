@@ -57,6 +57,8 @@ abstract class BookViewer(protected val host: ReaderHost) {
     open val exactScale: Int = 1
     open fun exactPosition(): Long = position().toLong()
     open fun goToExact(position: Long) = goTo((position / exactScale).toInt())
+    /** Rótulo de uma posição precisa (lista de marcadores). */
+    open fun describeExact(position: Long): String = describe((position / exactScale).toInt())
     /** Quanto de [exactPosition] cabe numa tela (1 = uma página). */
     open fun screenSpan(): Long = 1
 

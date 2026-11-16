@@ -792,7 +792,7 @@ class ReaderActivity : Activity(), ReaderHost {
                 maxLines = 2
                 ellipsize = TextUtils.TruncateAt.END
             }, LinearLayout.LayoutParams(0, -2, 1f))
-            row.addView(label(view.describe((mark.position / view.exactScale).toInt()), 14f, Palette.muted).apply {
+            row.addView(label(view.describeExact(mark.position), 14f, Palette.muted).apply {
                 setPadding(dp(8), 0, dp(4), 0)
             })
             row.addView(TextView(this).apply {

@@ -7,6 +7,7 @@ import {
   readingDays, removeItem, renameShelf, saveTerm, setCover, setFinished, setShelf, shelves, termsFor, updateProgress
 } from './library'
 import { exportBackup, importBackup } from './backup'
+import { addBookmark, bookmarksFor, removeBookmark, renameBookmark } from './library'
 import { fold } from '../core/text'
 
 const blob = (text: string) => new NodeBlob([text]) as unknown as Blob
@@ -129,5 +130,26 @@ describe('biblioteca no navegador', () => {
     expect((await termsFor(restored.id))[0].term).toBe('Capitu')
     expect(await readingDays()).toEqual({ '2026-11-15': 900 })
     await expect(importBackup(new NodeBlob(['não é zip']) as unknown as Blob)).rejects.toThrow()
+  })
+})
+
+describe('marcadores no navegador', () => {
+  it('cria com o próximo nome, ordena, renomeia, exclui e sai junto com o livro', async () => {
+    const { item } = await addBook('Livro.pdf', 'pdf', blob('pdf'), 1000)
+    const second = await addBookmark(item.id, 40)
+    const first = await addBookmark(item.id, 12)
+    expect([second.name, first.name]).toEqual(['Marcador 1', 'Marcador 2'])
+    expect((await bookmarksFor(item.id)).map((b) => b.position)).toEqual([12, 40])
+    await renameBookmark(first.id, '  Prefácio ')
+    expect((await bookmarksFor(item.id))[0].name).toBe('Prefácio')
+    await removeBookmark(second.id)
+    expect((await bookmarksFor(item.id)).map((b) => b.name)).toEqual(['Prefácio'])
+
+    // Vão no backup e voltam com ele.
+    const backup = await exportBackup(false)
+    await removeItem(item.id)
+    expect(await bookmarksFor(item.id)).toEqual([])
+    await importBackup(backup)
+    expect((await bookmarksFor(item.id)).map((b) => b.name)).toEqual(['Prefácio'])
   })
 })

@@ -159,6 +159,14 @@ class EpubViewer(
         openChapter(index, (exact - index).coerceIn(0.0, 1.0))
     }
 
+    /** No começo de um capítulo, a posição inteira (0 a 10000) cairia no capítulo anterior. */
+    override fun describeExact(position: Long): String {
+        val total = pageCount()
+        if (total == 0) return "${position / (100 * EXACT_SCALE)}%"
+        val index = (position.toDouble() * total / (10_000.0 * EXACT_SCALE) + 1e-6).toInt().coerceIn(0, total - 1)
+        return "Cap. ${index + 1} · ${position / (100 * EXACT_SCALE)}%"
+    }
+
     /** Uma tela, na mesma escala de [exactPosition]. */
     override fun screenSpan(): Long {
         val total = pageCount()

@@ -16,6 +16,7 @@ import { menuDialog, toast } from '../ui/dialogs'
 import { ReaderChrome } from '../reader/ReaderChrome'
 import type { ReaderTools } from '../reader/ToolsPanel'
 import { describeNoteLocation } from '../core/formats'
+import { EXACT_SCALE } from '../core/bookmarks'
 
 type State =
   | { status: 'loading' }
@@ -203,7 +204,11 @@ function TextBook({ item: initial, content, initialPrefs }: { item: LibraryItem;
     current: () => handle.current?.fraction() ?? position.fraction,
     describe: (p) => describeNoteLocation(item.format, p, 0),
     goTo: (p) => handle.current?.goTo(p),
-    pageNotes: false
+    pageNotes: false,
+    exact: () => handle.current?.exact() ?? position.fraction * EXACT_SCALE,
+    span: () => handle.current?.span() ?? 1,
+    goToExact: (p) => handle.current?.goToExact(p),
+    exactScale: EXACT_SCALE
   }
   return (
     <ReaderChrome
@@ -269,7 +274,11 @@ function ReflowBookView({ item: initial, book, initialPrefs }: { item: LibraryIt
     current: () => handle.current?.position() ?? info.position,
     describe: (p) => describeNoteLocation(item.format, p, book.chapterCount),
     goTo: (p) => handle.current?.goTo(p),
-    pageNotes: false
+    pageNotes: false,
+    exact: () => handle.current?.exact() ?? info.position * EXACT_SCALE,
+    span: () => handle.current?.span() ?? 1,
+    goToExact: (p) => handle.current?.goToExact(p),
+    exactScale: EXACT_SCALE
   }
   return (
     <ReaderChrome
@@ -314,6 +323,8 @@ function ReflowBookView({ item: initial, book, initialPrefs }: { item: LibraryIt
           terms={api.terms}
           onTerm={api.onTerm}
           onSelection={api.selection}
+          onNote={api.note}
+          onJump={api.jump}
         />
       )}
     </ReaderChrome>
@@ -345,7 +356,11 @@ function PageBookView({ item: initial, source, initialPrefs }: { item: LibraryIt
     current: () => handle.current?.current() ?? info.page,
     describe: (p) => describeNoteLocation(item.format, p, source.pageCount),
     goTo: (p) => handle.current?.goTo(p),
-    pageNotes: true
+    pageNotes: true,
+    exact: () => handle.current?.current() ?? info.page,
+    span: () => 1,
+    goToExact: (p) => handle.current?.goTo(p),
+    exactScale: 1
   }
   return (
     <ReaderChrome

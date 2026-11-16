@@ -13,10 +13,28 @@ export interface ReflowBook {
   chapterTitles: (string | null)[]
   /** Documento do capítulo, já sem scripts e com os arquivos do livro em endereços locais (blob:). */
   chapter(index: number): Promise<{ html: string; type: 'application/xhtml+xml' | 'text/html' }>
-  /** Link interno de um capítulo para outro (ou para um ponto dele). */
-  resolveLink(from: number, href: string): Promise<{ index: number; fragment: string | null } | null>
+  /** Link interno: capítulo (-1 se o arquivo está fora da ordem de leitura) e o ponto dele. */
+  resolveLink(from: number, href: string): Promise<LinkTarget | null>
+  /** Documento (sem scripts) do arquivo de um link, para ler uma nota sem abrir o capítulo. */
+  linkedDocument(target: LinkTarget): Promise<Document | null>
   cover(): Promise<Blob | null>
   dispose(): void
+}
+
+export interface LinkTarget {
+  index: number
+  fragment: string | null
+  /** O elemento de destino num documento do arquivo (null = começo do arquivo). */
+  anchor: (doc: Document) => Element | null
+  path?: string
+}
+
+const decodeFragment = (value: string) => {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
 }
 
 const MIME: Record<string, string> = {
@@ -117,11 +135,19 @@ export async function openEpub(file: Blob): Promise<ReflowBook> {
       return { html: serialize(doc, xml), type: xml ? 'application/xhtml+xml' : 'text/html' }
     },
     async resolveLink(from, href) {
-      if (/^[a-z][a-z0-9+.-]*:/i.test(href)) return null // link externo: o site é offline, ignora
-      const [pathPart, fragment = null] = href.split('#')
-      const target = pathPart ? resolveZipPath(dirOf(book.chapters[from]), pathPart) : book.chapters[from]
-      const index = book.chapters.indexOf(target)
-      return index >= 0 ? { index, fragment } : null
+      if (/^[a-z][a-z0-9+.-]*:/i.test(href.trim())) return null // link externo: o site é offline, ignora
+      const hash = href.indexOf('#')
+      const pathPart = hash >= 0 ? href.slice(0, hash) : href
+      const fragment = hash >= 0 && hash < href.length - 1 ? decodeFragment(href.slice(hash + 1)) : null
+      const path = pathPart.trim() ? resolveZipPath(dirOf(book.chapters[from]), pathPart) : book.chapters[from]
+      if (!zip.has(path)) return null
+      return { index: book.chapters.indexOf(path), fragment, path, anchor: (doc) => (fragment ? doc.getElementById(fragment) : null) }
+    },
+    async linkedDocument(target) {
+      if (!target.path || !zip.has(target.path)) return null
+      const { doc } = parseChapter(await zip.text(target.path))
+      sanitize(doc)
+      return doc
     },
     async cover() {
       if (!book.coverPath || !zip.has(book.coverPath)) return null
@@ -150,24 +176,31 @@ export async function openMobi(file: Blob): Promise<ReflowBook> {
       // item do sumário quebrado: ignora
     }
   }
+  const loadChapter = async (index: number): Promise<{ html: string; type: 'application/xhtml+xml' | 'text/html' }> => {
+    const url = await sections[index].load()
+    const text = await (await fetch(url)).text()
+    const { doc, xml } = parseChapter(text)
+    sanitize(doc)
+    return { html: serialize(doc, xml), type: xml ? 'application/xhtml+xml' : 'text/html' }
+  }
   return {
     title: (book.metadata?.title as string | undefined)?.trim() || null,
     chapterCount: sections.length,
     chapterTitles: titles,
-    async chapter(index) {
-      const url = await sections[index].load()
-      const text = await (await fetch(url)).text()
-      const { doc, xml } = parseChapter(text)
-      sanitize(doc)
-      return { html: serialize(doc, xml), type: xml ? 'application/xhtml+xml' : 'text/html' }
-    },
+    chapter: loadChapter,
     async resolveLink(_from, href) {
       try {
-        const resolved = await book.resolveHref(href)
-        return resolved ? { index: resolved.index, fragment: null } : null
+        const resolved = (await book.resolveHref(href)) as { index: number; anchor?: (doc: Document) => Element | null } | undefined
+        if (!resolved || resolved.index < 0) return null
+        return { index: resolved.index, fragment: null, anchor: (doc) => resolved.anchor?.(doc) ?? null }
       } catch {
         return null
       }
+    },
+    async linkedDocument(target) {
+      if (target.index < 0) return null
+      const { html, type } = await loadChapter(target.index)
+      return new DOMParser().parseFromString(html, type)
     },
     async cover() {
       try {

@@ -113,7 +113,7 @@ object BookLinks {
             var box = noteBox(el);
             if (!box && (likely || force)) {
               box = el;
-              while (box && box.parentElement && !BLOCK[(box.localName || box.tagName || '').toLowerCase()]) box = box.parentElement;
+              while (box && box.parentElement && !BLOCK[(box.localName || box.tagName || '').toLowerCase()] && !/^body$/i.test(box.localName || box.tagName || '')) box = box.parentElement;
               if (box && /^(body|html)$/i.test(box.localName || box.tagName || '')) box = force ? box : null;
             }
             if (!box) return '';

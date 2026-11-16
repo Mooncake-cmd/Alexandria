@@ -2,7 +2,7 @@
 
 > Documento de planejamento e acompanhamento. Base: app Android 0.15.0 (≈9.200 linhas de Kotlin, 20 arquivos de teste).
 >
-> **Situação:** Etapas 0 a 8 prontas (base do site, regras do app com testes, biblioteca com backup, leitores de todos os formatos, ferramentas do leitor, tempo e estatísticas, Estante de madeira). Falta a Etapa 9.
+> **Situação:** Etapas 0 a 8 prontas (base do site, regras do app com testes, biblioteca com backup, leitores de todos os formatos, ferramentas do leitor, tempo e estatísticas, Estante de madeira), mais notas de rodapé e marcadores da 0.16. Falta a Etapa 9.
 
 ## 0. Decisões do dono do projeto
 
@@ -260,6 +260,13 @@ Portar para `web/src/core/`, com os testes equivalentes do Kotlin:
 - Madeira gerada em Canvas, livros 3D com CSS (giro ao tocar), sombras, planta e globo, placas de latão,
   capa de couro, trocar/restaurar capa.
 - **Pronto quando:** a prévia do site fica igual às imagens aprovadas da Estante do app.
+
+### Etapa 8b — Notas de rodapé e marcadores (como o app 0.16) ✅
+- EPUB/MOBI: nota de rodapé abre numa janela (também de outro arquivo ou fora da ordem de leitura), clique
+  tolerante perto do número, pulo no capítulo sem recarregar e "↩ Voltar".
+- Marcadores: canto invisível marca/desmarca (fita azul, aviso com MUDAR, tecla B), lista pelo 🔖 com editar
+  nome/excluir, barra com ✕, ☰, "1 de N" e setas. Banco do navegador versão 2 (store `bookmarks`), no backup.
+- **Pronto quando:** os cenários de `BookmarksAndLinksTest` têm equivalentes passando e o Moby Dick abre as notas.
 
 ### Etapa 9 — Acabamento de app (M)
 - "Abrir com" do sistema (site instalado, Chrome/Edge), todos os atalhos de teclado, acessibilidade (rótulos,

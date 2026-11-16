@@ -24,6 +24,13 @@ export interface ReaderTools {
   goTo: (position: number) => void
   /** Formatos de página anotam a página inteira; os de texto, o trecho selecionado. */
   pageNotes: boolean
+  /** Posição precisa (marcadores, "Voltar"): página, ou fração de 0 a 1.000.000 nos textos. */
+  exact: () => number
+  /** Quanto da posição precisa cabe numa tela (1 = uma página). */
+  span: () => number
+  goToExact: (position: number) => void
+  /** Posição precisa ÷ exactScale = posição de [describe]. */
+  exactScale: number
 }
 
 export function SearchPanel({ tools, onClose }: { tools: ReaderTools; onClose: () => void }) {

@@ -78,7 +78,7 @@ function describePages(page: number, pageCount: number, opened: boolean): string
 export function describeNoteLocation(format: string, position: number, pageCount: number): string {
   if (PAGED.has(format)) return `Pág. ${position + 1}`
   if (CHAPTERED.has(format) && pageCount > 0) {
-    const chapter = Math.min(pageCount - 1, Math.max(0, Math.trunc((position * pageCount) / 10000)))
+    const chapter = Math.min(pageCount - 1, Math.max(0, Math.trunc((position * pageCount) / 10000 + 1e-6)))
     return `Cap. ${chapter + 1} · ${Math.trunc(position / 100)}%`
   }
   return `${Math.trunc(position / 100)}%`
