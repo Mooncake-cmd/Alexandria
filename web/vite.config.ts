@@ -51,7 +51,24 @@ export default defineConfig({
           { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png' },
           { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' },
           { src: 'icons/maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' }
-        ]
+        ],
+        // "Abrir com" do sistema quando o site está instalado (Chrome e Edge no computador).
+        file_handlers: [
+          {
+            action: './',
+            accept: {
+              'application/pdf': ['.pdf'],
+              'application/epub+zip': ['.epub'],
+              'application/x-mobipocket-ebook': ['.mobi', '.azw', '.azw3'],
+              'image/vnd.djvu': ['.djvu', '.djv'],
+              'application/vnd.comicbook+zip': ['.cbz'],
+              'application/vnd.comicbook-rar': ['.cbr'],
+              'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+              'text/plain': ['.txt']
+            }
+          }
+        ],
+        launch_handler: { client_mode: 'focus-existing' }
       },
       workbox: {
         // Todo o site fica guardado para funcionar sem internet.

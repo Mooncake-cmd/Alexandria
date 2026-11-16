@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'preact/hooks'
 import { SECTIONS } from './sections'
 import { Icon } from './ui/icons'
-import { DialogHost } from './ui/dialogs'
+import { DialogHost, shortcutsDialog } from './ui/dialogs'
+import { typing } from './ui/shortcuts'
 import { Library, openBook } from './screens/Library'
 import { Notes } from './screens/Notes'
 import { Stats } from './screens/Stats'
@@ -25,6 +26,29 @@ export function App() {
     const update = () => setRoute(currentRoute())
     window.addEventListener('hashchange', update)
     return () => window.removeEventListener('hashchange', update)
+  }, [])
+
+  // "?" mostra os atalhos em qualquer tela.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== '?' || e.ctrlKey || e.metaKey || e.altKey || typing(e.target)) return
+      if (document.querySelector('.modal')) return
+      e.preventDefault()
+      shortcutsDialog()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  // "Abrir com" do sistema com o site instalado (File Handling, Chrome/Edge): importa e abre.
+  useEffect(() => {
+    const queue = (window as unknown as { launchQueue?: { setConsumer: (c: (p: { files?: FileSystemFileHandle[] }) => void) => void } }).launchQueue
+    queue?.setConsumer(async (params) => {
+      if (!params.files?.length) return
+      const files = await Promise.all(params.files.map((handle) => handle.getFile()))
+      const last = await importFiles(files)
+      if (last && files.length === 1) openBook(last)
+    })
   }, [])
 
   // Arrastar arquivos para a janela importa (o "Abrir com" do computador).

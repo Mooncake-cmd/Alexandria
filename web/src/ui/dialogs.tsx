@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'preact/hooks'
 import type { ComponentChildren } from 'preact'
+import { SHORTCUTS } from './shortcuts'
 
 /**
  * Diálogos e avisos do site (confirmar, digitar um nome, escolher numa lista, aviso rápido),
@@ -10,6 +11,7 @@ type Dialog =
   | { kind: 'prompt'; title: string; label: string; initial: string; suggestions: string[]; ok: string; resolve: (v: string | null) => void }
   | { kind: 'menu'; title: string; subtitle?: string; options: string[]; resolve: (v: number | null) => void }
   | { kind: 'note'; title: string; html: string; go: string | null; resolve: (v: boolean) => void }
+  | { kind: 'shortcuts'; resolve: (v: null) => void }
 
 let push: ((d: Dialog) => void) | null = null
 let toastPush: ((text: string) => void) | null = null
@@ -25,6 +27,16 @@ export const toast = (text: string) => toastPush?.(text)
  * Nota de rodapé numa janela. [html] já vem limpo (só itálico, negrito e quebras: ver notes.ts).
  * true = o leitor pediu [go] ("Ir para a nota").
  */
+/** Lista dos atalhos de teclado (tecla "?"). Só uma aberta por vez. */
+let shortcutsOpen = false
+export const shortcutsDialog = () => {
+  if (shortcutsOpen) return Promise.resolve(null)
+  shortcutsOpen = true
+  return new Promise<null>((resolve) => push?.({ kind: 'shortcuts', resolve: (v) => {
+    shortcutsOpen = false
+    resolve(v)
+  } }))
+}
 export const noteDialog = (title: string, html: string, go: string | null) =>
   new Promise<boolean>((resolve) => push?.({ kind: 'note', title, html, go, resolve }))
 
@@ -91,6 +103,32 @@ function DialogView({ dialog, close }: { dialog: Dialog; close: () => void }) {
         <div class="modal-actions">
           <button type="button" onClick={() => answer(false)}>Cancelar</button>
           <button type="button" class={dialog.danger ? 'primary-action danger' : 'primary-action'} onClick={() => answer(true)}>{dialog.ok}</button>
+        </div>
+      </Modal>
+    )
+  }
+  if (dialog.kind === 'shortcuts') {
+    const done = () => {
+      close()
+      dialog.resolve(null)
+    }
+    return (
+      <Modal title="Atalhos de teclado" onCancel={done}>
+        {SHORTCUTS.map((group) => (
+          <section key={group.title} class="shortcut-group">
+            <h4>{group.title}</h4>
+            <dl>
+              {group.items.map(([keys, what]) => (
+                <div key={keys + what}>
+                  <dt><kbd>{keys}</kbd></dt>
+                  <dd>{what}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        ))}
+        <div class="modal-actions">
+          <button type="button" class="primary-action" onClick={done}>Fechar</button>
         </div>
       </Modal>
     )

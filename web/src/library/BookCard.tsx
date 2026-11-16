@@ -62,11 +62,11 @@ export function BookCard({ item, onOpen, onOptions }: { item: LibraryItem; onOpe
       <button type="button" class="card-main" onClick={onOpen} aria-label={`${displayTitle(item.name)}. ${statusText(item)}. Abrir`}>
         <Cover item={item} />
         <div class="card-info">
-          <h4>{displayTitle(item.name)}</h4>
+          <h3 class="card-title">{displayTitle(item.name)}</h3>
           <p class="card-format">{item.format.toUpperCase()}</p>
           <p class="card-status">{statusText(item)}</p>
           {READABLE.has(item.format) && (
-            <div class="progress" role="progressbar" aria-valuenow={Math.round(progress * 100)} aria-valuemin={0} aria-valuemax={100}>
+            <div class="progress" role="progressbar" aria-label="Progresso de leitura" aria-valuenow={Math.round(progress * 100)} aria-valuemin={0} aria-valuemax={100}>
               <div style={{ width: `${progress * 100}%` }} />
             </div>
           )}

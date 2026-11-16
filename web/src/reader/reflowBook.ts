@@ -13,6 +13,8 @@ export interface ReflowBook {
   chapterTitles: (string | null)[]
   /** Documento do capítulo, já sem scripts e com os arquivos do livro em endereços locais (blob:). */
   chapter(index: number): Promise<{ html: string; type: 'application/xhtml+xml' | 'text/html' }>
+  /** Só o texto do capítulo (busca): sem montar imagens e estilos; guardado depois da 1ª vez. */
+  chapterText(index: number): Promise<string>
   /** Link interno: capítulo (-1 se o arquivo está fora da ordem de leitura) e o ponto dele. */
   resolveLink(from: number, href: string): Promise<LinkTarget | null>
   /** Documento (sem scripts) do arquivo de um link, para ler uma nota sem abrir o capítulo. */
@@ -94,6 +96,7 @@ export async function openEpub(file: Blob): Promise<ReflowBook> {
     return out
   }
 
+  const texts = new Map<number, string>()
   return {
     title: book.title,
     chapterCount: book.chapters.length,
@@ -143,6 +146,15 @@ export async function openEpub(file: Blob): Promise<ReflowBook> {
       if (!zip.has(path)) return null
       return { index: book.chapters.indexOf(path), fragment, path, anchor: (doc) => (fragment ? doc.getElementById(fragment) : null) }
     },
+    async chapterText(index) {
+      let text = texts.get(index)
+      if (text === undefined) {
+        const { doc } = parseChapter(await zip.text(book.chapters[index]))
+        text = ((doc.body ?? doc.documentElement)?.textContent ?? '')
+        texts.set(index, text)
+      }
+      return text
+    },
     async linkedDocument(target) {
       if (!target.path || !zip.has(target.path)) return null
       const { doc } = parseChapter(await zip.text(target.path))
@@ -156,6 +168,7 @@ export async function openEpub(file: Blob): Promise<ReflowBook> {
     dispose() {
       urls.forEach((u) => URL.revokeObjectURL(u))
       urls.clear()
+      texts.clear()
     }
   }
 }
@@ -183,11 +196,22 @@ export async function openMobi(file: Blob): Promise<ReflowBook> {
     sanitize(doc)
     return { html: serialize(doc, xml), type: xml ? 'application/xhtml+xml' : 'text/html' }
   }
+  const texts = new Map<number, string>()
   return {
     title: (book.metadata?.title as string | undefined)?.trim() || null,
     chapterCount: sections.length,
     chapterTitles: titles,
     chapter: loadChapter,
+    async chapterText(index) {
+      let text = texts.get(index)
+      if (text === undefined) {
+        const { html, type } = await loadChapter(index)
+        const doc = new DOMParser().parseFromString(html, type)
+        text = (doc.body ?? doc.documentElement)?.textContent ?? ''
+        texts.set(index, text)
+      }
+      return text
+    },
     async resolveLink(_from, href) {
       try {
         const resolved = (await book.resolveHref(href)) as { index: number; anchor?: (doc: Document) => Element | null } | undefined

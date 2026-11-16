@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'preact/hooks'
 import { exportBackup, importBackup, requestPersistence, storageInfo } from '../storage/backup'
-import { confirmDialog, toast } from '../ui/dialogs'
+import { confirmDialog, shortcutsDialog, toast } from '../ui/dialogs'
 
 const size = (bytes: number) =>
   bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1).replace('.', ',')} GB` : bytes >= 1e6 ? `${(bytes / 1e6).toFixed(1).replace('.', ',')} MB` : `${Math.round(bytes / 1e3)} KB`
@@ -99,6 +99,10 @@ export function Settings() {
         </dd>
         <dt>Licença</dt>
         <dd>Software livre sob a GNU AGPL 3.0 ou posterior.</dd>
+        <dt>Teclado</dt>
+        <dd>
+          <button type="button" class="link-button" onClick={() => shortcutsDialog()}>Ver atalhos de teclado</button> (ou aperte ? em qualquer tela)
+        </dd>
         <dt>Código-fonte</dt>
         <dd>
           <a href="https://github.com/Mooncake-cmd/Alexandria" rel="noopener">github.com/Mooncake-cmd/Alexandria</a>

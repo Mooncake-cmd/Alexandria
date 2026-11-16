@@ -52,6 +52,8 @@ interface Props {
   tools?: ReaderTools
   /** Tempo de leitura do livro antes desta sessão. */
   readingSeconds: number
+  /** Atalhos próprios do formato (tecla minúscula → ação): S sumário, G ir para a página. */
+  keys?: Record<string, () => void>
   children: (api: ChromeApi) => ComponentChildren
 }
 
@@ -60,7 +62,7 @@ interface Props {
  * filtro, régua, painel de conforto e tela limpa (as barras ficam por cima do livro e somem; um
  * clique no meio mostra e esconde; Esc mostra; F põe em tela cheia).
  */
-export function ReaderChrome({ title, prefs, onPrefs, typography, menu, headerExtra, footer, finished, atEnd, onFinish, overlay, tools, readingSeconds, children }: Props) {
+export function ReaderChrome({ title, prefs, onPrefs, typography, menu, headerExtra, footer, finished, atEnd, onFinish, overlay, tools, readingSeconds, keys = {}, children }: Props) {
   const timer = useReadingClock(tools?.itemId ?? -1, readingSeconds)
   const [shown, setShown] = useState(!prefs.cleanScreen)
   const [panel, setPanelState] = useState<null | 'comfort' | 'search' | 'notes'>(null)
@@ -141,8 +143,6 @@ export function ReaderChrome({ title, prefs, onPrefs, typography, menu, headerEx
     setReturnTo(null)
     tools.goToExact(returnTo)
   }
-  const shortcuts = useRef({ toggleBookmark })
-  shortcuts.current = { toggleBookmark }
 
   useEffect(() => {
     if (!clean) return
@@ -158,25 +158,41 @@ export function ReaderChrome({ title, prefs, onPrefs, typography, menu, headerEx
     else document.documentElement.requestFullscreen?.().catch(() => toast('O navegador não permitiu a tela cheia.'))
   }
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement
-      if (target.closest?.('input, textarea, [contenteditable], .modal, .comfort-panel')) return
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f' && tools?.search) {
-        e.preventDefault()
-        setPanelState('search')
-        return
-      }
-      if ((e.key === 'b' || e.key === 'B') && !e.ctrlKey && !e.metaKey && !e.altKey) {
-        shortcuts.current.toggleBookmark()
-        return
-      }
-      if (e.key === 'Escape' && clean && !shown) setShown(true)
-      else if ((e.key === 'f' || e.key === 'F') && !e.ctrlKey && !e.metaKey && !e.altKey) toggleFullscreen()
+  // Atalhos (lista completa com "?"). A função muda a cada desenho; o ouvinte é um só.
+  const onKey = (e: KeyboardEvent) => {
+    const target = e.target as HTMLElement
+    if (target.closest?.('input, textarea, select, [contenteditable], .modal, .comfort-panel') || document.querySelector('.modal')) return
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f' && tools?.search) {
+      e.preventDefault()
+      setPanelState('search')
+      return
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [clean, shown])
+    if (e.key === 'Escape') {
+      if (panel) setPanelState(null)
+      else if (clean && !shown) setShown(true)
+      return
+    }
+    if (e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1) return
+    const action: Record<string, (() => void) | undefined> = {
+      b: tools ? toggleBookmark : undefined,
+      m: tools ? () => setListOpen(true) : undefined,
+      n: tools ? () => setPanelState((p) => (p === 'notes' ? null : 'notes')) : undefined,
+      f: toggleFullscreen,
+      ...keys
+    }
+    const run = action[e.key.toLowerCase()]
+    if (run) {
+      e.preventDefault()
+      run()
+    }
+  }
+  const keyHandler = useRef(onKey)
+  keyHandler.current = onKey
+  useEffect(() => {
+    const listener = (e: KeyboardEvent) => keyHandler.current(e)
+    window.addEventListener('keydown', listener)
+    return () => window.removeEventListener('keydown', listener)
+  }, [])
 
   const api: ChromeApi = {
     tap: () => {
@@ -282,13 +298,13 @@ export function ReaderChrome({ title, prefs, onPrefs, typography, menu, headerEx
         </div>
         {headerExtra}
         {tools?.search && <button type="button" class="bar-button" aria-label="Buscar no livro" title="Buscar no livro (Ctrl + F)" onClick={() => setPanelState((p) => (p === 'search' ? null : 'search'))}>🔍</button>}
-        {tools && <button type="button" class="bar-button" aria-label="Marcadores" title="Marcadores" onClick={() => setListOpen(true)}>🔖</button>}
-        {tools && <button type="button" class="bar-button" aria-label="Anotações e glossário" title="Anotações e glossário" onClick={() => setPanelState((p) => (p === 'notes' ? null : 'notes'))}>📝</button>}
+        {tools && <button type="button" class="bar-button" aria-label="Marcadores" title="Marcadores (M)" onClick={() => setListOpen(true)}>🔖</button>}
+        {tools && <button type="button" class="bar-button" aria-label="Anotações e glossário" title="Anotações e glossário (N)" onClick={() => setPanelState((p) => (p === 'notes' ? null : 'notes'))}>📝</button>}
         <button type="button" class="bar-button" aria-label="Conforto visual" title="Conforto visual" onClick={() => setPanelState((p) => (p === 'comfort' ? null : 'comfort'))}>Aa</button>
         <button type="button" class="bar-button" aria-label="Mais opções" onClick={openMenu}>⋮</button>
       </header>
       <div class="reader-main">
-        <div class="reader-body" ref={body} onClick={onBodyClick} onDblClick={() => api.cancelTap()}>
+        <main class="reader-body" ref={body} onClick={onBodyClick} onDblClick={() => api.cancelTap()}>
           {children(api)}
           {selection && tools && (
             <div
@@ -318,7 +334,7 @@ export function ReaderChrome({ title, prefs, onPrefs, typography, menu, headerEx
           {tools && <BookmarkCorner marked={here >= 0} onToggle={toggleBookmark} />}
           {prefs.ruler && <Ruler comfort={prefs.comfort} fraction={prefs.rulerY} alwaysShowHandle={false} onMove={(y) => onPrefs({ rulerY: y })} />}
           {overlay}
-        </div>
+        </main>
         {panel === 'search' && tools && <SearchPanel tools={tools} onClose={() => setPanelState(null)} />}
         {panel === 'notes' && tools && <NotesPanel tools={tools} terms={terms} onClose={() => setPanelState(null)} />}
         {panel === 'comfort' && (

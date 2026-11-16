@@ -295,7 +295,8 @@ function ReflowBookView({ item: initial, book, initialPrefs }: { item: LibraryIt
         ['Letra maior', () => textSize(1)],
         ['Cor da página…', () => chooseTheme(prefs, changePrefs)]
       ]}
-      headerExtra={<button type="button" class="bar-button" aria-label="Sumário" title="Sumário" onClick={contents}>☰</button>}
+      headerExtra={<button type="button" class="bar-button" aria-label="Sumário" title="Sumário (S)" onClick={contents}>☰</button>}
+      keys={{ s: contents }}
       footer={
         <>
           <button type="button" class="foot-button" disabled={info.chapter <= 0} aria-label="Capítulo anterior" onClick={() => handle.current?.turnChapter(-1)}>‹ Cap.</button>
@@ -370,6 +371,7 @@ function PageBookView({ item: initial, source, initialPrefs }: { item: LibraryIt
       typography={false}
       tools={tools}
       readingSeconds={initial.readingSeconds}
+      keys={{ g: askPage }}
       menu={[
         ['Ir para a página…', askPage],
         [prefs.paged ? 'Modo: rolagem contínua' : 'Modo: páginas (página inteira na tela)', () => changePrefs({ paged: !prefs.paged })],
@@ -379,7 +381,7 @@ function PageBookView({ item: initial, source, initialPrefs }: { item: LibraryIt
       footer={
         <>
           <button type="button" class="foot-button" disabled={info.page <= 0} onClick={() => handle.current?.goTo(info.page - 1)}>‹ Anterior</button>
-          <button type="button" class="page-label" title="Ir para a página" onClick={askPage}>Página {info.page + 1} de {source.pageCount}{zoomText}</button>
+          <button type="button" class="page-label" title="Ir para a página (G)" onClick={askPage}>Página {info.page + 1} de {source.pageCount}{zoomText}</button>
           <button type="button" class="foot-button" disabled={info.page >= source.pageCount - 1} onClick={() => handle.current?.goTo(info.page + 1)}>Próxima ›</button>
         </>
       }

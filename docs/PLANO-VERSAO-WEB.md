@@ -2,7 +2,7 @@
 
 > Documento de planejamento e acompanhamento. Base: app Android 0.15.0 (≈9.200 linhas de Kotlin, 20 arquivos de teste).
 >
-> **Situação:** Etapas 0 a 8 prontas (base do site, regras do app com testes, biblioteca com backup, leitores de todos os formatos, ferramentas do leitor, tempo e estatísticas, Estante de madeira), mais notas de rodapé e marcadores da 0.16. Falta a Etapa 9.
+> **Situação:** Etapas 0 a 8 prontas (base do site, regras do app com testes, biblioteca com backup, leitores de todos os formatos, ferramentas do leitor, tempo e estatísticas, Estante de madeira), mais notas de rodapé e marcadores da 0.16. Etapa 9 pronta (falta só conferir em Firefox, Edge e Safari).
 
 ## 0. Decisões do dono do projeto
 
@@ -268,10 +268,21 @@ Portar para `web/src/core/`, com os testes equivalentes do Kotlin:
   nome/excluir, barra com ✕, ☰, "1 de N" e setas. Banco do navegador versão 2 (store `bookmarks`), no backup.
 - **Pronto quando:** os cenários de `BookmarksAndLinksTest` têm equivalentes passando e o Moby Dick abre as notas.
 
-### Etapa 9 — Acabamento de app (M)
-- "Abrir com" do sistema (site instalado, Chrome/Edge), todos os atalhos de teclado, acessibilidade (rótulos,
-  foco visível, navegação só por teclado, leitor de tela), desempenho com livros grandes, testes em Chrome, Edge,
-  Firefox e Safari (Mac), em telas grandes e janelas estreitas.
+### Etapa 9 — Acabamento de app (M) ✅
+- "Abrir com" do sistema com o site instalado (File Handling no manifesto + `launchQueue`; Chrome/Edge no
+  computador): o arquivo é importado e, se for um só, abre na hora.
+- Atalhos de teclado com lista ("?" em qualquer tela, e em Ajustes): Ctrl + O importa; no leitor B marca,
+  M marcadores, N anotações, S sumário, G ir para a página, F tela cheia, Esc fecha painel ou mostra os
+  controles. Teclas dentro do capítulo do EPUB valem como no resto do site. Alt + setas não viram página.
+- Acessibilidade: auditoria com axe-core em todas as telas (claro e escuro) sem nenhuma violação; dourado de
+  texto mais escuro (contraste 4,5:1), barra de progresso com nome, títulos em ordem, área do livro como
+  `main`; navegação só por teclado testada (Tab até o livro, Enter abre, foco visível).
+- Desempenho medido no Chromium: TXT de 30 MB (abre o começo, 8 MB, como o app) em ~0,13 s, busca com 33 mil
+  resultados em ~0,3 s; PDF de 1.500 páginas abre em ~0,3 s e vai à página 1.400 em ~0,2 s; Moby Dick (365
+  capítulos) abre em ~0,1 s e a busca caiu de 1,9 s para 0,8 s (texto dos capítulos guardado).
+- Compatibilidade: recursos que faltam em alguns navegadores ficam ocultos ou têm alternativa (Highlight API,
+  File Handling, tela cheia, OffscreenCanvas nas capas). **Testado só no Chromium**: Firefox, Edge e Safari
+  não estão disponíveis no ambiente de testes e ficam para conferir no seu computador.
 - **Pronto quando:** a lista completa da seção 5 está marcada.
 
 ## 7. Como vai ser testado

@@ -198,9 +198,7 @@ export function EpubReader({ book, paged, textSize, comfort, start, onPosition, 
     async search(term, isCancelled) {
       const hits: SearchHit[] = []
       for (let i = 0; i < book.chapterCount && !isCancelled(); i++) {
-        const { html, type } = await book.chapter(i)
-        const doc = new DOMParser().parseFromString(html, type)
-        const text = (doc.body ?? doc.documentElement).textContent ?? ''
+        const text = await book.chapterText(i)
         const haystack = fold(text)
         const needle = fold(term.trim())
         if (!needle) break
@@ -233,7 +231,8 @@ export function EpubReader({ book, paged, textSize, comfort, start, onPosition, 
   // Teclado e roda do mouse (no site e dentro do capítulo).
   const onKey = (e: KeyboardEvent) => {
     const target = e.target as HTMLElement | null
-    if (target?.closest?.('input, textarea, [contenteditable], .modal')) return
+    if (target?.closest?.('input, textarea, select, [contenteditable], .modal') || document.querySelector('.modal')) return
+    if (e.altKey) return // Alt + setas move a régua; Alt + ← é o voltar do navegador
     if ((e.ctrlKey || e.metaKey) && (e.key === '+' || e.key === '=' || e.key === '-')) {
       e.preventDefault()
       onTextSize(Math.min(MAX_TEXT_SIZE, Math.max(MIN_TEXT_SIZE, textSize + (e.key === '-' ? -1 : 1))))
@@ -348,7 +347,15 @@ export function EpubReader({ book, paged, textSize, comfort, start, onPosition, 
     })
 
     for (const type of ['keydown', 'pointerdown', 'wheel', 'scroll']) w.addEventListener(type, () => handlers.current.onInteraction?.(), { capture: true, passive: true })
-    w.addEventListener('keydown', (e) => handlers.current.onKey(e))
+    // Teclas dentro do capítulo valem como no resto do site (virar página, B, S, F, ?, Esc…):
+    // repassa para a janela do site e, se algum atalho usou a tecla, cancela a do capítulo.
+    w.addEventListener('keydown', (e) => {
+      const forwarded = new KeyboardEvent('keydown', {
+        key: e.key, code: e.code, ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey, shiftKey: e.shiftKey, repeat: e.repeat, cancelable: true, bubbles: true
+      })
+      window.dispatchEvent(forwarded)
+      if (forwarded.defaultPrevented) e.preventDefault()
+    })
     w.addEventListener('wheel', (e) => handlers.current.onWheel(e), { passive: false })
     w.addEventListener('scroll', () => requestAnimationFrame(report), { passive: true })
     doc.addEventListener('dblclick', (e) => {

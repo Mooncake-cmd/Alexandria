@@ -1,5 +1,17 @@
 import { bookFile, coverOf, getPref, setCover, setPref, updatePageCount, type LibraryItem } from '../storage/library'
 
+/** Tela de desenho fora da página; navegadores antigos (Safari antes do 16.4) usam um <canvas>. */
+function makeCanvas(width: number, height: number): { context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D; toJpeg: (quality: number) => Promise<Blob | null> } {
+  if (typeof OffscreenCanvas !== 'undefined') {
+    const canvas = new OffscreenCanvas(width, height)
+    return { context: canvas.getContext('2d')!, toJpeg: (quality) => canvas.convertToBlob({ type: 'image/jpeg', quality }) }
+  }
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  return { context: canvas.getContext('2d')!, toJpeg: (quality) => new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality)) }
+}
+
 /** Largura das capas guardadas (como o app). */
 const COVER_WIDTH = 240
 
@@ -9,10 +21,10 @@ export async function scaleCover(blob: Blob): Promise<Blob | null> {
     const bitmap = await createImageBitmap(blob)
     const width = Math.min(COVER_WIDTH, bitmap.width)
     const height = Math.max(1, Math.round((bitmap.height * width) / bitmap.width))
-    const canvas = new OffscreenCanvas(width, height)
-    canvas.getContext('2d')!.drawImage(bitmap, 0, 0, width, height)
+    const { context, toJpeg } = makeCanvas(width, height)
+    context.drawImage(bitmap, 0, 0, width, height)
     bitmap.close()
-    return await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.82 })
+    return await toJpeg(0.82)
   } catch {
     return null
   }
@@ -132,12 +144,11 @@ export async function customCover(file: Blob): Promise<Blob | null> {
   const scale = Math.max(width / bitmap.width, height / bitmap.height)
   const cropW = Math.min(bitmap.width, width / scale)
   const cropH = Math.min(bitmap.height, height / scale)
-  const canvas = new OffscreenCanvas(width, height)
-  const context = canvas.getContext('2d')!
+  const { context, toJpeg } = makeCanvas(width, height)
   context.fillStyle = '#fff'
   context.fillRect(0, 0, width, height)
   context.imageSmoothingQuality = 'high'
   context.drawImage(bitmap, (bitmap.width - cropW) / 2, (bitmap.height - cropH) / 2, cropW, cropH, 0, 0, width, height)
   bitmap.close()
-  return canvas.convertToBlob({ type: 'image/jpeg', quality: 0.86 })
+  return toJpeg(0.86)
 }

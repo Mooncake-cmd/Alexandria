@@ -37,6 +37,16 @@ export function Library() {
   useEffect(() => {
     if (loaded) ensureCovers(items)
   }, [loaded, items])
+  // Ctrl + O importa (como "Abrir" nos programas do computador).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'o' || document.querySelector('.modal')) return
+      e.preventDefault()
+      input.current?.click()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
   const reading = items.filter((i) => !isFinished(i))
   const finished = items.filter((i) => isFinished(i))
 
@@ -85,7 +95,7 @@ export function Library() {
         </a>
       )}
       <div class="import-row">
-        <button class="primary" type="button" onClick={() => input.current?.click()}>＋ Importar documentos</button>
+        <button class="primary" type="button" title="Importar documentos (Ctrl + O)" onClick={() => input.current?.click()}>＋ Importar documentos</button>
         <span class="muted small">ou arraste os arquivos para esta janela</span>
       </div>
       <input

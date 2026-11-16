@@ -273,7 +273,8 @@ export function TextReader({ content, paged, textSize, comfort, start, onPositio
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement
-      if (target.closest('input, textarea, [contenteditable], .modal')) return
+      if (target.closest?.('input, textarea, select, [contenteditable], .modal') || document.querySelector('.modal')) return
+    if (e.altKey) return // Alt + setas move a régua; Alt + ← é o voltar do navegador
       if ((e.ctrlKey || e.metaKey) && (e.key === '+' || e.key === '=' || e.key === '-')) {
         e.preventDefault()
         onTextSize(Math.min(MAX_TEXT_SIZE, Math.max(MIN_TEXT_SIZE, textSize + (e.key === '-' ? -1 : 1))))

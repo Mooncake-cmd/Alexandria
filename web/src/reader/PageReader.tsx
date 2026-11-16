@@ -255,7 +255,8 @@ export function PageReader({ source, paged, sideLock, comfort, start, onPage, ha
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement
-      if (target.closest('input, textarea, [contenteditable], .modal')) return
+      if (target.closest?.('input, textarea, select, [contenteditable], .modal') || document.querySelector('.modal')) return
+    if (e.altKey) return // Alt + setas move a régua; Alt + ← é o voltar do navegador
       if (e.ctrlKey || e.metaKey) {
         if (e.key === '+' || e.key === '=') zoomTo(zoom * 1.25)
         else if (e.key === '-') zoomTo(zoom / 1.25)
@@ -315,6 +316,7 @@ export function PageReader({ source, paged, sideLock, comfort, start, onPage, ha
         class="page-scroll"
         style={{ overflowX: sideLock ? 'hidden' : 'auto' }}
         tabIndex={0}
+        role="region"
         aria-label="Páginas do documento"
         onClick={(e) => {
           if (!onTerm || !termMarks.current.length) return
