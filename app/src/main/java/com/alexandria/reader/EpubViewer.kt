@@ -15,6 +15,7 @@ import android.widget.LinearLayout
 import java.io.ByteArrayInputStream
 import java.util.zip.ZipFile
 import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 
 /** WebView que expõe o tamanho rolável do conteúdo (protegido na classe original). */
 @SuppressLint("ViewConstructor")
@@ -142,6 +143,31 @@ class EpubViewer(
         openChapter(index, (exact - index).coerceIn(0.0, 1.0))
     }
 
+    override val exactScale = EXACT_SCALE
+
+    override fun exactPosition(): Long {
+        val total = pageCount()
+        if (total == 0) return 0
+        return ((chapter + chapterFraction()) / total * 10_000L * EXACT_SCALE).roundToLong().coerceIn(0, 10_000L * EXACT_SCALE)
+    }
+
+    override fun goToExact(position: Long) {
+        val total = pageCount()
+        if (total == 0) return
+        val exact = position.coerceIn(0, 10_000L * EXACT_SCALE).toDouble() * total / (10_000.0 * EXACT_SCALE) + 1e-9
+        val index = exact.toInt().coerceIn(0, total - 1)
+        openChapter(index, (exact - index).coerceIn(0.0, 1.0))
+    }
+
+    /** Uma tela, na mesma escala de [exactPosition]. */
+    override fun screenSpan(): Long {
+        val total = pageCount()
+        val range = contentRange()
+        if (total == 0 || !chapterReady) return 1
+        val screen = if (range <= 0) 1.0 else (web.height.toDouble() / (range + web.height)).coerceIn(0.0, 1.0)
+        return (screen / total * 10_000L * EXACT_SCALE).roundToLong().coerceAtLeast(1)
+    }
+
     override fun atEnd() = chapterReady && chapter == pageCount() - 1 &&
         if (paged && pagerReady) pagerLast else !web.canScrollVertically(1)
 
@@ -177,24 +203,140 @@ class EpubViewer(
         if (changed && book != null) goTo(position())
     }
 
-    /** Toque simples numa palavra sublinhada: pergunta à página qual termo está sob o dedo. */
+    /**
+     * Toque simples no texto: pergunta à página o que está sob o dedo. Uma palavra sublinhada do
+     * glossário mostra a definição; um link (o mais perto do dedo, num raio de [LINK_RADIUS_DP]) é
+     * seguido pelo app: nota de rodapé em janela, pulo dentro do capítulo ou outro capítulo.
+     */
     private val termTaps = android.view.GestureDetector(context, object : android.view.GestureDetector.SimpleOnGestureListener() {
         override fun onSingleTapConfirmed(e: android.view.MotionEvent): Boolean {
-            if (glossary.isEmpty() || !chapterReady) return false
+            if (!chapterReady) return false
             val location = IntArray(2)
             web.getLocationOnScreen(location)
             val density = context.resources.displayMetrics.density
             val x = (e.rawX - location[0]) / density
             val y = (e.rawY - location[1]) / density
             web.evaluateJavascript(
-                "(function(){var e=document.elementFromPoint($x,$y);e=e&&e.closest?e.closest('.alx-term'):null;return e?e.getAttribute('data-term'):'';})()"
+                "(function(){var e=document.elementFromPoint($x,$y);var t=e&&e.closest?e.closest('.alx-term'):null;" +
+                    "if(t)return 'T'+t.getAttribute('data-term');var l=window.alxLinks?alxLinks.near($x,$y,$LINK_RADIUS_DP):'';return l?'L'+l:'';})()"
             ) { raw ->
-                val id = raw?.trim('"')?.toLongOrNull() ?: return@evaluateJavascript
-                glossary.firstOrNull { it.id == id }?.let(onTermTap)
+                val value = jsString(raw)
+                when {
+                    value.startsWith("T") -> {
+                        val id = value.drop(1).toLongOrNull() ?: return@evaluateJavascript
+                        glossary.firstOrNull { it.id == id }?.let(onTermTap)
+                    }
+                    value.startsWith("L") -> {
+                        host.tapHandled()
+                        val link = try {
+                            org.json.JSONObject(value.drop(1))
+                        } catch (e: org.json.JSONException) {
+                            return@evaluateJavascript
+                        }
+                        followLink(link)
+                    }
+                }
             }
             return false
         }
     })
+
+    /** Resultado de evaluateJavascript (literal JSON) como texto. */
+    private fun jsString(raw: String?): String = try {
+        org.json.JSONArray("[${raw ?: "null"}]").optString(0, "").let { if (it == "null") "" else it }
+    } catch (e: org.json.JSONException) {
+        ""
+    }
+
+    // ---------- links e notas de rodapé ----------
+
+    private fun followLink(link: org.json.JSONObject) {
+        val current = book ?: return
+        val from = current.chapters.getOrNull(chapter) ?: return
+        val target = BookLinks.resolve(from, link.optString("href")) ?: return
+        val text = link.optString("text")
+        // O número de volta, dentro da própria nota, leva de volta ao texto: é um pulo comum.
+        val likely = !link.optBoolean("inNote") && (link.optBoolean("noteref") ||
+            (BookLinks.looksLikeNoteMark(text) && (link.optBoolean("raised") || text.startsWith("["))))
+        val index = current.chapters.indexOf(target.path)
+        val title = if (BookLinks.looksLikeNoteMark(text)) "Nota ${text.trim('[', ']', '(', ')', '.')}" else "Nota"
+        if (index == chapter) {
+            val fragment = target.fragment ?: return jumpWithin(null)
+            if (!likely) return jumpWithin(fragment)
+            readNote(fragment, null, likely, false) { note ->
+                if (note != null) showNote(title, note) { jumpWithin(fragment) } else jumpWithin(fragment)
+            }
+            return
+        }
+        val file = zip ?: return
+        if (index >= 0 && (target.fragment == null || !likely)) return jumpToChapter(index, target.fragment)
+        // Nota em outro arquivo (notas no fim do livro) ou arquivo fora da ordem de leitura.
+        host.worker.execute {
+            val html = try {
+                file.getEntry(target.path)?.let { entry -> file.getInputStream(entry).use { String(it.readBytes(), Charsets.UTF_8) } }
+            } catch (e: Exception) {
+                null
+            }
+            onUi {
+                if (html == null) return@onUi
+                readNote(target.fragment, html, likely, index < 0) { note ->
+                    when {
+                        note != null -> showNote(title, note, if (index >= 0) ({ jumpToChapter(index, target.fragment) }) else null)
+                        index >= 0 -> jumpToChapter(index, target.fragment)
+                    }
+                }
+            }
+        }
+    }
+
+    /** Pergunta à página o texto da nota [id] (no capítulo aberto, ou em [html] de outro arquivo). */
+    private fun readNote(id: String?, html: String?, likely: Boolean, force: Boolean, done: (org.json.JSONObject?) -> Unit) {
+        val idArg = id?.let { org.json.JSONObject.quote(it) } ?: "null"
+        val htmlArg = html?.let { org.json.JSONObject.quote(it) } ?: "null"
+        web.evaluateJavascript("window.alxLinks?alxLinks.note($idArg,$htmlArg,$likely,$force):''") { raw ->
+            val value = jsString(raw)
+            done(if (value.isEmpty()) null else try {
+                org.json.JSONObject(value)
+            } catch (e: org.json.JSONException) {
+                null
+            })
+        }
+    }
+
+    /** Janela com o texto da nota: lê-se e fecha, sem sair do ponto de leitura. */
+    private fun showNote(title: String, note: org.json.JSONObject, goToNote: (() -> Unit)?) {
+        @Suppress("DEPRECATION")
+        val body = if (Build.VERSION.SDK_INT >= 24) Html.fromHtml(note.optString("html"), Html.FROM_HTML_MODE_COMPACT)
+        else Html.fromHtml(note.optString("html"))
+        val builder = AlertDialog.Builder(context)
+            .setTitle(title)
+            .setMessage(body.ifBlank { note.optString("text") })
+            .setPositiveButton("Fechar", null)
+        if (goToNote != null) builder.setNeutralButton("Ir para a nota") { _, _ -> goToNote() }
+        builder.show()
+    }
+
+    /** Pula para [fragment] no capítulo aberto (sem recarregar) e oferece o "Voltar". */
+    private fun jumpWithin(fragment: String?) {
+        host.offerReturn(exactPosition())
+        if (fragment == null) {
+            web.scrollTo(0, 0)
+            return
+        }
+        val id = org.json.JSONObject.quote(fragment)
+        web.evaluateJavascript(
+            "(function(){var e=document.getElementById($id);if(!e)return;e.scrollIntoView();window.scrollBy(0,-12);" +
+                "if(window.alxPager)alxPager.snap();})()"
+        ) {
+            updateLabel()
+            host.onPositionChanged()
+        }
+    }
+
+    private fun jumpToChapter(index: Int, fragment: String?) {
+        host.offerReturn(exactPosition())
+        openChapter(index, 0.0, fragment)
+    }
 
     /** Rola uma tela; no fim (ou começo) do capítulo, passa para o próximo (ou o anterior, já no fim). */
     private fun turnPage(direction: Int) {
@@ -482,6 +624,8 @@ class EpubViewer(
         }
 
         override fun onPageFinished(view: WebView, url: String) {
+            // Os links passam a ser decididos pelo app (notas em janela, "Voltar").
+            view.evaluateJavascript(BookLinks.SCRIPT, null)
             restoreScroll()
         }
     }
@@ -629,6 +773,8 @@ class EpubViewer(
         """.trimIndent()
 
         private const val BASE = "https://book.alexandria/"
+        /** Raio (em dp, igual ao pixel CSS da página) em que um toque ainda acerta um link. */
+        private const val LINK_RADIUS_DP = 22
         private const val APP_FONTS = "__alexandria/fonts/"
 
         /**

@@ -50,6 +50,23 @@ class ReaderActivity : Activity(), ReaderHost {
     private var controlsShown = true
     private var selectionActive = false
     private var lastTermTap = 0L
+    /** Canto invisível que marca a página (com a fita azul quando marcada). */
+    private lateinit var corner: BookmarkCorner
+    /** Barra dos marcadores (✕, lista, "1 de 3", ‹ ›), aberta ao escolher um marcador da lista. */
+    private lateinit var markBar: LinearLayout
+    private lateinit var markLabel: TextView
+    private lateinit var markPrev: TextView
+    private lateinit var markNext: TextView
+    /** Aviso curto embaixo ("Adicionado marcador…  MUDAR"). */
+    private lateinit var snack: LinearLayout
+    private lateinit var snackText: TextView
+    private lateinit var snackAction: TextView
+    /** "↩ Voltar" depois de seguir um link ou uma nota. */
+    private lateinit var returnRow: LinearLayout
+    private var returnTo: Long? = null
+    private var marks: List<Bookmark> = emptyList()
+    private var markMode = false
+    private var markIndex = -1
     private var hits: List<SearchHit> = emptyList()
     private var hitIndex = -1
     private var searchTerm = ""
@@ -91,6 +108,7 @@ class ReaderActivity : Activity(), ReaderHost {
         }
         bookSecondsAtOpen = item.readingSeconds
         reloadGlossary()
+        marks = database.bookmarksFor(item.id)
         // Uma anotação aberta pela aba Notas leva direto ao ponto dela.
         val start = intent.getIntExtra(EXTRA_POSITION, -1).takeIf { it >= 0 } ?: item.position
         created.open(item, start)
@@ -176,7 +194,8 @@ class ReaderActivity : Activity(), ReaderHost {
         if (ev.actionMasked == MotionEvent.ACTION_DOWN) clock.interaction(System.currentTimeMillis())
         if (current == null) return super.dispatchTouchEvent(ev)
         if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
-            controlGesture = hits(topGroup, ev) || hits(bottomControls, ev) || hits(finishBanner, ev) || lockButton?.let { hits(it, ev) } == true
+            controlGesture = hits(topGroup, ev) || hits(bottomControls, ev) || hits(finishBanner, ev) || lockButton?.let { hits(it, ev) } == true ||
+                hits(markBar, ev) || hits(snack, ev) || hits(returnRow, ev) || (viewer?.loaded == true && hits(corner, ev))
         }
         if (controlGesture) return super.dispatchTouchEvent(ev)
         if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
@@ -256,6 +275,7 @@ class ReaderActivity : Activity(), ReaderHost {
             LinearLayout.LayoutParams(0, -2, 1f)
         )
         if (viewer.searchable) bar.addView(barButton("🔍", "Buscar no livro") { toggleSearch() })
+        bar.addView(barButton("🔖", "Marcadores") { showBookmarks() })
         bar.addView(barButton("📝", "Anotações") { showNotes() })
         bar.addView(barButton("⋮", "Mais opções") { showMenu(it) })
         topGroup.addView(bar)
@@ -269,6 +289,8 @@ class ReaderActivity : Activity(), ReaderHost {
             visibility = if (ReadingPrefs.ruler(this@ReaderActivity)) View.VISIBLE else View.GONE
         }
         bodyFrame.addView(ruler, FrameLayout.LayoutParams(-1, -1))
+        corner = BookmarkCorner(this) { toggleBookmark() }
+        bodyFrame.addView(corner, FrameLayout.LayoutParams(dp(64), dp(64), Gravity.TOP or Gravity.END))
         root.addView(bodyFrame, FrameLayout.LayoutParams(-1, -1))
         root.addView(topGroup, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
 
@@ -308,7 +330,43 @@ class ReaderActivity : Activity(), ReaderHost {
                 setMargins(0, 0, dp(12), dp(10))
             })
         }
+        returnRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            visibility = View.GONE
+            background = rounded(Palette.ink, 24)
+            elevation = dp(4).toFloat()
+            addView(TextView(this@ReaderActivity).apply {
+                text = "↩ Voltar"
+                textSize = 14f
+                gravity = Gravity.CENTER
+                minHeight = dp(44)
+                setPadding(dp(16), 0, dp(8), 0)
+                setTextColor(Color.WHITE)
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                contentDescription = "Voltar ao ponto de antes do link"
+                setOnClickListener { goBack() }
+            })
+            addView(TextView(this@ReaderActivity).apply {
+                text = "✕"
+                textSize = 14f
+                gravity = Gravity.CENTER
+                minWidth = dp(44)
+                minHeight = dp(44)
+                setTextColor(Color.rgb(202, 207, 214))
+                contentDescription = "Dispensar o Voltar"
+                setOnClickListener { offerReturnHide() }
+            })
+        }
+        bottomGroup.addView(returnRow, LinearLayout.LayoutParams(-2, -2).apply {
+            gravity = Gravity.START
+            setMargins(dp(12), 0, 0, dp(10))
+        })
+        snack = buildSnack()
+        bottomGroup.addView(snack, LinearLayout.LayoutParams(-1, -2))
         bottomGroup.addView(finishBanner)
+        markBar = buildMarkBar()
+        bottomGroup.addView(markBar, LinearLayout.LayoutParams(-1, -2))
         bottomControls = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.WHITE)
@@ -333,9 +391,15 @@ class ReaderActivity : Activity(), ReaderHost {
             bottomGroup.setPadding(insets.systemWindowInsetLeft, 0, insets.systemWindowInsetRight, 0)
             bottomControls.setPadding(0, 0, 0, bottomPadding + insets.systemWindowInsetBottom)
             // Na tela limpa (sem os controles) o aviso de fim também fica acima dos botões do sistema.
+            // A barra dos marcadores fica por último quando os controles estão escondidos.
+            val bottomInset = if (controlsShown) 0 else insets.systemWindowInsetBottom
             (finishBanner.layoutParams as? LinearLayout.LayoutParams)?.let {
-                it.bottomMargin = if (controlsShown) 0 else insets.systemWindowInsetBottom
+                it.bottomMargin = if (markBar.visibility == View.VISIBLE) 0 else bottomInset
                 finishBanner.layoutParams = it
+            }
+            (markBar.layoutParams as? LinearLayout.LayoutParams)?.let {
+                it.bottomMargin = bottomInset
+                markBar.layoutParams = it
             }
             insets
         }
@@ -510,6 +574,279 @@ class ReaderActivity : Activity(), ReaderHost {
         val item = current ?: return
         val show = view.loaded && view.atEnd() && !item.finished
         finishBanner.visibility = if (show) View.VISIBLE else View.GONE
+        updateCorner()
+    }
+
+    override fun tapHandled() {
+        lastTermTap = android.os.SystemClock.uptimeMillis()
+    }
+
+    // ---------- "Voltar" depois de um link ----------
+
+    override fun offerReturn(exactPosition: Long) {
+        returnTo = exactPosition
+        returnRow.visibility = View.VISIBLE
+    }
+
+    private fun goBack() {
+        val target = returnTo ?: return
+        offerReturnHide()
+        viewer?.goToExact(target)
+    }
+
+    private fun offerReturnHide() {
+        returnTo = null
+        returnRow.visibility = View.GONE
+    }
+
+    // ---------- marcadores ----------
+
+    private fun markOnScreen(): Int {
+        val view = viewer ?: return -1
+        if (!view.loaded) return -1
+        return Bookmarks.indexOnScreen(marks, view.exactPosition(), view.screenSpan())
+    }
+
+    /** Fita azul no canto quando a página da tela tem marcador; na barra, segue o marcador da tela. */
+    private fun updateCorner() {
+        if (!::corner.isInitialized) return
+        val index = markOnScreen()
+        corner.marked = index >= 0
+        if (markMode && index >= 0 && index != markIndex) {
+            markIndex = index
+            updateMarkBar()
+        }
+    }
+
+    /** Toque no canto: marca a página da tela, ou desmarca se ela já tem marcador. */
+    private fun toggleBookmark() {
+        val item = current ?: return
+        val view = viewer ?: return
+        if (!view.loaded) return
+        val top = view.exactPosition()
+        val span = view.screenSpan()
+        val here = marks.filter { Bookmarks.onScreen(it.position, top, span) }
+        if (here.isNotEmpty()) {
+            here.forEach { database.removeBookmark(it.id) }
+            reloadMarks()
+            showSnack("Marcador \"${here.first().name}\" removido", null, null)
+        } else {
+            val mark = database.addBookmark(item.id, top)
+            reloadMarks()
+            showSnack("Adicionado marcador \"${mark.name}\"", "MUDAR") { renameBookmark(mark) }
+        }
+    }
+
+    private fun reloadMarks() {
+        val item = current ?: return
+        val selected = marks.getOrNull(markIndex)?.id
+        marks = database.bookmarksFor(item.id)
+        markIndex = marks.indexOfFirst { it.id == selected }
+        if (markMode && marks.isEmpty()) exitMarkMode()
+        updateCorner()
+        updateMarkBar()
+    }
+
+    private fun buildSnack(): LinearLayout {
+        snackText = label("", 14f, Color.WHITE).apply { setPadding(dp(18), dp(14), dp(8), dp(14)) }
+        snackAction = TextView(this).apply {
+            textSize = 14f
+            gravity = Gravity.CENTER
+            minHeight = dp(48)
+            setPadding(dp(14), 0, dp(18), 0)
+            setTextColor(Color.rgb(255, 193, 7))
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(Color.rgb(50, 50, 50))
+            visibility = View.GONE
+            addView(snackText, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(snackAction)
+        }
+    }
+
+    private val hideSnack = Runnable { snack.visibility = View.GONE }
+
+    private fun showSnack(message: String, action: String?, onAction: (() -> Unit)?) {
+        snackText.text = message
+        snackAction.visibility = if (action != null) View.VISIBLE else View.GONE
+        snackAction.text = action ?: ""
+        snackAction.setOnClickListener {
+            snack.visibility = View.GONE
+            onAction?.invoke()
+        }
+        snack.visibility = View.VISIBLE
+        timerHandler.removeCallbacks(hideSnack)
+        timerHandler.postDelayed(hideSnack, 4_000)
+    }
+
+    private fun buildMarkBar(): LinearLayout {
+        fun button(text: String, color: Int, description: String, onClick: () -> Unit) = TextView(this).apply {
+            this.text = text
+            textSize = 20f
+            gravity = Gravity.CENTER
+            minHeight = dp(48)
+            setTextColor(Color.WHITE)
+            background = rounded(color, 3)
+            contentDescription = description
+            setOnClickListener { onClick() }
+        }
+        val teal = Color.rgb(0, 96, 122)
+        val gray = Color.rgb(85, 85, 85)
+        markLabel = label("", 15f, Palette.muted).apply { gravity = Gravity.CENTER }
+        markPrev = button("‹", gray, "Marcador anterior") { stepMark(-1) }
+        markNext = button("›", gray, "Próximo marcador") { stepMark(1) }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(Color.WHITE)
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            visibility = View.GONE
+            fun gap() = LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(dp(2), 0, dp(2), 0) }
+            addView(button("✕", teal, "Sair dos marcadores") { exitMarkMode() }, gap())
+            addView(button("☰", teal, "Lista de marcadores") { showBookmarks() }, gap())
+            addView(markLabel, LinearLayout.LayoutParams(0, -2, 1.4f))
+            addView(markPrev, gap())
+            addView(markNext, gap())
+        }
+    }
+
+    private fun updateMarkBar() {
+        if (!::markBar.isInitialized || !markMode) return
+        markLabel.text = if (markIndex >= 0) "${markIndex + 1} de ${marks.size}" else "${marks.size} marcador(es)"
+        val view = viewer
+        val top = view?.exactPosition() ?: 0
+        setLook(markPrev, previousMark(top) >= 0)
+        setLook(markNext, nextMark(top) >= 0)
+    }
+
+    private fun setLook(view: View, enabled: Boolean) {
+        view.isEnabled = enabled
+        view.alpha = if (enabled) 1f else 0.4f
+    }
+
+    /** Marcador anterior ao da tela (ou ao ponto de leitura, se a tela não tem marcador). */
+    private fun previousMark(top: Long): Int =
+        if (markIndex >= 0) markIndex - 1 else marks.indexOfLast { it.position < top }
+
+    private fun nextMark(top: Long): Int =
+        if (markIndex >= 0) (markIndex + 1).takeIf { it < marks.size } ?: -1 else marks.indexOfFirst { it.position > top }
+
+    private fun stepMark(direction: Int) {
+        val top = viewer?.exactPosition() ?: return
+        val target = if (direction < 0) previousMark(top) else nextMark(top)
+        if (target in marks.indices) openMark(target)
+    }
+
+    private fun openMark(index: Int) {
+        val view = viewer ?: return
+        markIndex = index
+        markMode = true
+        snack.visibility = View.GONE
+        markBar.visibility = View.VISIBLE
+        markBar.rootView?.requestApplyInsets()
+        view.goToExact(marks[index].position)
+        updateMarkBar()
+    }
+
+    private fun exitMarkMode() {
+        markMode = false
+        markIndex = -1
+        markBar.visibility = View.GONE
+        markBar.rootView?.requestApplyInsets()
+    }
+
+    /** Lista dos marcadores do livro: tocar leva à página; ⋮ renomeia ou exclui. */
+    private fun showBookmarks() {
+        val view = viewer ?: return
+        val list = marks
+        val builder = AlertDialog.Builder(this)
+            .setTitle(if (list.isEmpty()) "Marcadores" else "Marcadores (${list.size})")
+            .setNegativeButton("Fechar", null)
+        if (list.isEmpty()) {
+            builder.setMessage("Nenhum marcador ainda. Toque no canto de cima, à direita da página, para marcá-la. Toque de novo no canto para desmarcar.")
+            builder.show()
+            return
+        }
+        val rows = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(4), dp(12), dp(4))
+        }
+        val dialog = builder.setView(android.widget.ScrollView(this).apply { addView(rows) }).create()
+        list.forEachIndexed { index, mark ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                minimumHeight = dp(56)
+                setPadding(dp(14), 0, 0, 0)
+                background = rounded(Color.rgb(236, 233, 226), 8)
+                isClickable = true
+                setOnClickListener {
+                    dialog.dismiss()
+                    openMark(index)
+                }
+            }
+            row.addView(label(mark.name, 16f, Palette.ink).apply {
+                maxLines = 2
+                ellipsize = TextUtils.TruncateAt.END
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+            row.addView(label(view.describe((mark.position / view.exactScale).toInt()), 14f, Palette.muted).apply {
+                setPadding(dp(8), 0, dp(4), 0)
+            })
+            row.addView(TextView(this).apply {
+                text = "⋮"
+                textSize = 20f
+                gravity = Gravity.CENTER
+                minWidth = dp(44)
+                minHeight = dp(52)
+                setTextColor(Palette.muted)
+                contentDescription = "Opções de ${mark.name}"
+                setOnClickListener { anchor ->
+                    val popup = PopupMenu(this@ReaderActivity, anchor)
+                    popup.menu.add(Menu.NONE, 0, 0, "Editar nome")
+                    popup.menu.add(Menu.NONE, 1, 1, "Excluir")
+                    popup.setOnMenuItemClickListener { choice ->
+                        dialog.dismiss()
+                        if (choice.itemId == 0) renameBookmark(mark, reopenList = true) else {
+                            database.removeBookmark(mark.id)
+                            reloadMarks()
+                            Toast.makeText(this@ReaderActivity, "\"${mark.name}\" excluído.", Toast.LENGTH_SHORT).show()
+                            showBookmarks()
+                        }
+                        true
+                    }
+                    popup.show()
+                }
+            })
+            rows.addView(row, LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, dp(4), 0, dp(4)) })
+        }
+        dialog.show()
+    }
+
+    private fun renameBookmark(mark: Bookmark, reopenList: Boolean = false) {
+        val input = EditText(this).apply {
+            setText(mark.name)
+            selectAll()
+            maxLines = 1
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+        }
+        val container = FrameLayout(this).apply {
+            setPadding(dp(22), dp(8), dp(22), 0)
+            addView(input)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Nome do marcador")
+            .setView(container)
+            .setNegativeButton("Cancelar") { _, _ -> if (reopenList) showBookmarks() }
+            .setPositiveButton("Salvar") { _, _ ->
+                val name = input.text.toString().trim()
+                if (name.isNotEmpty()) database.renameBookmark(mark.id, name)
+                reloadMarks()
+                if (reopenList) showBookmarks()
+            }
+            .show()
     }
 
     private fun showMenu(anchor: View) {
@@ -925,6 +1262,6 @@ class ReaderActivity : Activity(), ReaderHost {
         private const val MENU_ANNOTATE = 0x414e
         private const val MENU_TERM = 0x5445
         /** Espera curta depois do toque, para saber se ele caiu num termo do glossário. */
-        private const val TERM_TAP_WINDOW = 120L
+        private const val TERM_TAP_WINDOW = 180L
     }
 }

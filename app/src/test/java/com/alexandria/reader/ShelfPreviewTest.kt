@@ -109,6 +109,43 @@ class ShelfPreviewTest {
     }
 
     @Test
+    fun bookmarkPreview() {
+        val dir = File(System.getenv("SHELF_PREVIEW") ?: "")
+        assumeTrue(dir.isDirectory)
+        context.deleteDatabase("alexandria.db")
+        context.getSharedPreferences("reader", Context.MODE_PRIVATE).edit().clear().commit()
+        val text = File(context.cacheDir, "Dom Casmurro.txt").apply {
+            writeText((1..40).joinToString("\n\n") {
+                "Uma noite destas, vindo da cidade para o Engenho Novo, encontrei no trem da Central um rapaz aqui do bairro, que eu conheço de vista e de chapéu. Cumprimentou-me, sentou-se ao pé de mim, falou da lua e dos ministros, e acabou recitando-me versos."
+            })
+        }
+        val id = LibraryDatabase(context).use { it.add(text.name, android.net.Uri.fromFile(text).toString(), "txt")!! }
+        val activity = Robolectric.buildActivity(
+            ReaderActivity::class.java,
+            android.content.Intent(context, ReaderActivity::class.java).putExtra(ReaderActivity.EXTRA_ITEM_ID, id)
+        ).setup().visible().get()
+        fun settle(ms: Long) {
+            val deadline = System.currentTimeMillis() + ms
+            while (System.currentTimeMillis() < deadline) {
+                Thread.sleep(50)
+                shadowOf(Looper.getMainLooper()).idle()
+            }
+        }
+        settle(3_000)
+        val root = activity.window.decorView
+        find(root) { it is BookmarkCorner }!!.performClick()
+        settle(300)
+        save(root, File(dir, "marcador-adicionado.png"))
+        find(root) { it is TextView && it.text == "🔖" }!!.performClick()
+        settle(300)
+        val dialog = org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog()
+        save(dialog.window!!.decorView, File(dir, "marcador-lista.png"))
+        (find(dialog.window!!.decorView) { it is TextView && it.text == "Marcador 1" }!!.parent as View).performClick()
+        settle(1_000)
+        save(root, File(dir, "marcador-barra.png"))
+    }
+
+    @Test
     fun chromePreview() {
         val dir = File(System.getenv("SHELF_PREVIEW") ?: "")
         assumeTrue(dir.isDirectory)

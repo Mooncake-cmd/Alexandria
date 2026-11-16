@@ -56,7 +56,13 @@ data class Note(
     val createdAt: Long
 )
 
-class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.db", null, 7) {
+/**
+ * Marcador de página: um ponto do livro para voltar rápido. [position] está em
+ * [BookViewer.exactPosition] (página nos formatos paginados; fração fina nos de texto).
+ */
+data class Bookmark(val id: Long, val itemId: Long, val name: String, val position: Long, val createdAt: Long)
+
+class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.db", null, 8) {
     override fun onConfigure(db: SQLiteDatabase) {
         db.setForeignKeyConstraintsEnabled(true)
     }
@@ -82,6 +88,21 @@ class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.
         createNotesTable(db)
         createReadingTables(db)
         createReadingLog(db)
+        createBookmarks(db)
+    }
+
+    /** Marcadores de página (desde a 0.16). Saem junto com o livro. */
+    private fun createBookmarks(db: SQLiteDatabase) {
+        db.execSQL("""
+            CREATE TABLE bookmarks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                item_id INTEGER NOT NULL REFERENCES library_items(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                created_at INTEGER NOT NULL
+            )
+        """.trimIndent())
+        db.execSQL("CREATE INDEX bookmarks_item ON bookmarks(item_id)")
     }
 
     /**
@@ -115,6 +136,7 @@ class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.
             db.execSQL("ALTER TABLE library_items ADD COLUMN archived_at INTEGER NOT NULL DEFAULT 0")
         }
         if (oldVersion < 7) createReadingLog(db)
+        if (oldVersion < 8) createBookmarks(db)
     }
 
     /** Tempo lido por dia (para a sequência de dias) e glossário de termos por livro. */
@@ -416,6 +438,43 @@ class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.
         return result
     }
 
+    // ---------- marcadores ----------
+
+    /** Cria um marcador com o próximo nome livre ("Marcador 1", "Marcador 2"…). */
+    fun addBookmark(itemId: Long, position: Long): Bookmark {
+        val name = Bookmarks.nextName(bookmarksFor(itemId).map { it.name })
+        val now = System.currentTimeMillis()
+        val values = ContentValues().apply {
+            put("item_id", itemId)
+            put("name", name)
+            put("position", position)
+            put("created_at", now)
+        }
+        val id = writableDatabase.insertOrThrow("bookmarks", null, values)
+        return Bookmark(id, itemId, name, position, now)
+    }
+
+    fun renameBookmark(id: Long, name: String) {
+        val values = ContentValues().apply { put("name", name.trim()) }
+        writableDatabase.update("bookmarks", values, "id = ?", arrayOf(id.toString()))
+    }
+
+    fun removeBookmark(id: Long) {
+        writableDatabase.delete("bookmarks", "id = ?", arrayOf(id.toString()))
+    }
+
+    /** Marcadores de um livro, na ordem em que aparecem nele. */
+    fun bookmarksFor(itemId: Long): List<Bookmark> {
+        val result = mutableListOf<Bookmark>()
+        readableDatabase.rawQuery(
+            "SELECT id, item_id, name, position, created_at FROM bookmarks WHERE item_id = ? ORDER BY position, id",
+            arrayOf(itemId.toString())
+        ).use { c ->
+            while (c.moveToNext()) result += Bookmark(c.getLong(0), c.getLong(1), c.getString(2), c.getLong(3), c.getLong(4))
+        }
+        return result
+    }
+
     private fun Cursor.toItem() = LibraryItem(
         getLong(0), getString(1), getString(2), getString(3), getLong(4), getInt(5), getInt(6), getLong(7),
         getLong(8), getString(9), getLong(10), getLong(11), getLong(12)
@@ -425,6 +484,29 @@ class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.
         const val SELECT = "SELECT id, name, uri, format, added_at, last_position, page_count, opened_at, " +
             "finished_at, shelf, reading_seconds, file_size, archived_at FROM library_items"
     }
+}
+
+/** Regras dos marcadores. Kotlin puro, coberto por testes. */
+object Bookmarks {
+    /** Nome do próximo marcador: "Marcador N", com N uma unidade acima do maior já usado. */
+    fun nextName(existing: List<String>): String {
+        val used = existing.mapNotNull { Regex("^Marcador (\\d+)$").find(it.trim())?.groupValues?.get(1)?.toIntOrNull() }
+        return "Marcador ${(used.maxOrNull() ?: 0) + 1}"
+    }
+
+    /**
+     * O marcador [mark] está na tela que começa em [top] e mostra [span]? Nos formatos paginados
+     * ([span] 1) é a mesma página. Nos de texto, conta da linha do alto até o começo da próxima
+     * tela, com uma folga pequena porque voltar a um ponto pode parar uma linha acima.
+     */
+    fun onScreen(mark: Long, top: Long, span: Long): Boolean {
+        if (span <= 1) return mark == top
+        val slack = (span / 20).coerceAtLeast(1)
+        return mark >= top - slack && mark < top + span - slack
+    }
+
+    /** Índice do marcador da tela atual, ou -1. */
+    fun indexOnScreen(marks: List<Bookmark>, top: Long, span: Long): Int = marks.indexOfFirst { onScreen(it.position, top, span) }
 }
 
 /** Regras das prateleiras. Kotlin puro, coberto por testes. */

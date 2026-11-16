@@ -18,6 +18,10 @@ interface ReaderHost {
     fun fail(message: String)
     /** Avisa que a posição mudou (atualiza o aviso de "chegou ao fim"). */
     fun onPositionChanged()
+    /** O toque caiu num link do livro: não deve também mostrar/esconder os controles. */
+    fun tapHandled() = Unit
+    /** O livro pulou (link, nota): oferece o "Voltar" para [exactPosition], o ponto de antes. */
+    fun offerReturn(exactPosition: Long) = Unit
 }
 
 /** Resultado de busca: onde fica e um trecho para mostrar na lista. */
@@ -45,6 +49,16 @@ abstract class BookViewer(protected val host: ReaderHost) {
     open fun pageCount(): Int = 0
 
     abstract fun goTo(position: Int)
+
+    /**
+     * Posição precisa, para marcadores e para o "Voltar": nos formatos paginados é a página (igual a
+     * [position]); nos de texto, [exactScale] vezes mais fina que [position] (0 a 1.000.000).
+     */
+    open val exactScale: Int = 1
+    open fun exactPosition(): Long = position().toLong()
+    open fun goToExact(position: Long) = goTo((position / exactScale).toInt())
+    /** Quanto de [exactPosition] cabe numa tela (1 = uma página). */
+    open fun screenSpan(): Long = 1
 
     abstract fun atEnd(): Boolean
 
@@ -125,6 +139,9 @@ abstract class BookViewer(protected val host: ReaderHost) {
     /** Executa na thread principal, a menos que a tela já tenha fechado. */
     protected fun onUi(block: () -> Unit) = context.runOnUiThread { if (!host.closed) block() }
 }
+
+/** Escala de [BookViewer.exactPosition] nos formatos de texto. */
+const val EXACT_SCALE = 100
 
 /** Preferências de leitura compartilhadas pelos formatos de texto (TXT, DOCX, EPUB). */
 object ReadingPrefs {

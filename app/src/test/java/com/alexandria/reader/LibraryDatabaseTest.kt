@@ -200,6 +200,7 @@ class LibraryDatabaseTest {
         LibraryDatabase(context).use { it.writableDatabase }
         SQLiteDatabase.openOrCreateDatabase(file, null).use { old ->
             old.execSQL("DROP TABLE reading_log")
+            old.execSQL("DROP TABLE bookmarks")
             old.execSQL("INSERT INTO library_items (name, uri, format, added_at, reading_seconds) VALUES ('A.pdf', 'content://a', 'pdf', 0, 600)")
             old.execSQL("INSERT INTO library_items (name, uri, format, added_at, reading_seconds) VALUES ('B.pdf', 'content://b', 'pdf', 0, 1800)")
             old.execSQL("INSERT INTO reading_days (day, seconds) VALUES ('2026-11-01', 1200), ('2026-11-02', 1200)")

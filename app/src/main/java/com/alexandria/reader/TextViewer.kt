@@ -26,6 +26,7 @@ import java.io.ByteArrayOutputStream
 import java.util.zip.ZipFile
 import kotlin.math.floor
 import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 
 /** Conteúdo de texto já dividido em blocos para a lista do leitor. */
 class TextContent(val chunks: List<CharSequence>, val truncated: Boolean = false)
@@ -445,14 +446,46 @@ class TextViewer(host: ReaderHost, private val load: (LibraryItem) -> TextConten
      * Posição de leitura como fração de 0 a 10000: bloco visível no topo mais quanto dele já
      * passou. Não depende do tamanho da fonte nem da rotação, e é o mesmo formato da versão 0.2.
      */
-    private fun textFraction(): Int {
+    private fun textFraction(): Int = (topFraction() * 10_000).roundToInt().coerceIn(0, 10_000)
+
+    /** Fração do texto (0 a 1) na linha de leitura, no alto da tela. No fim do livro, 1. */
+    private fun topFraction(): Double {
         val count = chunks.size
-        if (count == 0 || list.childCount == 0) return 0
-        if (!list.canScrollVertically(1)) return 10_000
+        if (count == 0 || list.childCount == 0) return 0.0
+        if (!list.canScrollVertically(1)) return 1.0
         val slot = readingSlot()
         val child = list.getChildAt(slot)
         val passed = ((list.paddingTop - child.top).toDouble() / child.height.coerceAtLeast(1)).coerceIn(0.0, 1.0)
-        return ((list.firstVisiblePosition + slot + passed) / count * 10_000).roundToInt().coerceIn(0, 10_000)
+        return ((list.firstVisiblePosition + slot + passed) / count).coerceIn(0.0, 1.0)
+    }
+
+    /** Fração do texto no pé da área de leitura (para saber quanto cabe numa tela). */
+    private fun bottomFraction(): Double {
+        val count = chunks.size
+        if (count == 0 || list.childCount == 0) return 0.0
+        val y = list.height - list.paddingBottom
+        for (i in 0 until list.childCount) {
+            val child = list.getChildAt(i)
+            if (child.bottom >= y) {
+                val passed = ((y - child.top).toDouble() / child.height.coerceAtLeast(1)).coerceIn(0.0, 1.0)
+                return ((list.firstVisiblePosition + i + passed) / count).coerceIn(0.0, 1.0)
+            }
+        }
+        return ((list.lastVisiblePosition + 1).toDouble() / count).coerceIn(0.0, 1.0)
+    }
+
+    override val exactScale = EXACT_SCALE
+    override fun exactPosition(): Long = (topFraction() * 10_000L * EXACT_SCALE).roundToLong()
+    override fun goToExact(position: Long) = restoreExact(position.toDouble() / (10_000.0 * EXACT_SCALE))
+    override fun screenSpan(): Long {
+        if (!ready || list.childCount == 0) return 1
+        // Do alto da tela até o pé, medido sem o atalho "fim do livro = 1".
+        val count = chunks.size
+        val slot = readingSlot()
+        val child = list.getChildAt(slot)
+        val passed = ((list.paddingTop - child.top).toDouble() / child.height.coerceAtLeast(1)).coerceIn(0.0, 1.0)
+        val top = (list.firstVisiblePosition + slot + passed) / count
+        return ((bottomFraction() - top) * 10_000L * EXACT_SCALE).roundToLong().coerceAtLeast(1)
     }
 
     /**
@@ -466,20 +499,19 @@ class TextViewer(host: ReaderHost, private val load: (LibraryItem) -> TextConten
     }
 
     /** Leva a lista até [fraction]: posiciona o bloco e, depois do layout, rola dentro dele. */
-    private fun restoreFraction(fraction: Int) {
+    private fun restoreFraction(fraction: Int) = restoreExact(fraction.coerceIn(0, 10_000) / 10_000.0)
+
+    /** Leva a lista até a fração [fraction] (0 a 1) do texto. */
+    private fun restoreExact(fraction: Double) {
         val count = chunks.size
         if (count == 0) return
         // O epsilon evita que 5000/10000 de 76 blocos vire 37,999… e caia no bloco anterior.
-        val exact = fraction.coerceIn(0, 10_000).toDouble() * count / 10_000 + 1e-6
+        val exact = fraction.coerceIn(0.0, 1.0) * count + 1e-6
         val index = floor(exact).toInt().coerceIn(0, count - 1)
         val passed = (exact - index).coerceIn(0.0, 1.0)
         scrollToChunk(index) { child -> (passed * child.height).toInt() }
     }
 
-    /**
-     * Posiciona o bloco [index] no topo; quando o layout termina (e a altura dele é conhecida),
-     * rola mais [extra] pixels dentro dele.
-     */
     private fun scrollToChunk(index: Int, extra: (View) -> Int) {
         // O deslocamento já é medido a partir do padding do topo.
         list.setSelectionFromTop(index, 0)

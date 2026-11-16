@@ -1,6 +1,6 @@
 # Alexandria — projeto Android
 
-**Versão:** 0.15.0  
+**Versão:** 0.16.0  
 **Pacote:** `com.alexandria.reader`  
 **Plataforma:** Android 6.0 ou superior (API 23+)  
 **Idioma da interface:** Português (Brasil)
@@ -45,7 +45,7 @@
 | CBZ | imagens do ZIP em ordem natural (pág. 2 antes da 10) | os mesmos do PDF |
 | CBR | RAR 4/5 pelo motor **EraComic** (ou como CBZ, se for ZIP disfarçado) | os mesmos do PDF |
 | DJVU | motor **EraDjVu** (DjVuLibre) | os mesmos do PDF |
-| EPUB 2 e 3 | WebView do sistema, capítulo por capítulo | sumário, busca, letra maior/menor, tema escuro |
+| EPUB 2 e 3 | WebView do sistema, capítulo por capítulo | sumário, busca, letra maior/menor, tema escuro, **notas de rodapé em janela** |
 | MOBI, AZW, AZW3 | convertido em EPUB pelo motor **EraMOBI** (libmobi) na primeira leitura | os mesmos do EPUB |
 | DOCX | texto com títulos, listas, negrito, itálico, sublinhado e **imagens** | busca, letra, tema escuro |
 | TXT | blocos numa lista (fluido mesmo em arquivos grandes) | UTF-8/UTF-16/Windows-1252, busca, letra, tema escuro |
@@ -76,6 +76,15 @@ Em todos os formatos:
 - **Bloquear movimento para os lados** (PDF, DJVU, quadrinhos): com os controles à vista, o botão **⟷ Bloquear** no
   canto de baixo à direita trava o arrastar para os lados; zoom (pinça e toque duplo) e o movimento para cima e para
   baixo continuam. A escolha vale para todos os livros até ser desligada.
+- **Marcadores de página**: toque no **canto de cima, à direita** da página (um botão invisível) para marcá-la; aparece
+  a fita azul e o aviso "Adicionado marcador…" com **MUDAR** para trocar o nome. Tocar de novo no canto desmarca. O
+  botão **🔖** da barra de cima abre a lista: tocar num marcador leva à página dele; **⋮** edita o nome ou exclui. Ao
+  escolher um marcador, a barra de baixo mostra **✕** (sair), **☰** (voltar à lista), "1 de 3" e as setas **‹ ›** para
+  ir de um marcador a outro.
+- **Notas de rodapé e links** (EPUB, MOBI): tocar no número de uma nota abre o texto dela numa **janela**, sem sair da
+  página ("Ir para a nota" mostra no lugar). O toque não precisa ser exato: vale o link mais perto do dedo (até ~3 mm).
+  Notas no fim do livro ou em arquivos fora da ordem de leitura também abrem. Outros links internos pulam direto, e o
+  botão **↩ Voltar** leva de volta ao ponto de antes.
 - **Modo foco** (menu ⋮ → "Modo foco (só o texto da régua)"): liga a régua e deixa **preto** tudo fora dela; só o texto
   sob a faixa fica visível. O mesmo menu desliga (volta a só escurecer).
 - **Glossário do livro**: selecione uma palavra ou expressão ("Arrakis", "Casa Atreides") e toque em **"Definir termo"**.
