@@ -4,12 +4,20 @@ import { turnDirection } from '../core/pages'
 import { atkinsonFontFaces } from './fonts'
 import { ensureSpacer, FRAME_TOP, isLastPage, maskTop, nextPage, previousPage, snapToLine } from './framePager'
 import type { ReflowBook } from './reflowBook'
+import { markHtml, type GlossaryTerm } from '../core/glossary'
+import { searchRanges, setHighlight, textMap } from './textRanges'
+import { fold } from '../core/text'
+import type { SearchHit } from './ToolsPanel'
 import { DEFAULT_TEXT_SIZE, MAX_TEXT_SIZE, MIN_TEXT_SIZE } from './prefs'
 
 export interface EpubReaderHandle {
   position: () => number
   goToChapter: (index: number) => void
   turnChapter: (direction: 1 | -1) => void
+  goTo: (position: number) => void
+  search: (term: string, isCancelled: () => boolean) => Promise<SearchHit[]>
+  showHit: (hit: SearchHit, term: string) => void
+  clearSearch: () => void
 }
 
 interface Props {
@@ -25,6 +33,9 @@ interface Props {
   /** Clique simples no capítulo (fora de links e seleções) e clique duplo. */
   onTap?: () => void
   onDoubleTap?: () => void
+  terms?: GlossaryTerm[]
+  onTerm?: (termId: number) => void
+  onSelection?: (text: string | null, rect?: DOMRect) => void
 }
 
 /**
@@ -32,7 +43,7 @@ interface Props {
  * internet), com o CSS de leitura do conforto visual. Modo páginas com linhas inteiras e
  * passagem automática de capítulo; rolagem contínua dentro do capítulo.
  */
-export function EpubReader({ book, paged, textSize, comfort, start, onPosition, onTextSize, handle, onTap, onDoubleTap }: Props) {
+export function EpubReader({ book, paged, textSize, comfort, start, onPosition, onTextSize, handle, onTap, onDoubleTap, terms = [], onTerm, onSelection }: Props) {
   const frame = useRef<HTMLIFrameElement>(null)
   const [chapter, setChapter] = useState(() => Math.min(book.chapterCount - 1, Math.floor((start * book.chapterCount) / 10000 + 1e-6)))
   const [src, setSrc] = useState<string | null>(null)
@@ -42,6 +53,8 @@ export function EpubReader({ book, paged, textSize, comfort, start, onPosition, 
   const lastPosition = useRef(start)
 
   const win = () => frame.current?.contentWindow ?? null
+  // Só recarrega o capítulo quando os termos mudam de verdade (não a cada nova lista igual).
+  const termsKey = terms.map((t) => `${t.id}:${t.term}`).join('|')
 
   const range = (w: Window) => {
     const spacer = paged && w.document.getElementById('alx-spacer') ? w.innerHeight : 0
@@ -79,7 +92,8 @@ export function EpubReader({ book, paged, textSize, comfort, start, onPosition, 
     let url: string | null = null
     book.chapter(chapter).then(({ html, type }) => {
       if (!alive) return
-      url = URL.createObjectURL(new Blob([html], { type }))
+      // Termos do glossário viram <span class="alx-term"> (como no app).
+      url = URL.createObjectURL(new Blob([markHtml(html, terms)], { type }))
       setSrc(url)
     }).catch((e) => {
       console.error(e)
@@ -89,7 +103,7 @@ export function EpubReader({ book, paged, textSize, comfort, start, onPosition, 
       alive = false
       if (url) setTimeout(() => URL.revokeObjectURL(url!), 1000)
     }
-  }, [book, chapter])
+  }, [book, chapter, termsKey])
 
   // Mudou modo, letra ou aparência: guarda o ponto e redesenha o capítulo.
   const styleKey = `${paged}|${textSize}|${JSON.stringify(comfort)}`
@@ -120,10 +134,68 @@ export function EpubReader({ book, paged, textSize, comfort, start, onPosition, 
     frame.current?.animate?.([{ opacity: 0.6 }, { opacity: 1 }], { duration: 160 })
   }, [paged, chapter, openChapter])
 
+  const pendingFind = useRef<{ term: string; nth: number } | null>(null)
+  /** Marca a ocorrência número `nth` do termo no capítulo aberto e vai até ela. */
+  const find = (term: string, nth: number) => {
+    const w = win()
+    if (!w?.document.body) return
+    const ranges = searchRanges(textMap(w.document.body), term)
+    const range = ranges[Math.min(nth, ranges.length - 1)]
+    setHighlight(w, 'alx-search', ranges)
+    setHighlight(w, 'alx-search-current', range ? [range] : [])
+    if (!range) return
+    const r = range.getBoundingClientRect()
+    w.scrollBy(0, Math.round(r.top - (paged ? FRAME_TOP + 4 : w.innerHeight * 0.3)))
+    if (paged) snapToLine(w)
+    report()
+  }
   handle?.({
     position,
     goToChapter: (index) => openChapter(index, 0),
-    turnChapter: (direction) => openChapter(chapter + direction, 0)
+    turnChapter: (direction) => openChapter(chapter + direction, 0),
+    goTo: (value) => {
+      const exact = (Math.min(10000, Math.max(0, value)) * book.chapterCount) / 10000 + 1e-6
+      const index = Math.min(book.chapterCount - 1, Math.floor(exact))
+      if (index === chapter && win()) {
+        const w = win()!
+        w.scrollTo(0, Math.round((exact - index) * range(w)))
+        if (paged) snapToLine(w)
+        report()
+      } else openChapter(index, exact - index)
+    },
+    async search(term, isCancelled) {
+      const hits: SearchHit[] = []
+      for (let i = 0; i < book.chapterCount && !isCancelled(); i++) {
+        const { html, type } = await book.chapter(i)
+        const doc = new DOMParser().parseFromString(html, type)
+        const text = (doc.body ?? doc.documentElement).textContent ?? ''
+        const haystack = fold(text)
+        const needle = fold(term.trim())
+        if (!needle) break
+        let nth = 0
+        for (let at = haystack.indexOf(needle); at >= 0; at = haystack.indexOf(needle, at + needle.length)) {
+          const position = Math.round(((i + at / Math.max(1, text.length)) / book.chapterCount) * 10000)
+          const title = book.chapterTitles[i] ?? `Cap. ${i + 1}`
+          hits.push({ position, label: title, excerpt: `…${text.slice(Math.max(0, at - 40), at + needle.length + 60).replace(/\s+/g, ' ')}…`, data: { chapter: i, nth: nth++ } })
+        }
+      }
+      return hits
+    },
+    showHit(hit, term) {
+      const { chapter: index, nth } = hit.data as { chapter: number; nth: number }
+      if (index === chapter && ready.current) find(term, nth)
+      else {
+        pendingFind.current = { term, nth }
+        openChapter(index, (hit.position * book.chapterCount) / 10000 - index)
+      }
+    },
+    clearSearch() {
+      const w = win()
+      if (w) {
+        setHighlight(w, 'alx-search', [])
+        setHighlight(w, 'alx-search-current', [])
+      }
+    }
   })
 
   // Teclado e roda do mouse (no site e dentro do capítulo).
@@ -163,8 +235,8 @@ export function EpubReader({ book, paged, textSize, comfort, start, onPosition, 
       wheel.current.last = now
     }
   }
-  const handlers = useRef({ onKey, onWheel, onTap, onDoubleTap })
-  handlers.current = { onKey, onWheel, onTap, onDoubleTap }
+  const handlers = useRef({ onKey, onWheel, onTap, onDoubleTap, onTerm, onSelection })
+  handlers.current = { onKey, onWheel, onTap, onDoubleTap, onTerm, onSelection }
   useEffect(() => {
     const key = (e: KeyboardEvent) => handlers.current.onKey(e)
     window.addEventListener('keydown', key)
@@ -180,7 +252,10 @@ export function EpubReader({ book, paged, textSize, comfort, start, onPosition, 
     style.setAttribute('id', 'alx-comfort')
     style.textContent = `${epubCss(comfort, atkinsonFontFaces())}
       html { font-size: ${Math.round((textSize / DEFAULT_TEXT_SIZE) * 100)}% !important; ${paged ? 'overflow: hidden !important;' : ''} }
-      body { padding-top: ${paged ? FRAME_TOP + 10 : 20}px !important; }`
+      body { padding-top: ${paged ? FRAME_TOP + 10 : 20}px !important; }
+      ::highlight(alx-search) { background-color: rgba(255, 213, 0, 0.55); }
+      ::highlight(alx-search-current) { background-color: rgba(255, 140, 0, 0.75); }
+      .alx-term { cursor: pointer; }`
     ;(doc.head ?? doc.documentElement).appendChild(style)
     if (paged) ensureSpacer(w)
     const { fraction, fragment } = pending.current
@@ -189,6 +264,20 @@ export function EpubReader({ book, paged, textSize, comfort, start, onPosition, 
     else w.scrollTo(0, Math.round(fraction * range(w)))
     if (paged) snapToLine(w)
     ready.current = true
+    if (pendingFind.current) {
+      const { term, nth } = pendingFind.current
+      pendingFind.current = null
+      setTimeout(() => find(term, nth), 50)
+    }
+    // Seleção no capítulo: a moldura mostra a barra com Copiar, Definir termo e Anotar.
+    doc.addEventListener('selectionchange', () => {
+      const sel = w.getSelection()
+      const text = sel && !sel.isCollapsed ? sel.toString().trim() : ''
+      if (!text || !sel?.rangeCount) return handlers.current.onSelection?.(null)
+      const r = sel.getRangeAt(0).getBoundingClientRect()
+      const frameBox = frame.current!.getBoundingClientRect()
+      handlers.current.onSelection?.(text, new DOMRect(r.left + frameBox.left, r.top + frameBox.top, r.width, r.height))
+    })
 
     w.addEventListener('keydown', (e) => handlers.current.onKey(e))
     w.addEventListener('wheel', (e) => handlers.current.onWheel(e), { passive: false })
@@ -204,6 +293,11 @@ export function EpubReader({ book, paged, textSize, comfort, start, onPosition, 
     })
     // Links internos (notas, sumário do livro) abrem o capítulo certo; externos são ignorados.
     doc.addEventListener('click', async (e) => {
+      const term = (e.target as Element | null)?.closest?.('.alx-term')
+      if (term && handlers.current.onTerm) {
+        handlers.current.onTerm(Number(term.getAttribute('data-term')))
+        return
+      }
       const link = (e.target as Element | null)?.closest?.('a[href]')
       if (!link) {
         if (w.getSelection()?.isCollapsed ?? true) handlers.current.onTap?.()

@@ -2,10 +2,17 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preac
 import { fitPage, turnDirection } from '../core/pages'
 import { pageMatrix, svgMatrixValues, THEMES, hex, type Comfort } from '../core/comfort'
 import type { PageSource } from './pageSource'
+import type { GlossaryTerm } from '../core/glossary'
+import { fold } from '../core/text'
+import { searchRanges, setHighlight, termAtPoint, termRanges, textMap } from './textRanges'
+import type { SearchHit } from './ToolsPanel'
 
 export interface PageReaderHandle {
   goTo: (page: number) => void
   current: () => number
+  search?: (term: string, isCancelled: () => boolean) => Promise<SearchHit[]>
+  showHit: (hit: SearchHit, term: string) => void
+  clearSearch: () => void
 }
 
 interface Props {
@@ -16,6 +23,8 @@ interface Props {
   start: number
   onPage: (page: number, atEnd: boolean, zoom: number) => void
   handle?: (h: PageReaderHandle) => void
+  terms?: GlossaryTerm[]
+  onTerm?: (termId: number) => void
 }
 
 const MIN_ZOOM = 1
@@ -29,7 +38,7 @@ const PAD = 12
  * ou clique duplo no meio; com zoom, roda e barras de rolagem movem a página. O bloqueio lateral
  * trava o movimento para os lados.
  */
-export function PageReader({ source, paged, sideLock, comfort, start, onPage, handle }: Props) {
+export function PageReader({ source, paged, sideLock, comfort, start, onPage, handle, terms = [], onTerm }: Props) {
   const scroll = useRef<HTMLDivElement>(null)
   const [area, setArea] = useState({ w: 0, h: 0 })
   const [zoom, setZoom] = useState(1)
@@ -93,7 +102,63 @@ export function PageReader({ source, paged, sideLock, comfort, start, onPage, ha
     }
   }, [paged, source])
 
-  handle?.({ goTo: (p) => goTo(p), current: () => (paged ? page : visiblePage()) })
+  // Marcas na camada de texto do PDF: resultado da busca e termos do glossário, por página.
+  const searchTerm = useRef('')
+  const layers = useRef(new Map<number, HTMLElement>())
+  const termMarks = useRef<{ range: Range; termId: number }[]>([])
+  const refreshMarks = () => {
+    const search: Range[] = []
+    const marks: { range: Range; termId: number }[] = []
+    for (const container of layers.current.values()) {
+      if (!container.isConnected) continue
+      const map = textMap(container)
+      if (searchTerm.current) search.push(...searchRanges(map, searchTerm.current))
+      if (terms.length) marks.push(...termRanges(map, terms))
+    }
+    termMarks.current = marks
+    setHighlight(window, 'alx-search', search)
+    setHighlight(window, 'alx-term', marks.map((m) => m.range))
+  }
+  useEffect(() => {
+    refreshMarks()
+    return () => {
+      setHighlight(window, 'alx-term', [])
+      setHighlight(window, 'alx-search', [])
+    }
+  }, [terms])
+  const onText = (index: number, container: HTMLElement) => {
+    layers.current.set(index, container)
+    refreshMarks()
+  }
+
+  handle?.({
+    goTo: (p) => goTo(p),
+    current: () => (paged ? page : visiblePage()),
+    search: source.pageText
+      ? async (term, isCancelled) => {
+          const needle = fold(term.trim())
+          const hits: SearchHit[] = []
+          if (!needle) return hits
+          for (let i = 0; i < source.pageCount && !isCancelled(); i++) {
+            const text = await source.pageText!(i)
+            const haystack = fold(text)
+            for (let at = haystack.indexOf(needle); at >= 0; at = haystack.indexOf(needle, at + needle.length)) {
+              hits.push({ position: i, label: `Pág. ${i + 1}`, excerpt: `…${text.slice(Math.max(0, at - 40), at + needle.length + 60).replace(/\s+/g, ' ')}…` })
+            }
+          }
+          return hits
+        }
+      : undefined,
+    showHit: (hit, term) => {
+      searchTerm.current = term
+      goTo(hit.position)
+      setTimeout(refreshMarks, 400)
+    },
+    clearSearch: () => {
+      searchTerm.current = ''
+      refreshMarks()
+    }
+  })
 
   const turn = (direction: 1 | -1) => {
     if (paged) {
@@ -230,6 +295,7 @@ export function PageReader({ source, paged, sideLock, comfort, start, onPage, ha
         filter={filter}
         root={scroll}
         onAspect={() => bump((n) => n + 1)}
+        onText={onText}
         nodeRef={(node) => (pageRefs.current[index] = node)}
       />
     )
@@ -250,6 +316,14 @@ export function PageReader({ source, paged, sideLock, comfort, start, onPage, ha
         style={{ overflowX: sideLock ? 'hidden' : 'auto' }}
         tabIndex={0}
         aria-label="Páginas do documento"
+        onClick={(e) => {
+          if (!onTerm || !termMarks.current.length) return
+          const termId = termAtPoint(document, e.clientX, e.clientY, termMarks.current)
+          if (termId !== null) {
+            e.stopPropagation()
+            onTerm(termId)
+          }
+        }}
         onDblClick={(e) => {
           const el = scroll.current!
           const box = el.getBoundingClientRect()
@@ -278,7 +352,7 @@ export function PageReader({ source, paged, sideLock, comfort, start, onPage, ha
 }
 
 /** Uma página: desenhada quando aparece, de novo (mais nítida) depois do zoom; texto selecionável no PDF. */
-function PageView({ source, index, width, height, lazy, filter, root, onAspect, nodeRef }: {
+function PageView({ source, index, width, height, lazy, filter, root, onAspect, onText, nodeRef }: {
   source: PageSource
   index: number
   width: number
@@ -287,6 +361,7 @@ function PageView({ source, index, width, height, lazy, filter, root, onAspect, 
   filter?: string
   root: { current: HTMLElement | null }
   onAspect: () => void
+  onText: (index: number, container: HTMLElement) => void
   nodeRef: (node: HTMLElement | null) => void
 }) {
   const box = useRef<HTMLDivElement>(null)
@@ -316,7 +391,10 @@ function PageView({ source, index, width, height, lazy, filter, root, onAspect, 
         if (filter) canvas.style.filter = filter
         canvasHolder.current?.replaceChildren(canvas)
         if (Math.abs(source.aspect(index) - aspect) > 0.001) onAspect()
-        if (source.textLayer && textHolder.current) await source.textLayer(index, textHolder.current, width)
+        if (source.textLayer && textHolder.current) {
+          await source.textLayer(index, textHolder.current, width)
+          if (alive) onText(index, textHolder.current)
+        }
       } catch (e) {
         console.warn('Página não desenhada', index, e)
       }

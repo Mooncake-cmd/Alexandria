@@ -14,6 +14,8 @@ import type { PageSource } from '../reader/pageSource'
 import { promptDialog } from '../ui/dialogs'
 import { menuDialog, toast } from '../ui/dialogs'
 import { ReaderChrome } from '../reader/ReaderChrome'
+import type { ReaderTools } from '../reader/ToolsPanel'
+import { describeNoteLocation } from '../core/formats'
 
 type State =
   | { status: 'loading' }
@@ -192,12 +194,23 @@ function TextBook({ item: initial, content, initialPrefs }: { item: LibraryItem;
   const { item, prefs, changePrefs, finish, savePosition } = useBook(initial, initialPrefs, 0, () => handle.current?.fraction() ?? position.fraction)
   useDebouncedSave(position.fraction, savePosition)
   const textSize = (delta: number) => changePrefs({ textSize: Math.min(MAX_TEXT_SIZE, Math.max(MIN_TEXT_SIZE, prefs.textSize + delta)) })
+  const tools: ReaderTools = {
+    itemId: item.id,
+    search: async (term) => handle.current?.search(term) ?? [],
+    showHit: (hit, term) => handle.current?.showHit(hit, term),
+    clearSearch: () => handle.current?.clearSearch(),
+    current: () => handle.current?.fraction() ?? position.fraction,
+    describe: (p) => describeNoteLocation(item.format, p, 0),
+    goTo: (p) => handle.current?.goTo(p),
+    pageNotes: false
+  }
   return (
     <ReaderChrome
       title={item.name}
       prefs={prefs}
       onPrefs={changePrefs}
       typography
+      tools={tools}
       menu={[
         [prefs.paged ? 'Modo: rolagem contínua' : 'Modo: páginas (setas, roda do mouse ou clique duplo na borda)', () => changePrefs({ paged: !prefs.paged })],
         ['Letra menor', () => textSize(-1)],
@@ -215,8 +228,10 @@ function TextBook({ item: initial, content, initialPrefs }: { item: LibraryItem;
       atEnd={position.atEnd}
       onFinish={finish}
     >
-      {() => (
+      {(api) => (
         <TextReader
+          terms={api.terms}
+          onTerm={api.onTerm}
           content={content}
           paged={prefs.paged}
           textSize={prefs.textSize}
@@ -244,12 +259,23 @@ function ReflowBookView({ item: initial, book, initialPrefs }: { item: LibraryIt
     if (choice !== null) handle.current?.goToChapter(choice)
   }
   const title = book.chapterTitles[info.chapter]
+  const tools: ReaderTools = {
+    itemId: item.id,
+    search: (term, isCancelled) => handle.current?.search(term, isCancelled) ?? Promise.resolve([]),
+    showHit: (hit, term) => handle.current?.showHit(hit, term),
+    clearSearch: () => handle.current?.clearSearch(),
+    current: () => handle.current?.position() ?? info.position,
+    describe: (p) => describeNoteLocation(item.format, p, book.chapterCount),
+    goTo: (p) => handle.current?.goTo(p),
+    pageNotes: false
+  }
   return (
     <ReaderChrome
       title={book.title ?? item.name}
       prefs={prefs}
       onPrefs={changePrefs}
       typography
+      tools={tools}
       menu={[
         ['Sumário', contents],
         [prefs.paged ? 'Modo: rolagem contínua' : 'Modo: páginas (setas, roda do mouse ou clique duplo na borda)', () => changePrefs({ paged: !prefs.paged })],
@@ -281,6 +307,9 @@ function ReflowBookView({ item: initial, book, initialPrefs }: { item: LibraryIt
           handle={(h) => (handle.current = h)}
           onTap={api.tap}
           onDoubleTap={api.cancelTap}
+          terms={api.terms}
+          onTerm={api.onTerm}
+          onSelection={api.selection}
         />
       )}
     </ReaderChrome>
@@ -304,12 +333,23 @@ function PageBookView({ item: initial, source, initialPrefs }: { item: LibraryIt
     toast(locked ? 'Movimento para os lados bloqueado. Zoom e rolagem para cima e para baixo continuam.' : 'Movimento para os lados liberado.')
   }
   const zoomText = info.zoom > 1.05 ? ` · ${Math.round(info.zoom * 100)}%` : ''
+  const tools: ReaderTools = {
+    itemId: item.id,
+    search: source.pageText ? (term, isCancelled) => handle.current?.search?.(term, isCancelled) ?? Promise.resolve([]) : undefined,
+    showHit: (hit, term) => handle.current?.showHit(hit, term),
+    clearSearch: () => handle.current?.clearSearch(),
+    current: () => handle.current?.current() ?? info.page,
+    describe: (p) => describeNoteLocation(item.format, p, source.pageCount),
+    goTo: (p) => handle.current?.goTo(p),
+    pageNotes: true
+  }
   return (
     <ReaderChrome
       title={item.name}
       prefs={prefs}
       onPrefs={changePrefs}
       typography={false}
+      tools={tools}
       menu={[
         ['Ir para a página…', askPage],
         [prefs.paged ? 'Modo: rolagem contínua' : 'Modo: páginas (página inteira na tela)', () => changePrefs({ paged: !prefs.paged })],
@@ -338,8 +378,10 @@ function PageBookView({ item: initial, source, initialPrefs }: { item: LibraryIt
       atEnd={info.atEnd}
       onFinish={finish}
     >
-      {() => (
+      {(api) => (
         <PageReader
+          terms={api.terms}
+          onTerm={api.onTerm}
           source={source}
           paged={prefs.paged}
           sideLock={prefs.sideLock}

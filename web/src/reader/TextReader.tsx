@@ -2,6 +2,9 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preac
 import { afterBackDelta, alignDelta, maskStart, nextDelta, turnDirection } from '../core/pages'
 import { FONTS, LINE_WIDTHS, MARGINS, THEMES, hex, type Comfort } from '../core/comfort'
 import { visibleLines } from './lines'
+import { searchRanges, setHighlight, termAtPoint, termRanges, textMap } from './textRanges'
+import type { GlossaryTerm } from '../core/glossary'
+import type { SearchHit } from './ToolsPanel'
 import type { TextContent } from './textContent'
 import { MAX_TEXT_SIZE, MIN_TEXT_SIZE } from './prefs'
 
@@ -11,6 +14,10 @@ const WIN_BOTTOM = 24
 
 export interface TextReaderHandle {
   fraction: () => number
+  goTo: (fraction: number) => void
+  search: (term: string) => SearchHit[]
+  showHit: (hit: SearchHit, term: string) => void
+  clearSearch: () => void
 }
 
 interface Props {
@@ -23,6 +30,8 @@ interface Props {
   onPosition: (fraction: number, atEnd: boolean) => void
   onTextSize: (size: number) => void
   handle?: (h: TextReaderHandle) => void
+  terms?: GlossaryTerm[]
+  onTerm?: (termId: number) => void
 }
 
 /**
@@ -30,7 +39,7 @@ interface Props {
  * inteira e a próxima começa na linha seguinte (setas, Page Down, espaço, roda do mouse ou
  * clique duplo nas bordas). Rolagem contínua: rola livremente. A posição é uma fração do texto.
  */
-export function TextReader({ content, paged, textSize, comfort, start, onPosition, onTextSize, handle }: Props) {
+export function TextReader({ content, paged, textSize, comfort, start, onPosition, onTextSize, handle, terms = [], onTerm }: Props) {
   const scroller = useRef<HTMLDivElement>(null)
   const blocks = useRef<HTMLElement[]>([])
   const [mask, setMask] = useState<{ top: number; bottom: number }>({ top: 0, bottom: 1e6 })
@@ -125,7 +134,83 @@ export function TextReader({ content, paged, textSize, comfort, start, onPositio
     s.animate?.([{ opacity: 0.6 }, { opacity: 1 }], { duration: 160 })
   }, [updateMask])
 
-  handle?.({ fraction })
+  // Glossário: sublinha os termos nos blocos perto da tela (sem mexer no texto).
+  const termMarks = useRef<{ range: Range; termId: number }[]>([])
+  const markTerms = useCallback(() => {
+    const s = scroller.current
+    if (!s) return
+    if (!terms.length) {
+      termMarks.current = []
+      setHighlight(window, 'alx-term', [])
+      return
+    }
+    const box = s.getBoundingClientRect()
+    const marks: { range: Range; termId: number }[] = []
+    for (const block of blocks.current) {
+      const r = block?.getBoundingClientRect()
+      if (!r || r.bottom < box.top - box.height || r.top > box.bottom + box.height) continue
+      marks.push(...termRanges(textMap(block), terms))
+    }
+    termMarks.current = marks
+    setHighlight(window, 'alx-term', marks.map((m) => m.range))
+  }, [terms])
+  useEffect(() => {
+    markTerms()
+    const s = el()
+    let timer = 0
+    const later = () => {
+      clearTimeout(timer)
+      timer = window.setTimeout(markTerms, 120)
+    }
+    s.addEventListener('scroll', later, { passive: true })
+    return () => {
+      s.removeEventListener('scroll', later)
+      clearTimeout(timer)
+      setHighlight(window, 'alx-term', [])
+    }
+  }, [markTerms, content, textSize, paged])
+
+  /** Busca em todos os blocos; a posição de cada resultado é a fração do livro. */
+  const search = (term: string): SearchHit[] => {
+    const hits: SearchHit[] = []
+    const list = blocks.current
+    list.forEach((block, index) => {
+      const map = textMap(block)
+      for (const range of searchRanges(map, term)) {
+        const start = map.starts[map.nodes.indexOf(range.startContainer as Text)] + range.startOffset
+        const position = Math.round(((index + start / Math.max(1, map.text.length)) / list.length) * 10000)
+        const excerpt = map.text.slice(Math.max(0, start - 40), start + term.length + 60).replace(/\s+/g, ' ')
+        hits.push({ position, label: `${Math.trunc(position / 100)}%`, excerpt: `…${excerpt}…`, data: { block: index, start } })
+      }
+    })
+    return hits
+  }
+  const showHit = (hit: SearchHit, term: string) => {
+    const s = scroller.current
+    const { block, start: offset } = hit.data as { block: number; start: number }
+    const target = blocks.current[block]
+    if (!s || !target) return
+    const map = textMap(target)
+    const ranges = searchRanges(map, term)
+    const range = ranges.find((r) => map.starts[map.nodes.indexOf(r.startContainer as Text)] + r.startOffset === offset) ?? ranges[0]
+    if (!range) return
+    const r = range.getBoundingClientRect()
+    const box = s.getBoundingClientRect()
+    s.scrollTop += Math.round(r.top - box.top - WIN_TOP - (paged ? 0 : s.clientHeight * 0.3))
+    if (paged) {
+      const d = Math.round(alignDelta(lines(), WIN_TOP, winBottom()))
+      if (d) s.scrollTop += d
+    }
+    setHighlight(window, 'alx-search', ranges)
+    setHighlight(window, 'alx-search-current', [range])
+    updateMask()
+  }
+  const clearSearch = () => {
+    setHighlight(window, 'alx-search', [])
+    setHighlight(window, 'alx-search-current', [])
+  }
+
+  handle?.({ fraction, goTo: (f) => restore(f), search, showHit, clearSearch })
 
   // Abre na posição salva; muda de modo ou de letra mantendo o ponto de leitura.
   const lastFraction = useRef(start)
@@ -242,6 +327,14 @@ export function TextReader({ content, paged, textSize, comfort, start, onPositio
         style={{ paddingTop: `${WIN_TOP}px`, paddingBottom: `${WIN_BOTTOM}px` }}
         tabIndex={0}
         aria-label="Texto do livro"
+        onClick={(e) => {
+          if (!onTerm || !termMarks.current.length) return
+          const termId = termAtPoint(document, e.clientX, e.clientY, termMarks.current)
+          if (termId !== null) {
+            e.stopPropagation()
+            onTerm(termId)
+          }
+        }}
         onDblClick={(e) => {
           if (!paged) return
           const box = el().getBoundingClientRect()

@@ -2,7 +2,7 @@
 
 > Documento de planejamento e acompanhamento. Base: app Android 0.15.0 (≈9.200 linhas de Kotlin, 20 arquivos de teste).
 >
-> **Situação:** Etapas 0 a 5 prontas (base do site, regras do app com testes, biblioteca com backup, leitores de todos os formatos).
+> **Situação:** Etapas 0 a 6 prontas (base do site, regras do app com testes, biblioteca com backup, leitores de todos os formatos, ferramentas do leitor).
 
 ## 0. Decisões do dono do projeto
 
@@ -245,7 +245,7 @@ Portar para `web/src/core/`, com os testes equivalentes do Kotlin:
 - **Pronto quando:** as amostras do app (`amostra.pdf`, `sem-fontes.pdf`, `amostra.djvu`, `quadrinho-rar5.cbr`)
   abrem e os gestos funcionam no Chrome do Android (emulação no Playwright + teste seu no aparelho).
 
-### Etapa 6 — Ferramentas do leitor (M)
+### Etapa 6 — Ferramentas do leitor (M) ✅
 - Tela limpa, controles sempre visíveis, régua (alça ao tocar), modo foco, painel de conforto completo,
   busca com lista, anotações, glossário em todos os formatos.
 - **Pronto quando:** cada item da tabela 5.2 tem teste de ponta a ponta.
