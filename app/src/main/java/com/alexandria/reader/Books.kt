@@ -6,6 +6,7 @@ import java.io.InputStream
 import java.net.URLDecoder
 import java.text.Normalizer
 import java.util.zip.ZipFile
+import kotlin.math.roundToInt
 
 /**
  * Ordem "natural" de nomes de arquivo: pagina2 antes de pagina10, sem diferenciar maiúsculas.
@@ -295,30 +296,86 @@ data class DocxParagraph(
     val kind: Kind,
     val styles: List<StyleRange>,
     /** Imagens do parágrafo, como caminhos dentro do ZIP (ex.: "word/media/image1.png"). */
-    val images: List<String> = emptyList()
+    val images: List<String> = emptyList(),
+    /** As mesmas imagens com tamanho e lado (figuras flutuantes, como logos de cabeçalho). */
+    val figures: List<DocxFigure> = emptyList(),
+    val align: Align? = null,
+    /** Recuo e recuo da primeira linha, em "em" (tamanho da letra do documento). */
+    val indent: Float = 0f,
+    val firstLine: Float = 0f
 ) {
     enum class Kind { TITLE, HEADING1, HEADING2, HEADING3, LIST_ITEM, NORMAL }
+    enum class Align { LEFT, CENTER, RIGHT, JUSTIFY }
 
-    data class StyleRange(val start: Int, val end: Int, val bold: Boolean, val italic: Boolean, val underline: Boolean)
+    data class StyleRange(
+        val start: Int,
+        val end: Int,
+        val bold: Boolean,
+        val italic: Boolean,
+        val underline: Boolean,
+        val strike: Boolean = false,
+        /** Tamanho da letra em relação ao padrão do documento (null = igual). */
+        val size: Float? = null,
+        /** 1 = sobrescrito, -1 = subscrito, 0 = normal. */
+        val vert: Int = 0
+    )
 }
 
 /**
- * Leitor de DOCX (Office Open XML) para texto formatado: títulos, listas, negrito, itálico e
- * sublinhado. Tabelas viram uma linha por célula. Imagens, cores e fontes são ignoradas.
+ * Figura de um DOCX: largura em pixels do Word (96 por polegada) e em fração da largura do texto
+ * da página (para caber igual numa tela pequena), lado (figuras flutuantes) e se fica presa ao topo
+ * ou ao pé da página (cabeçalho e rodapé desenhados no corpo).
+ */
+data class DocxFigure(
+    val path: String,
+    val width: Int = 0,
+    val height: Int = 0,
+    val fraction: Float = 0f,
+    val side: Side? = null,
+    val place: Place = Place.INLINE
+) {
+    enum class Side { LEFT, CENTER, RIGHT }
+    enum class Place { INLINE, START, END }
+}
+
+/** Célula de tabela: blocos, colunas e linhas ocupadas e a coluna onde começa. */
+class DocxCell(val blocks: MutableList<DocxBlock> = mutableListOf(), var span: Int = 1, var rowSpan: Int = 1, var column: Int = 0)
+
+/** Tabela de DOCX: largura das colunas (frações que somam 1), linhas e se tem bordas. */
+class DocxTable(var columns: List<Float> = emptyList(), var rows: List<List<DocxCell>> = emptyList(), var borders: Boolean = false)
+
+sealed class DocxBlock {
+    data class Para(val p: DocxParagraph) : DocxBlock()
+    class Table(val table: DocxTable) : DocxBlock()
+}
+
+/**
+ * Leitor de DOCX (Office Open XML): títulos, listas, negrito, itálico, sublinhado, tachado,
+ * tamanho da letra, alinhamento, recuos, figuras (com tamanho e lado) e tabelas (colunas, células
+ * mescladas e bordas). Cores e fontes do documento ficam por conta do Conforto visual.
  */
 object DocxReader {
     private const val W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-
     private const val R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    private const val WP = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+    private const val EMU_PER_PX = 9525f
+    private const val TWIPS_PER_EM = 240f
+    private val OFF = setOf("0", "false", "off", "none")
 
-    fun read(zip: ZipFile): List<DocxParagraph> {
+    /** Níveis de título e tamanho padrão da letra (meios-pontos: 24 = 12 pt). */
+    data class Styles(val levels: Map<String, Int> = emptyMap(), val defaultSize: Int = 22)
+
+    /** Parágrafos em sequência (tabelas viram um parágrafo por célula): busca e testes. */
+    fun read(zip: ZipFile): List<DocxParagraph> = flatten(blocks(zip))
+
+    fun blocks(zip: ZipFile): List<DocxBlock> {
         val styles = zip.getEntry("word/styles.xml")?.let { entry ->
             try {
-                zip.getInputStream(entry).use { headingLevels(it) }
+                zip.getInputStream(entry).use { styleInfo(it) }
             } catch (e: Exception) {
-                emptyMap()
+                Styles()
             }
-        } ?: emptyMap()
+        } ?: Styles()
         val relations = zip.getEntry("word/_rels/document.xml.rels")?.let { entry ->
             try {
                 zip.getInputStream(entry).use { relationships(it, "word") }
@@ -327,9 +384,28 @@ object DocxReader {
             }
         } ?: emptyMap()
         val document = zip.getEntry("word/document.xml") ?: throw IllegalArgumentException("DOCX sem word/document.xml")
-        return zip.getInputStream(document).use { paragraphs(it, styles, relations) }
-            .map { p -> p.copy(images = p.images.filter { zip.getEntry(it) != null }) }
-            .filter { it.text.isNotBlank() || it.images.isNotEmpty() }
+        val bytes = zip.getInputStream(document).use { it.readBytes() }
+        return keep(blocks(bytes, styles, relations)) { zip.getEntry(it) != null }
+    }
+
+    private fun keep(list: List<DocxBlock>, exists: (String) -> Boolean): List<DocxBlock> = list.mapNotNull { block ->
+        when (block) {
+            is DocxBlock.Table -> {
+                block.table.rows.forEach { row -> row.forEach { cell -> val kept = keep(cell.blocks, exists); cell.blocks.clear(); cell.blocks += kept } }
+                block
+            }
+            is DocxBlock.Para -> {
+                val p = block.p.copy(images = block.p.images.filter(exists), figures = block.p.figures.filter { exists(it.path) })
+                if (p.text.isNotBlank() || p.images.isNotEmpty()) DocxBlock.Para(p) else null
+            }
+        }
+    }
+
+    fun flatten(list: List<DocxBlock>): List<DocxParagraph> = list.flatMap { block ->
+        when (block) {
+            is DocxBlock.Para -> listOf(block.p)
+            is DocxBlock.Table -> block.table.rows.flatMap { row -> row.flatMap { flatten(it.blocks) } }
+        }
     }
 
     /** Id da relação → caminho no ZIP (as imagens ficam em word/media e são citadas por id). */
@@ -351,14 +427,33 @@ object DocxReader {
      * Mapeia o id de estilo para o nível de título. O id muda com o idioma do Word ("Ttulo1" no
      * Word em português), mas o nome interno dos estilos padrão é sempre "heading 1", "Title"...
      */
-    internal fun headingLevels(input: InputStream): Map<String, Int> {
+    internal fun headingLevels(input: InputStream): Map<String, Int> = styleInfo(input).levels
+
+    /** Níveis de título e tamanho padrão da letra (docDefaults, ou o estilo padrão de parágrafo). */
+    internal fun styleInfo(input: InputStream): Styles {
         val parser = newParser(input)
         val result = HashMap<String, Int>()
         var styleId: String? = null
+        var inDefaults = false
+        var inDefaultStyle = false
+        var defaultSize = 20 // sem nada declarado, o Word usa 10 pt
+        var styleSize: Int? = null
         while (parser.next() != XmlPullParser.END_DOCUMENT) {
+            if (parser.eventType == XmlPullParser.END_TAG && parser.namespace == W) {
+                if (parser.name == "docDefaults") inDefaults = false
+                if (parser.name == "style") inDefaultStyle = false
+                continue
+            }
             if (parser.eventType != XmlPullParser.START_TAG) continue
             when (parser.name) {
-                "style" -> styleId = parser.getAttributeValue(W, "styleId")
+                "docDefaults" -> inDefaults = true
+                "style" -> {
+                    styleId = parser.getAttributeValue(W, "styleId")
+                    inDefaultStyle = parser.getAttributeValue(W, "type") == "paragraph" && parser.getAttributeValue(W, "default") in setOf("1", "true", "on")
+                }
+                "sz" -> parser.getAttributeValue(W, "val")?.toIntOrNull()?.takeIf { it > 0 }?.let {
+                    if (inDefaults) defaultSize = it else if (inDefaultStyle) styleSize = it
+                }
                 "name" -> {
                     val name = parser.getAttributeValue(W, "val")?.lowercase() ?: continue
                     val id = styleId ?: continue
@@ -373,107 +468,331 @@ object DocxReader {
                 }
             }
         }
-        return result
+        return Styles(result, styleSize ?: defaultSize)
     }
 
+    /** Compatível com a versão anterior: só os parágrafos (tabelas viram um parágrafo por célula). */
     internal fun paragraphs(
         input: InputStream,
         headingLevels: Map<String, Int> = emptyMap(),
         relations: Map<String, String> = emptyMap()
-    ): List<DocxParagraph> {
+    ): List<DocxParagraph> = flatten(blocks(input.readBytes(), Styles(headingLevels), relations))
+
+    private class Drawing(val anchor: Boolean, val behind: Boolean) {
+        var cx = 0L
+        var cy = 0L
+        var hRelative = "column"
+        var hAlign: String? = null
+        var hOffset: Long? = null
+        var vRelative = "paragraph"
+        var vOffset: Long? = null
+        var axis: Char? = null
+    }
+
+    private class TableBuild {
+        val table = DocxTable()
+        val grid = mutableListOf<Int>()
+        var row: MutableList<DocxCell>? = null
+        val rows = mutableListOf<List<DocxCell>>()
+        /** Por linha: para cada célula, a coluna onde começa e se continua uma mesclagem vertical. */
+        val merges = mutableListOf<List<Pair<Int, Boolean>>>()
+        var rowMerges = mutableListOf<Pair<Int, Boolean>>()
+        var cell: DocxCell? = null
+        var vMerge: String? = null
+    }
+
+    private fun clampEm(value: Float, max: Float) = (value.coerceIn(-max, max) * 100).roundToInt() / 100f
+
+    internal fun blocks(xml: ByteArray, styles: Styles, relations: Map<String, String>): List<DocxBlock> {
+        // Tamanho da página (fica no fim do documento): diz de que lado fica uma figura flutuante.
+        val head = String(xml, Charsets.UTF_8)
+        fun attr(tag: String, name: String) = Regex("<w:$tag\\b[^>]*\\bw:$name=\"(\\d+)\"").find(head)?.groupValues?.get(1)?.toLongOrNull()
+        val pageWidth = (attr("pgSz", "w") ?: 11906L) * 635
+        val pageHeight = (attr("pgSz", "h") ?: 16838L) * 635
+        val marginLeft = (attr("pgMar", "left") ?: 1440L) * 635
+        val marginRight = (attr("pgMar", "right") ?: 1440L) * 635
+        val textWidth = (pageWidth - marginLeft - marginRight).coerceAtLeast(pageWidth / 2)
+
+        val parser = newParser(java.io.ByteArrayInputStream(xml))
+        val body = mutableListOf<DocxBlock>()
+        val containers = ArrayDeque<MutableList<DocxBlock>>().apply { addLast(body) }
+        val tables = ArrayDeque<TableBuild>()
         val images = mutableListOf<String>()
-        val parser = newParser(input)
-        val result = mutableListOf<DocxParagraph>()
+        val figures = mutableListOf<DocxFigure>()
         val text = StringBuilder()
         val ranges = mutableListOf<DocxParagraph.StyleRange>()
         var level: Int? = null
         var list = false
+        var align: DocxParagraph.Align? = null
+        var indent = 0f
+        var firstLine = 0f
         // Caixas de texto põem parágrafos dentro de parágrafos: só o mais externo vira um parágrafo.
         var paragraphDepth = 0
+        var inPPr = false
         var inRun = false
         var inRunProps = false
         var bold = false
         var italic = false
         var underline = false
+        var strike = false
+        var size: Float? = null
+        var vert = 0
         var runStart = 0
+        var drawing: Drawing? = null
+        var inTcPr = false
+        var inTblBorders = false
 
         fun flag(): Boolean {
             val value = parser.getAttributeValue(W, "val") ?: return true
-            return value !in setOf("0", "false", "off", "none")
+            return value !in OFF
+        }
+        fun twips(vararg names: String): Float {
+            for (name in names) parser.getAttributeValue(W, name)?.takeIf { it.isNotEmpty() }?.let { return it.toFloatOrNull() ?: 0f }
+            return 0f
+        }
+        fun figureOf(path: String): DocxFigure {
+            val d = drawing
+            val width = if (d != null && d.cx > 0) (d.cx / EMU_PER_PX).roundToInt() else 0
+            val height = if (d != null && d.cy > 0) (d.cy / EMU_PER_PX).roundToInt() else 0
+            val fraction = if (d != null && d.cx > 0) (d.cx.toFloat() / textWidth).coerceAtMost(1f) else 0f
+            if (d == null || !d.anchor) return DocxFigure(path, width, height, fraction)
+            val alignH = d.hAlign?.lowercase()
+            val side = when {
+                alignH == "left" || alignH == "inside" -> DocxFigure.Side.LEFT
+                alignH == "right" || alignH == "outside" -> DocxFigure.Side.RIGHT
+                alignH == "center" -> DocxFigure.Side.CENTER
+                d.hOffset != null -> {
+                    val origin = if (d.hRelative == "page") 0L else marginLeft
+                    val middle = (origin + d.hOffset!! + d.cx / 2f) / pageWidth
+                    if (middle < 0.4f) DocxFigure.Side.LEFT else if (middle > 0.6f) DocxFigure.Side.RIGHT else DocxFigure.Side.CENTER
+                }
+                else -> DocxFigure.Side.CENTER
+            }
+            var place = DocxFigure.Place.INLINE
+            val vOffset = d.vOffset
+            if ((d.vRelative == "page" || d.vRelative == "margin") && vOffset != null) {
+                val top = vOffset.toFloat() / pageHeight
+                if (top > 0.75f) place = DocxFigure.Place.END else if (top < 0.12f) place = DocxFigure.Place.START
+            }
+            return DocxFigure(path, width, height, fraction, side, place)
         }
 
         while (parser.next() != XmlPullParser.END_DOCUMENT) {
-            if (parser.eventType == XmlPullParser.START_TAG && paragraphDepth > 0 && (parser.name == "blip" || parser.name == "imagedata")) {
-                // Figura do Word (DrawingML "blip" ou VML "imagedata"), citada pelo id da relação.
-                val id = parser.getAttributeValue(R, "embed") ?: parser.getAttributeValue(R, "id")
-                relations[id]?.let { if (it !in images) images += it }
+            val event = parser.eventType
+            if (event == XmlPullParser.START_TAG && parser.namespace == WP) {
+                when (parser.name) {
+                    "anchor", "inline" -> drawing = Drawing(parser.name == "anchor", parser.getAttributeValue(null, "behindDoc") == "1")
+                    "extent" -> drawing?.let {
+                        it.cx = parser.getAttributeValue(null, "cx")?.toLongOrNull() ?: 0L
+                        it.cy = parser.getAttributeValue(null, "cy")?.toLongOrNull() ?: 0L
+                    }
+                    "positionH", "positionV" -> drawing?.let {
+                        it.axis = if (parser.name == "positionH") 'h' else 'v'
+                        val relative = parser.getAttributeValue(null, "relativeFrom") ?: ""
+                        if (it.axis == 'h') it.hRelative = relative else it.vRelative = relative
+                    }
+                    "align" -> drawing?.let { if (it.axis == 'h') it.hAlign = parser.nextText().trim() }
+                    "posOffset" -> drawing?.let {
+                        val value = parser.nextText().trim().toLongOrNull() ?: 0L
+                        if (it.axis == 'h') it.hOffset = value else if (it.axis == 'v') it.vOffset = value
+                    }
+                }
                 continue
             }
-            when (parser.eventType) {
-                XmlPullParser.START_TAG -> if (parser.namespace == W) when (parser.name) {
-                    "p" -> {
-                        if (paragraphDepth == 0) {
-                            text.setLength(0)
-                            ranges.clear()
-                            images.clear()
-                            level = null
-                            list = false
-                        } else if (text.isNotEmpty() && text.last() != '\n') {
-                            text.append('\n') // texto de uma caixa de texto começa em linha própria
-                        }
-                        paragraphDepth++
-                    }
-                    "pStyle" -> parser.getAttributeValue(W, "val")?.let { id ->
-                        level = headingLevels[id] ?: Regex("(?i)^heading(\\d)$").find(id)?.groupValues?.get(1)?.toIntOrNull()
-                            ?: if (id.equals("Title", true)) 0 else null
-                    }
-                    "outlineLvl" -> if (level == null) level = parser.getAttributeValue(W, "val")?.toIntOrNull()?.plus(1)
-                    "numPr" -> list = true
-                    "r" -> {
-                        inRun = true
-                        bold = false
-                        italic = false
-                        underline = false
-                        runStart = text.length
-                    }
-                    "rPr" -> inRunProps = inRun
-                    "b" -> if (inRunProps) bold = flag()
-                    "i" -> if (inRunProps) italic = flag()
-                    "u" -> if (inRunProps) underline = flag()
-                    "t" -> if (paragraphDepth > 0) text.append(parser.nextText())
-                    "tab" -> if (inRun) text.append('\t')
-                    "br", "cr" -> if (inRun) text.append('\n')
+            if (event == XmlPullParser.END_TAG && parser.namespace == WP) {
+                when (parser.name) {
+                    "anchor", "inline" -> drawing = null
+                    "positionH", "positionV" -> drawing?.axis = null
                 }
-                XmlPullParser.END_TAG -> if (parser.namespace == W) when (parser.name) {
-                    "rPr" -> inRunProps = false
-                    "r" -> {
-                        inRun = false
-                        if (text.length > runStart && (bold || italic || underline)) {
-                            ranges += DocxParagraph.StyleRange(runStart, text.length, bold, italic, underline)
+                continue
+            }
+            if (event == XmlPullParser.START_TAG && paragraphDepth > 0 && (parser.name == "blip" || parser.name == "imagedata")) {
+                // Figura do Word (DrawingML "blip" ou VML "imagedata"), citada pelo id da relação.
+                val id = parser.getAttributeValue(R, "embed") ?: parser.getAttributeValue(R, "id")
+                val path = relations[id]
+                // Fundo atrás do texto do tamanho da página (marca d'água): fica de fora.
+                val d = drawing
+                val background = d != null && d.behind && d.cx > pageWidth / 2
+                if (path != null && path !in images && !background) {
+                    images += path
+                    figures += figureOf(path)
+                }
+                continue
+            }
+            when (event) {
+                XmlPullParser.START_TAG -> if (parser.namespace == W) {
+                    val table = tables.lastOrNull()
+                    when (parser.name) {
+                        "tbl" -> if (paragraphDepth == 0) tables.addLast(TableBuild())
+                        "gridCol" -> if (table != null && paragraphDepth == 0) table.grid += twips("w").roundToInt()
+                        "tblBorders" -> inTblBorders = true
+                        "tcPr" -> inTcPr = true
+                        "top", "bottom", "left", "right", "start", "end", "insideH", "insideV" ->
+                            if (table != null && (inTblBorders || inTcPr) && (parser.getAttributeValue(W, "val") ?: "nil") !in setOf("nil", "none")) table.table.borders = true
+                        "tr" -> if (table != null && paragraphDepth == 0) {
+                            table.row = mutableListOf()
+                            table.rowMerges = mutableListOf()
                         }
+                        "tc" -> if (table != null && paragraphDepth == 0) {
+                            val cell = DocxCell()
+                            table.cell = cell
+                            table.vMerge = null
+                            containers.addLast(cell.blocks)
+                        }
+                        "gridSpan" -> if (table?.cell != null && inTcPr) table.cell!!.span = (parser.getAttributeValue(W, "val")?.toIntOrNull() ?: 1).coerceAtLeast(1)
+                        "vMerge" -> if (table?.cell != null && inTcPr) table.vMerge = if (parser.getAttributeValue(W, "val") == "restart") "restart" else "continue"
+                        "p" -> {
+                            if (paragraphDepth == 0) {
+                                text.setLength(0)
+                                ranges.clear()
+                                images.clear()
+                                figures.clear()
+                                level = null
+                                list = false
+                                align = null
+                                indent = 0f
+                                firstLine = 0f
+                            } else if (text.isNotEmpty() && text.last() != '\n') {
+                                text.append('\n') // texto de uma caixa de texto começa em linha própria
+                            }
+                            paragraphDepth++
+                        }
+                        "pPr" -> inPPr = paragraphDepth == 1
+                        "jc" -> if (inPPr) align = when (parser.getAttributeValue(W, "val")) {
+                            "center" -> DocxParagraph.Align.CENTER
+                            "right", "end" -> DocxParagraph.Align.RIGHT
+                            "both", "distribute" -> DocxParagraph.Align.JUSTIFY
+                            else -> DocxParagraph.Align.LEFT
+                        }
+                        "ind" -> if (inPPr) {
+                            indent = clampEm(twips("left", "start") / TWIPS_PER_EM, 8f)
+                            val hanging = twips("hanging")
+                            firstLine = clampEm((if (hanging != 0f) -hanging else twips("firstLine")) / TWIPS_PER_EM, 4f)
+                        }
+                        "pStyle" -> parser.getAttributeValue(W, "val")?.let { id ->
+                            level = styles.levels[id] ?: Regex("(?i)^heading(\\d)$").find(id)?.groupValues?.get(1)?.toIntOrNull()
+                                ?: if (id.equals("Title", true)) 0 else null
+                        }
+                        "outlineLvl" -> if (level == null) level = parser.getAttributeValue(W, "val")?.toIntOrNull()?.plus(1)
+                        "numPr" -> list = true
+                        "r" -> {
+                            inRun = true
+                            bold = false
+                            italic = false
+                            underline = false
+                            strike = false
+                            size = null
+                            vert = 0
+                            runStart = text.length
+                        }
+                        "rPr" -> inRunProps = inRun
+                        "b" -> if (inRunProps) bold = flag()
+                        "i" -> if (inRunProps) italic = flag()
+                        "u" -> if (inRunProps) underline = flag()
+                        "strike", "dstrike" -> if (inRunProps) strike = flag()
+                        "sz" -> if (inRunProps) parser.getAttributeValue(W, "val")?.toFloatOrNull()?.takeIf { it > 0 && styles.defaultSize > 0 }?.let {
+                            size = ((it / styles.defaultSize) * 100).roundToInt() / 100f
+                            size = size!!.coerceIn(0.6f, 3f)
+                        }
+                        "vertAlign" -> if (inRunProps) vert = when (parser.getAttributeValue(W, "val")) {
+                            "superscript" -> 1
+                            "subscript" -> -1
+                            else -> 0
+                        }
+                        "t" -> if (paragraphDepth > 0) text.append(parser.nextText())
+                        "tab" -> if (inRun) text.append('\t')
+                        "br", "cr" -> if (inRun) text.append('\n')
                     }
-                    "p" -> {
-                        paragraphDepth--
-                        if (paragraphDepth > 0) {
-                            text.append('\n')
-                            continue
+                }
+                XmlPullParser.END_TAG -> if (parser.namespace == W) {
+                    val table = tables.lastOrNull()
+                    when (parser.name) {
+                        "pPr" -> inPPr = false
+                        "tblBorders" -> inTblBorders = false
+                        "tcPr" -> inTcPr = false
+                        "rPr" -> inRunProps = false
+                        "r" -> {
+                            inRun = false
+                            val sized = size?.let { kotlin.math.abs(it - 1f) > 0.04f } == true
+                            if (text.length > runStart && (bold || italic || underline || strike || sized || vert != 0)) {
+                                ranges += DocxParagraph.StyleRange(runStart, text.length, bold, italic, underline, strike, if (sized) size else null, vert)
+                            }
                         }
-                        val kind = when {
-                            level == 0 -> DocxParagraph.Kind.TITLE
-                            level == 1 -> DocxParagraph.Kind.HEADING1
-                            level == 2 -> DocxParagraph.Kind.HEADING2
-                            level != null && level!! >= 3 -> DocxParagraph.Kind.HEADING3
-                            list -> DocxParagraph.Kind.LIST_ITEM
-                            else -> DocxParagraph.Kind.NORMAL
+                        "p" -> {
+                            paragraphDepth--
+                            if (paragraphDepth > 0) {
+                                text.append('\n')
+                                continue
+                            }
+                            val kind = when {
+                                level == 0 -> DocxParagraph.Kind.TITLE
+                                level == 1 -> DocxParagraph.Kind.HEADING1
+                                level == 2 -> DocxParagraph.Kind.HEADING2
+                                level != null && level!! >= 3 -> DocxParagraph.Kind.HEADING3
+                                list -> DocxParagraph.Kind.LIST_ITEM
+                                else -> DocxParagraph.Kind.NORMAL
+                            }
+                            if (text.isNotBlank() || images.isNotEmpty()) {
+                                containers.last() += DocxBlock.Para(
+                                    DocxParagraph(
+                                        if (text.isBlank()) "" else text.toString(), kind, ranges.toList(), images.toList(),
+                                        figures.toList(), align, indent, firstLine
+                                    )
+                                )
+                            }
                         }
-                        if (text.isNotBlank() || images.isNotEmpty()) {
-                            result += DocxParagraph(if (text.isBlank()) "" else text.toString(), kind, ranges.toList(), images.toList())
+                        "tc" -> if (table?.cell != null && paragraphDepth == 0) {
+                            containers.removeLast()
+                            val cell = table.cell!!
+                            val start = table.row.orEmpty().sumOf { it.span }
+                            cell.column = start
+                            table.rowMerges += start to (table.vMerge == "continue")
+                            table.row?.add(cell)
+                            table.cell = null
+                        }
+                        "tr" -> if (table?.row != null && paragraphDepth == 0) {
+                            table.rows += table.row!!
+                            table.merges += table.rowMerges
+                            table.row = null
+                        }
+                        "tbl" -> if (table != null && paragraphDepth == 0) {
+                            tables.removeLast()
+                            val built = finishTable(table)
+                            if (built.rows.isNotEmpty()) containers.last() += DocxBlock.Table(built)
                         }
                     }
                 }
             }
         }
-        return result
+        return body
+    }
+
+    /** Larguras das colunas e mesclagens verticais (a célula de cima ganha as linhas de baixo). */
+    private fun finishTable(build: TableBuild): DocxTable {
+        val table = build.table
+        val count = maxOf(build.grid.size, build.rows.maxOfOrNull { row -> row.sumOf { it.span } } ?: 0, 1)
+        val widths = (0 until count).map { build.grid.getOrNull(it)?.takeIf { w -> w > 0 } ?: 0 }
+        val known = widths.filter { it > 0 }
+        val fallback = if (known.isEmpty()) 1f else known.average().toFloat()
+        val filled = widths.map { if (it > 0) it.toFloat() else fallback }
+        val total = filled.sum()
+        table.columns = filled.map { it / total }
+        val owners = HashMap<Int, DocxCell>()
+        table.rows = build.rows.mapIndexed { r, row ->
+            row.filterIndexed { c, cell ->
+                val (column, cont) = build.merges.getOrNull(r)?.getOrNull(c) ?: (cell.column to false)
+                val owner = owners[column]
+                if (cont && owner != null) {
+                    owner.rowSpan++
+                    owner.blocks += cell.blocks
+                    false
+                } else {
+                    owners[column] = cell
+                    true
+                }
+            }
+        }
+        return table
     }
 }
 

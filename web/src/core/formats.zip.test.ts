@@ -4,7 +4,7 @@ import { strToU8, zipSync } from 'fflate'
 import { Blob as NodeBlob } from 'node:buffer'
 import { ZipArchive } from './zip'
 import { prepareEpubHtml, readEpub } from './epub'
-import { groupParagraphs, plainText, readDocx, type DocxParagraph } from './docx'
+import { blocks, groupParagraphs, plainText, readDocx, styleInfo, type DocxParagraph } from './docx'
 
 // Mesmos livros e casos de ZipFormatsTest e BookHelpersTest do app.
 
@@ -184,4 +184,42 @@ describe('DOCX', () => {
     expect(groups.map((g) => g.map((x) => x.text))).toEqual([['Título', 'a'.repeat(30)], ['b'.repeat(30)], ['Seção', 'item']])
     expect(plainText(groups.at(-1)!)).toBe('Seção\n\n•  item')
   })
+
+  it('layout do documento: figuras com tamanho e lado, tabela com bordas e mesclas, alinhamento e tamanho da letra', () => {
+    const ns = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
+    const anchor = (id: string, x: number, cx: number, vRel = 'paragraph', y = 0) =>
+      `<w:r><w:drawing><wp:anchor behindDoc="0"><wp:positionH relativeFrom="page"><wp:posOffset>${x}</wp:posOffset></wp:positionH><wp:positionV relativeFrom="${vRel}"><wp:posOffset>${y}</wp:posOffset></wp:positionV><wp:extent cx="${cx}" cy="499024"/><a:graphic><a:blip r:embed="${id}"/></a:graphic></wp:anchor></w:drawing></w:r>`
+    const xml = `<w:document ${ns}><w:body>
+      <w:p>${anchor('rId1', 767470, 1304218)}${anchor('rId2', 5896355, 1523621)}${anchor('rId3', 0, 7560073, 'page', 10096500)}</w:p>
+      <w:tbl><w:tblPr><w:tblBorders><w:top w:val="single"/><w:insideV w:val="single"/></w:tblBorders></w:tblPr>
+        <w:tblGrid><w:gridCol w:w="3000"/><w:gridCol w:w="1000"/></w:tblGrid>
+        <w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>Título da tabela</w:t></w:r></w:p></w:tc></w:tr>
+        <w:tr><w:tc><w:tcPr><w:vMerge w:val="restart"/></w:tcPr><w:p><w:r><w:t>Curso</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc></w:tr>
+        <w:tr><w:tc><w:tcPr><w:vMerge/></w:tcPr><w:p/></w:tc><w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr>
+      </w:tbl>
+      <w:p><w:pPr><w:jc w:val="both"/><w:ind w:left="480" w:firstLine="240"/><w:spacing w:before="240" w:after="0"/></w:pPr><w:r><w:rPr><w:sz w:val="36"/></w:rPr><w:t>Grande</w:t></w:r><w:r><w:t> normal</w:t></w:r><w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:t>1</w:t></w:r></w:p>
+      <w:sectPr><w:pgSz w:w="11910" w:h="16840"/><w:pgMar w:left="1701"/></w:sectPr>
+    </w:body></w:document>`
+    const relations = new Map([['rId1', 'word/media/a.png'], ['rId2', 'word/media/b.png'], ['rId3', 'word/media/c.png']])
+    const list = blocks(xml, { levels: new Map(), defaultSize: 24 }, relations)
+    expect(list.map((b) => b.type)).toEqual(['p', 'table', 'p'])
+    const figures = list[0].type === 'p' ? list[0].p.figures! : []
+    expect(figures.map((f) => [f.side, f.place, f.width])).toEqual([['left', 'inline', 137], ['right', 'inline', 160], ['center', 'end', 794]])
+    const table = list[1].type === 'table' ? list[1].table : null
+    expect(table!.borders).toBe(true)
+    expect(table!.columns).toEqual([0.75, 0.25])
+    expect(table!.rows.map((r) => r.map((c) => [c.span, c.rowSpan]))).toEqual([[[2, 1]], [[1, 2], [1, 1]], [[1, 1]]])
+    const title = table!.rows[0][0].blocks[0]
+    expect(title.type === 'p' && title.p.align).toBe('center')
+    const p = list[2].type === 'p' ? list[2].p : null
+    expect([p!.align, p!.indent, p!.firstLine, p!.before, p!.after]).toEqual(['justify', 2, 1, 1, undefined])
+    expect(p!.styles.map((s) => [p!.text.slice(s.start, s.end), s.size, s.vert])).toEqual([['Grande', 1.5, undefined], ['1', undefined, 'sup']])
+  })
+
+  it('tamanho padrão da letra vem do documento', () => {
+    const w = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+    expect(styleInfo(`<w:styles ${w}><w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="22"/></w:rPr></w:rPrDefault></w:docDefaults></w:styles>`).defaultSize).toBe(22)
+    expect(styleInfo(`<w:styles ${w}><w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="22"/></w:rPr></w:rPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:rPr><w:sz w:val="24"/></w:rPr></w:style></w:styles>`).defaultSize).toBe(24)
+  })
 })
+

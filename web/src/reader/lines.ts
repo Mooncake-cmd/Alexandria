@@ -21,9 +21,10 @@ export function visibleLines(scroller: HTMLElement, blocks: HTMLElement[]): Line
       if (rect.height <= 0 || rect.width <= 0) continue
       raw.push({ top: rect.top - box.top, bottom: rect.bottom - box.top })
     }
-    // Imagens dentro de um bloco de texto (raro) também contam como linha.
-    for (const img of Array.from(block.querySelectorAll('img'))) {
-      const ir = img.getBoundingClientRect()
+    // Imagens dentro de um bloco de texto (figuras do DOCX) também contam como linha; cada linha de
+    // tabela também (o texto das células fica junto com ela, sem cortar a linha ao meio).
+    for (const el of Array.from(block.querySelectorAll('img, tr'))) {
+      const ir = el.getBoundingClientRect()
       if (ir.height > 0) raw.push({ top: ir.top - box.top, bottom: ir.bottom - box.top })
     }
   }

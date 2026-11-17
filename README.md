@@ -1,6 +1,6 @@
 # Alexandria — projeto Android
 
-**Versão:** 0.16.1  
+**Versão:** 0.17.0  
 **Pacote:** `com.alexandria.reader`  
 **Plataforma:** Android 6.0 ou superior (API 23+)  
 **Idioma da interface:** Português (Brasil)
@@ -47,7 +47,7 @@
 | DJVU | motor **EraDjVu** (DjVuLibre) | os mesmos do PDF |
 | EPUB 2 e 3 | WebView do sistema, capítulo por capítulo | sumário, busca, letra maior/menor, tema escuro, **notas de rodapé em janela** |
 | MOBI, AZW, AZW3 | convertido em EPUB pelo motor **EraMOBI** (libmobi) na primeira leitura | os mesmos do EPUB |
-| DOCX | texto com títulos, listas, negrito, itálico, sublinhado e **imagens** | busca, letra, tema escuro |
+| DOCX | texto com títulos, listas, negrito, itálico, sublinhado, tachado, tamanhos de letra, alinhamento e recuos; **imagens no tamanho do documento** (logos de cabeçalho lado a lado, rodapé desenhado no fim) e **tabelas** com colunas, células mescladas e bordas | busca, letra, tema escuro |
 | TXT | blocos numa lista (fluido mesmo em arquivos grandes) | UTF-8/UTF-16/Windows-1252, busca, letra, tema escuro |
 
 Em todos os formatos:

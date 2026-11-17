@@ -384,3 +384,19 @@ button.link { background: none; border: 0; padding: 0; color: var(--gold-text); 
 kbd { font-family: inherit; font-size: 12px; background: var(--paper, #f5f2eb); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 1px 6px; white-space: nowrap; }
 .link-button { background: none; border: 0; padding: 0; font: inherit; color: var(--ink); text-decoration: underline; cursor: pointer; }
 .shortcut-group dt { min-width: 0; } .shortcut-group kbd { white-space: normal; display: inline-block; }
+
+/* ---------- DOCX mais fiel: figuras no tamanho e do lado certos, tabelas, alinhamento ---------- */
+.chunk-html .docx-center { text-align: center !important; }
+.chunk-html .docx-right { text-align: right !important; }
+.chunk-html .docx-figures { display: flex; align-items: flex-start; gap: 12px; margin: 0 0 0.8em; }
+.chunk-html .docx-figures > span { flex: 1 1 0; min-width: 0; }
+.chunk-html .docx-figures > .c { flex: 0 1 auto; text-align: center; }
+.chunk-html .docx-figures > .r { text-align: right; }
+.chunk-html .docx-figures > span:empty { flex: 1 1 0; }
+.chunk-html .docx-figures img { max-width: 100%; height: auto; vertical-align: top; }
+.chunk-html .docx-figures img + img { margin-left: 8px; }
+.chunk-html .docx-table { border-collapse: collapse; width: 100%; margin: 0 0 1em; table-layout: fixed; }
+.chunk-html .docx-table td { vertical-align: top; padding: 3px 6px; overflow-wrap: anywhere; }
+.chunk-html .docx-table.bordered td { border: 1px solid currentColor; }
+.chunk-html .docx-table td > p, .chunk-html .docx-table td > h1, .chunk-html .docx-table td > h2, .chunk-html .docx-table td > h3, .chunk-html .docx-table td > h4 { margin: 0; text-indent: 0; }
+.chunk-html .docx-table td > p + p { margin-top: 0.3em; }

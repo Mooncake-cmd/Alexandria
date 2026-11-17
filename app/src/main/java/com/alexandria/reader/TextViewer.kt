@@ -38,8 +38,22 @@ class TextContent(val chunks: List<CharSequence>, val truncated: Boolean = false
 /** Sublinhado de um termo do glossário; guarda o id para mostrar a definição ao tocar. */
 class GlossarySpan(val termId: Long) : android.text.style.UnderlineSpan()
 
-class ImageChunk(val file: java.io.File) : CharSequence by "" {
+/**
+ * Figuras de um DOCX lado a lado (como as logos de um cabeçalho): cada uma com a largura em fração
+ * da largura do texto e o lado da página. Uma figura sem tamanho ocupa a largura toda.
+ */
+class ImageChunk(val figures: List<PlacedFigure>) : CharSequence by "" {
+    constructor(file: java.io.File) : this(listOf(PlacedFigure(file)))
+    val file: java.io.File get() = figures.first().file
     override fun toString() = ""
+}
+
+/** Figura pronta para mostrar: arquivo, largura (fração do texto), proporção altura/largura e lado. */
+data class PlacedFigure(val file: java.io.File, val fraction: Float = 0f, val aspect: Float = 0f, val side: DocxFigure.Side? = null)
+
+/** Tabela de DOCX como bloco da lista; o texto (células separadas por tabulação) serve para a busca. */
+class TableChunk(val table: DocxTable, private val plain: String, val files: Map<String, java.io.File>) : CharSequence by plain {
+    override fun toString() = plain
 }
 
 /**
@@ -303,12 +317,17 @@ class TextViewer(host: ReaderHost, private val load: (LibraryItem) -> TextConten
         override fun getCount() = chunks.size
         override fun getItem(position: Int) = chunks[position]
         override fun getItemId(position: Int) = position.toLong()
-        override fun getViewTypeCount() = 2
-        override fun getItemViewType(position: Int) = if (chunks[position] is ImageChunk) 1 else 0
+        override fun getViewTypeCount() = 3
+        override fun getItemViewType(position: Int) = when (chunks[position]) {
+            is ImageChunk -> 1
+            is TableChunk -> 2
+            else -> 0
+        }
 
         override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
             val chunk = chunks[position]
-            if (chunk is ImageChunk) return imageView(chunk, convertView as? ImageView)
+            if (chunk is ImageChunk) return figuresView(chunk, parent.width)
+            if (chunk is TableChunk) return tableView(chunk, parent.width)
             val view = convertView as? TextView ?: TextView(context).apply { setTextIsSelectable(true) }
             styleText(view, parent.width)
             val mark = highlight
@@ -337,35 +356,161 @@ class TextViewer(host: ReaderHost, private val load: (LibraryItem) -> TextConten
     }
     private val decoding = mutableSetOf<String>()
 
-    private fun imageView(chunk: ImageChunk, recycled: ImageView?): ImageView {
-        val view = recycled ?: ImageView(context).apply {
+    /** Largura útil do texto (sem as margens do Conforto visual). */
+    private fun textWidth(listWidth: Int): Pair<Int, Int> {
+        val width = if (listWidth > 0) listWidth else context.resources.displayMetrics.widthPixels
+        val textPx = textSizeSp * context.resources.displayMetrics.scaledDensity
+        val side = Comfort.sidePadding(width, textPx, context.dp(comfort.margin.dp), comfort.lineWidth)
+        return Pair(side, (width - 2 * side).coerceAtLeast(context.dp(120)))
+    }
+
+    /** Figuras lado a lado: as da esquerda, as do centro e as da direita, cada uma no seu tamanho. */
+    private fun figuresView(chunk: ImageChunk, listWidth: Int): View {
+        val (side, width) = textWidth(listWidth)
+        val row = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.TOP
+            setPadding(side, context.dp(6), side, context.dp(6))
+        }
+        val groups = listOf(DocxFigure.Side.LEFT, DocxFigure.Side.CENTER, DocxFigure.Side.RIGHT).map { which ->
+            LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = when (which) {
+                    DocxFigure.Side.LEFT -> Gravity.START
+                    DocxFigure.Side.CENTER -> Gravity.CENTER_HORIZONTAL
+                    DocxFigure.Side.RIGHT -> Gravity.END
+                }
+            }
+        }
+        val single = chunk.figures.size == 1
+        for (figure in chunk.figures) {
+            val w = when {
+                figure.fraction > 0f -> (figure.fraction * width).roundToInt()
+                single -> width
+                else -> width / 3
+            }.coerceIn(context.dp(16), width)
+            val view = imageView(figure, w)
+            val group = groups[when (figure.side ?: if (single) DocxFigure.Side.CENTER else DocxFigure.Side.LEFT) {
+                DocxFigure.Side.LEFT -> 0
+                DocxFigure.Side.CENTER -> 1
+                DocxFigure.Side.RIGHT -> 2
+            }]
+            group.addView(view, LinearLayout.LayoutParams(w, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                if (group.childCount > 0) leftMargin = context.dp(8)
+            })
+        }
+        row.addView(groups[0], LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(groups[1], LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        row.addView(groups[2], LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        return row
+    }
+
+    private fun imageView(figure: PlacedFigure, width: Int): ImageView {
+        val view = ImageView(context).apply {
             adjustViewBounds = true
             scaleType = ImageView.ScaleType.FIT_CENTER
-            setPadding(context.dp(12), context.dp(8), context.dp(12), context.dp(8))
             contentDescription = "Imagem do documento"
         }
-        val key = chunk.file.path
+        val key = figure.file.path
         view.tag = key
         val cached = images.get(key)
         if (cached != null) {
-            view.minimumHeight = 0
             view.setImageBitmap(cached)
         } else {
-            view.setImageDrawable(null)
-            // Reserva espaço enquanto decodifica, para a rolagem não "pular".
-            view.minimumHeight = context.resources.displayMetrics.heightPixels / 2
-            decode(chunk)
+            // Reserva o espaço da figura enquanto decodifica, para a rolagem não "pular".
+            view.minimumHeight = if (figure.aspect > 0f) (width * figure.aspect).roundToInt() else context.resources.displayMetrics.heightPixels / 3
+            decode(figure.file)
         }
         return view
     }
 
-    private fun decode(chunk: ImageChunk) {
-        val key = chunk.file.path
+    /** Tabela com as colunas do documento, células mescladas e bordas (uma linha só entre células). */
+    private fun tableView(chunk: TableChunk, listWidth: Int): View {
+        val (side, width) = textWidth(listWidth)
+        val table = chunk.table
+        val line = Color.argb(170, Color.red(comfort.theme.text), Color.green(comfort.theme.text), Color.blue(comfort.theme.text))
+        val stroke = context.dp(1).coerceAtLeast(1)
+        val grid = android.widget.GridLayout(context).apply {
+            columnCount = table.columns.size.coerceAtLeast(1)
+            useDefaultMargins = false
+            if (table.borders) {
+                // A tabela desenha só a borda de cima e a da esquerda; cada célula, a da direita e a de baixo.
+                background = android.graphics.drawable.InsetDrawable(border(line, stroke), 0, 0, -stroke, -stroke)
+                setPadding(stroke, stroke, 0, 0)
+            }
+        }
+        // Linhas ocupadas por mesclagens verticais: as células seguintes começam depois delas.
+        table.rows.forEachIndexed { r, row ->
+            for (cell in row) {
+                val span = cell.span.coerceIn(1, grid.columnCount - cell.column.coerceAtMost(grid.columnCount - 1))
+                val column = cell.column.coerceIn(0, grid.columnCount - 1)
+                val weight = table.columns.drop(column).take(span).sum().coerceAtLeast(0.01f)
+                val params = android.widget.GridLayout.LayoutParams(
+                    android.widget.GridLayout.spec(r, cell.rowSpan.coerceAtLeast(1), android.widget.GridLayout.FILL),
+                    android.widget.GridLayout.spec(column, span, android.widget.GridLayout.FILL, weight)
+                ).apply { this.width = 0 }
+                grid.addView(cellView(cell, chunk.files, (width * weight).roundToInt(), line, stroke, table.borders), params)
+            }
+        }
+        return android.widget.FrameLayout(context).apply {
+            setPadding(side, context.dp(6), side, context.dp(10))
+            addView(grid, android.widget.FrameLayout.LayoutParams(width, android.widget.FrameLayout.LayoutParams.WRAP_CONTENT))
+        }
+    }
+
+    private fun border(color: Int, stroke: Int) = android.graphics.drawable.GradientDrawable().apply {
+        setColor(Color.TRANSPARENT)
+        setStroke(stroke, color)
+    }
+
+    private fun cellView(cell: DocxCell, files: Map<String, java.io.File>, cellWidth: Int, line: Int, stroke: Int, borders: Boolean): View {
+        val box = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            // O fundo vem antes do espaço interno: trocar o fundo zera o espaço.
+            if (borders) background = android.graphics.drawable.InsetDrawable(border(line, stroke), -stroke, -stroke, 0, 0)
+            setPadding(context.dp(6), context.dp(4), context.dp(6), context.dp(4))
+        }
+        val textParagraphs = mutableListOf<DocxParagraph>()
+        fun flushText() {
+            if (textParagraphs.isEmpty()) return
+            box.addView(TextView(context).apply {
+                setTextIsSelectable(true)
+                textSize = textSizeSp * 0.92f
+                setTextColor(comfort.theme.text)
+                typeface = ReaderFonts.forText(context, comfort.font)
+                setLineSpacing(0f, (comfort.lineSpacing / 100f).coerceAtMost(1.4f))
+                text = DocxLayout.styled(textParagraphs.toList(), "\n", maxIndent = 1.5f)
+            })
+            textParagraphs.clear()
+        }
+        for (paragraph in DocxReader.flatten(cell.blocks)) {
+            val figures = paragraph.figures.mapNotNull { f -> files[f.path]?.let { PlacedFigure(it, f.fraction, if (f.width > 0) f.height.toFloat() / f.width else 0f, f.side) } }
+            if (figures.isNotEmpty()) {
+                flushText()
+                for (figure in figures) {
+                    val w = if (figure.fraction > 0f) (figure.fraction * cellWidth * 1.6f).roundToInt().coerceAtMost(cellWidth) else cellWidth
+                    box.addView(imageView(figure, w), LinearLayout.LayoutParams(w, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                        gravity = when (paragraph.align) {
+                            DocxParagraph.Align.CENTER -> Gravity.CENTER_HORIZONTAL
+                            DocxParagraph.Align.RIGHT -> Gravity.END
+                            else -> Gravity.START
+                        }
+                    })
+                }
+            }
+            if (paragraph.text.isNotBlank()) textParagraphs += paragraph
+        }
+        flushText()
+        return box
+    }
+
+    private fun decode(file: java.io.File) {
+        val key = file.path
         if (!decoding.add(key)) return
         val width = context.resources.displayMetrics.widthPixels
         host.worker.execute {
             val bitmap = try {
-                BookFiles.decodeScaled({ chunk.file.inputStream() }, width, PageSource.MAX_PIXELS / 2)
+                BookFiles.decodeScaled({ file.inputStream() }, width, PageSource.MAX_PIXELS / 2)
             } catch (e: Exception) {
                 null
             } catch (e: OutOfMemoryError) {
@@ -375,13 +520,15 @@ class TextViewer(host: ReaderHost, private val load: (LibraryItem) -> TextConten
                 decoding.remove(key)
                 if (bitmap != null) {
                     images.put(key, bitmap)
-                    for (i in 0 until list.childCount) {
-                        val child = list.getChildAt(i) as? ImageView ?: continue
-                        if (child.tag == key) {
-                            child.minimumHeight = 0
-                            child.setImageBitmap(bitmap)
+                    fun update(view: View) {
+                        if (view is ImageView && view.tag == key) {
+                            view.minimumHeight = 0
+                            view.setImageBitmap(bitmap)
+                        } else if (view is ViewGroup) {
+                            for (i in 0 until view.childCount) update(view.getChildAt(i))
                         }
                     }
+                    for (i in 0 until list.childCount) update(list.getChildAt(i))
                 }
             }
         }
@@ -635,7 +782,7 @@ class TextViewer(host: ReaderHost, private val load: (LibraryItem) -> TextConten
         fun docx(host: ReaderHost) = TextViewer(host) { item ->
             val mediaDir = BookFiles.docxMediaDir(host.activity, item.id)
             val chunks = ZipFile(BookFiles.localCopy(host.activity, item)).use { zip ->
-                DocxLayout.chunks(DocxReader.read(zip)) { path -> BookFiles.extractEntry(zip, path, mediaDir) }
+                DocxLayout.chunksOf(DocxReader.blocks(zip)) { path -> BookFiles.extractEntry(zip, path, mediaDir) }
             }
             TextContent(chunks)
         }
@@ -689,25 +836,77 @@ object DocxLayout {
     }
 
     /**
-     * Blocos prontos para a lista: texto formatado agrupado e cada imagem num bloco próprio, na
-     * ordem do documento. [extract] grava a imagem (caminho no ZIP) num arquivo e o devolve.
+     * Blocos prontos para a lista, na ordem do documento: texto formatado agrupado, figuras (lado a
+     * lado, com o tamanho delas) e tabelas. [extract] grava a imagem (caminho no ZIP) num arquivo.
      */
-    fun chunks(paragraphs: List<DocxParagraph>, extract: (String) -> java.io.File?): List<CharSequence> {
+    fun chunks(paragraphs: List<DocxParagraph>, extract: (String) -> java.io.File?): List<CharSequence> =
+        chunksOf(paragraphs.map { DocxBlock.Para(it) }, extract)
+
+    fun chunksOf(blocks: List<DocxBlock>, extract: (String) -> java.io.File?): List<CharSequence> {
+        val files = HashMap<String, java.io.File?>()
+        fun file(path: String) = files.getOrPut(path) { extract(path) }
+        fun placed(figures: List<DocxFigure>) = figures.mapNotNull { f ->
+            file(f.path)?.let { PlacedFigure(it, f.fraction, if (f.width > 0) f.height.toFloat() / f.width else 0f, f.side) }
+        }
+        // Figuras presas ao topo ou ao pé da página (cabeçalho e rodapé desenhados) vão para o começo ou o fim.
+        val atStart = mutableListOf<DocxFigure>()
+        val atEnd = mutableListOf<DocxFigure>()
+        val list = blocks.map { block ->
+            if (block !is DocxBlock.Para || block.p.figures.none { it.place != DocxFigure.Place.INLINE }) block
+            else {
+                atStart += block.p.figures.filter { it.place == DocxFigure.Place.START }
+                atEnd += block.p.figures.filter { it.place == DocxFigure.Place.END }
+                DocxBlock.Para(block.p.copy(figures = block.p.figures.filter { it.place == DocxFigure.Place.INLINE }))
+            }
+        }
         val result = mutableListOf<CharSequence>()
         val text = mutableListOf<DocxParagraph>()
         fun flush() {
             if (text.isNotEmpty()) group(text).forEach { result += styled(it) }
             text.clear()
         }
-        for (paragraph in paragraphs) {
-            if (paragraph.text.isNotBlank()) text += paragraph.copy(images = emptyList())
-            if (paragraph.images.isNotEmpty()) {
+        fun figuresChunk(figures: List<DocxFigure>) {
+            val ready = placed(figures)
+            if (ready.isNotEmpty()) {
                 flush()
-                paragraph.images.mapNotNull(extract).forEach { result += ImageChunk(it) }
+                result += ImageChunk(ready)
             }
         }
+        figuresChunk(atStart.map { it.copy(side = it.side ?: DocxFigure.Side.CENTER) })
+        for (block in list) {
+            when (block) {
+                is DocxBlock.Table -> {
+                    flush()
+                    val used = HashMap<String, java.io.File>()
+                    for (p in DocxReader.flatten(listOf(block))) for (f in p.figures) file(f.path)?.let { used[f.path] = it }
+                    result += TableChunk(block.table, tableText(block.table), used)
+                }
+                is DocxBlock.Para -> {
+                    val p = block.p
+                    // Figuras flutuantes (logos) antes do texto; as que estão no meio do texto, depois.
+                    val figures = p.figures.ifEmpty { p.images.map { DocxFigure(it) } }
+                    figuresChunk(figures.filter { it.side != null })
+                    if (p.text.isNotBlank()) text += p.copy(images = emptyList(), figures = emptyList())
+                    val inline = figures.filter { it.side == null }
+                    if (inline.isNotEmpty()) {
+                        val side = when (p.align) {
+                            DocxParagraph.Align.RIGHT -> DocxFigure.Side.RIGHT
+                            DocxParagraph.Align.LEFT, DocxParagraph.Align.JUSTIFY -> if (inline.size > 1 || inline.any { it.fraction in 0.01f..0.6f }) DocxFigure.Side.LEFT else null
+                            else -> null
+                        }
+                        figuresChunk(inline.map { it.copy(side = side) })
+                    }
+                }
+            }
+        }
+        figuresChunk(atEnd.map { it.copy(side = it.side ?: DocxFigure.Side.CENTER) })
         flush()
         return result
+    }
+
+    /** Texto da tabela para a busca: células separadas por tabulação, linhas por quebra de linha. */
+    fun tableText(table: DocxTable): String = table.rows.joinToString("\n") { row ->
+        row.joinToString("\t") { cell -> DocxReader.flatten(cell.blocks).joinToString(" ") { prefix(it) + it.text }.trim() }
     }
 
     /** Texto de um bloco, sem estilos: o mesmo que [styled] mostra. */
@@ -715,10 +914,15 @@ object DocxLayout {
 
     private fun prefix(paragraph: DocxParagraph) = if (paragraph.kind == DocxParagraph.Kind.LIST_ITEM) "•  " else ""
 
-    fun styled(group: List<DocxParagraph>): CharSequence {
+    /**
+     * Texto formatado de um bloco. Recuos ficam limitados a [maxIndent] "em": numa tela de celular,
+     * o recuo de vários centímetros do Word (às vezes usado para centralizar à mão) espremeria o texto.
+     */
+    fun styled(group: List<DocxParagraph>, separator: String = SEPARATOR, maxIndent: Float = 4f): CharSequence {
         val out = SpannableStringBuilder()
+        val em = 18f * android.content.res.Resources.getSystem().displayMetrics.scaledDensity
         for ((i, paragraph) in group.withIndex()) {
-            if (i > 0) out.append(SEPARATOR)
+            if (i > 0) out.append(separator)
             val start = out.length
             out.append(prefix(paragraph))
             val textStart = out.length
@@ -735,6 +939,18 @@ object DocxLayout {
                 out.setSpan(RelativeSizeSpan(size), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                 out.setSpan(StyleSpan(Typeface.BOLD), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             }
+            // Alinhamento do documento: centro e direita (justificado e esquerda seguem o Conforto visual).
+            when (paragraph.align) {
+                DocxParagraph.Align.CENTER -> android.text.Layout.Alignment.ALIGN_CENTER
+                DocxParagraph.Align.RIGHT -> android.text.Layout.Alignment.ALIGN_OPPOSITE
+                else -> null
+            }?.let { out.setSpan(android.text.style.AlignmentSpan.Standard(it), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE) }
+            if (paragraph.indent != 0f || paragraph.firstLine != 0f) {
+                val indent = paragraph.indent.coerceIn(0f, maxIndent)
+                val rest = (indent * em).roundToInt()
+                val first = ((indent + paragraph.firstLine.coerceAtMost(maxIndent)) * em).roundToInt().coerceAtLeast(0)
+                out.setSpan(android.text.style.LeadingMarginSpan.Standard(first, rest), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
             for (range in paragraph.styles) {
                 val s = (textStart + range.start).coerceAtMost(end)
                 val e = (textStart + range.end).coerceAtMost(end)
@@ -747,6 +963,13 @@ object DocxLayout {
                 }
                 if (style != null) out.setSpan(StyleSpan(style), s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                 if (range.underline) out.setSpan(UnderlineSpan(), s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                if (range.strike) out.setSpan(android.text.style.StrikethroughSpan(), s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                if (range.vert != 0) {
+                    out.setSpan(if (range.vert > 0) android.text.style.SuperscriptSpan() else android.text.style.SubscriptSpan(), s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    out.setSpan(RelativeSizeSpan(0.75f), s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                }
+                val relative = range.size
+                if (relative != null && paragraph.kind == DocxParagraph.Kind.NORMAL) out.setSpan(RelativeSizeSpan(relative), s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             }
         }
         return out
