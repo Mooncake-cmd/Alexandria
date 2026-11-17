@@ -83,6 +83,8 @@ export default defineConfig({
       }
     })
   ],
+  // Trabalhadores como módulos (o do pdf.js usa import.meta.url).
+  worker: { format: 'es' },
   test: {
     include: ['src/**/*.test.ts']
   }

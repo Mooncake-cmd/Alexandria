@@ -1,8 +1,10 @@
-import * as pdfjs from 'pdfjs-dist'
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
+// Versão "legacy" do pdf.js: traz o que falta em navegadores mais antigos (Chrome 109 do
+// Windows 7, Safari 16…). A versão comum exige recursos de 2025 e nem abre neles.
+import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { clampWidth, DEFAULT_ASPECT, type PageSource } from './pageSource'
 
-pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
+// Um trabalhador só, para todos os PDFs abertos (o pdf.js reaproveita a mesma porta).
+pdfjs.GlobalWorkerOptions.workerPort = new Worker(new URL('./pdf.worker.ts', import.meta.url), { type: 'module' })
 
 const vendor = `${import.meta.env.BASE_URL}vendor/pdfjs/`
 

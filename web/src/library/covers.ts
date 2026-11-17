@@ -78,18 +78,23 @@ export function registerCoverMaker(format: string, maker: (file: Blob, item: Lib
 }
 
 let running = false
+/**
+ * Livros cuja capa já foi tentada. A versão no nome refaz as tentativas uma vez quando a geração
+ * melhora (v2: PDF em navegadores mais antigos, como o Chrome 109 do Windows 7).
+ */
+const ATTEMPTED = 'coverAttempted.v2'
 
 /** Gera, em segundo plano, as capas que faltam (uma tentativa por livro, como o app). */
 export async function ensureCovers(items: LibraryItem[]) {
   if (running) return
   running = true
   try {
-    const attempted = new Set<number>((await getPref<number[]>('coverAttempted')) ?? [])
+    const attempted = new Set<number>((await getPref<number[]>(ATTEMPTED)) ?? [])
     for (const item of items) {
       const make = makers[item.format]
       if (!make || attempted.has(item.id) || item.archivedAt > 0) continue
       attempted.add(item.id)
-      await setPref('coverAttempted', [...attempted])
+      await setPref(ATTEMPTED, [...attempted])
       if (await coverOf(item.id)) continue
       const file = await bookFile(item.id)
       if (!file) continue

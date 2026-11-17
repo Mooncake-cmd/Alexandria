@@ -20,7 +20,7 @@ import { EXACT_SCALE } from '../core/bookmarks'
 
 type State =
   | { status: 'loading' }
-  | { status: 'error'; message: string }
+  | { status: 'error'; message: string; detail?: string }
   | { status: 'pending'; item: LibraryItem }
   | { status: 'text'; item: LibraryItem; content: TextContent; prefs: ReadingPrefs }
   | { status: 'reflow'; item: LibraryItem; book: ReflowBook; prefs: ReadingPrefs }
@@ -76,7 +76,7 @@ export function Reader({ bookId, startAt = null }: { bookId: number; startAt?: n
           setState({ status: 'pages', item, source, prefs })
         } catch (e) {
           console.error(e)
-          setState({ status: 'error', message: `Não foi possível abrir este ${item.format.toUpperCase()}. O arquivo pode estar danificado.` })
+          setState({ status: 'error', message: `Não foi possível abrir este ${item.format.toUpperCase()}. O arquivo pode estar danificado.`, detail: errorDetail(e) })
         }
         return
       }
@@ -91,7 +91,7 @@ export function Reader({ bookId, startAt = null }: { bookId: number; startAt?: n
           setState({ status: 'reflow', item, book, prefs })
         } catch (e) {
           console.error(e)
-          setState({ status: 'error', message: item.format === 'mobi' ? 'Não foi possível abrir este MOBI/AZW3. Livros com DRM (comprados na Amazon) não abrem.' : 'Não foi possível abrir este EPUB.' })
+          setState({ status: 'error', message: item.format === 'mobi' ? 'Não foi possível abrir este MOBI/AZW3. Livros com DRM (comprados na Amazon) não abrem.' : 'Não foi possível abrir este EPUB.', detail: errorDetail(e) })
         }
         return
       }
@@ -104,7 +104,7 @@ export function Reader({ bookId, startAt = null }: { bookId: number; startAt?: n
         setState({ status: 'text', item, content: loaded, prefs })
       } catch (e) {
         console.error(e)
-        setState({ status: 'error', message: 'Não foi possível abrir este documento.' })
+        setState({ status: 'error', message: 'Não foi possível abrir este documento.', detail: errorDetail(e) })
       }
     })()
     return () => {
@@ -116,19 +116,28 @@ export function Reader({ bookId, startAt = null }: { bookId: number; startAt?: n
   }, [bookId])
 
   if (state.status === 'loading') return <div class="reader-message">Carregando…</div>
-  if (state.status === 'error') return <ReaderMessage text={state.message} />
+  if (state.status === 'error') return <ReaderMessage text={state.message} detail={state.detail} />
   if (state.status === 'pending') return <ReaderMessage title={displayTitle(state.item.name)} text={`O leitor de ${state.item.format.toUpperCase()} do site ainda está em construção.`} />
   if (state.status === 'pages') return <PageBookView item={state.item} source={state.source} initialPrefs={state.prefs} />
   if (state.status === 'reflow') return <ReflowBookView item={state.item} book={state.book} initialPrefs={state.prefs} />
   return <TextBook item={state.item} content={state.content} initialPrefs={state.prefs} />
 }
 
-function ReaderMessage({ title, text }: { title?: string; text: string }) {
+/** Mensagem técnica curta do erro, com o navegador: ajuda a descobrir por que um livro não abriu. */
+function errorDetail(e: unknown): string {
+  const message = e instanceof Error ? `${e.name}: ${e.message}` : String(e)
+  const browser = /(Edg|OPR|Firefox|Chrome|Version)\/(\d+)/.exec(navigator.userAgent)
+  const name = browser ? `${{ Edg: 'Edge', OPR: 'Opera', Version: 'Safari' }[browser[1]] ?? browser[1]} ${browser[2]}` : navigator.userAgent.slice(0, 60)
+  return `${message.slice(0, 200)} · ${name}`
+}
+
+function ReaderMessage({ title, text, detail }: { title?: string; text: string; detail?: string }) {
   return (
     <div class="reader-message">
       <a href="#/biblioteca" class="back">‹ Biblioteca</a>
       {title && <h2>{title}</h2>}
       <p class="muted">{text}</p>
+      {detail && <p class="muted small">Detalhe técnico: <code>{detail}</code></p>}
     </div>
   )
 }
