@@ -62,3 +62,26 @@ export function alignDelta(lines: LineSpan[], winTop: number, winBottom: number)
   const delta = straddling.top - winTop
   return -delta > window * 0.5 ? 0 : delta
 }
+
+/**
+ * Fração do livro (0 a 1) → capítulo (ou bloco) e fração dentro dele. A posição salva tem
+ * resolução limitada (`resolution`, em fração do livro): um ponto no começo de um capítulo pode ter
+ * sido arredondado para um fio antes da divisa. Dentro dessa margem, vale o começo do seguinte.
+ * Porte de BookPosition.split.
+ */
+export function splitPosition(fraction: number, parts: number, resolution: number): [number, number] {
+  if (parts <= 0) return [0, 0]
+  const raw = Math.min(1, Math.max(0, fraction)) * parts
+  let index = Math.floor(raw)
+  let inside = raw - index
+  const margin = parts * resolution * 0.6
+  if (inside > 1 - margin) {
+    index += 1
+    inside = 0
+  } else if (inside < margin) inside = 0
+  if (index >= parts) return [parts - 1, 1]
+  return [index, inside]
+}
+
+/** Resolução de uma posição de 0 a 10000: inteira (posição comum) ou com casas (ponto preciso). */
+export const resolutionOf = (position: number) => (Number.isInteger(position) ? 1e-4 : 1e-6)

@@ -90,6 +90,23 @@ class BookmarksAndLinksTest {
         assertFalse(Bookmarks.onScreen(9_800, 10_000, 2_000))
     }
 
+    // ---------- posição salva → capítulo ----------
+
+    @Test
+    fun savedPointAtAChapterStartReopensInThatChapter() {
+        // Moby Dick: 365 capítulos. Começo do capítulo de índice 40, salvo nas duas resoluções.
+        val exact = (40.0 / 365 * 1_000_000).toLong() // 109589: arredondado para baixo
+        assertEquals(Pair(40, 0.0), BookPosition.split(exact / 1_000_000.0, 365, 1e-6))
+        val coarse = Math.round(40.0 / 365 * 10_000).toInt() // 1096
+        assertEquals(40, BookPosition.split(coarse / 10_000.0, 365, 1e-4).first)
+        // No meio de um capítulo nada muda; no fim do livro fica no último.
+        val (index, inside) = BookPosition.split((40.5) / 365, 365, 1e-6)
+        assertEquals(40, index)
+        assertEquals(0.5, inside, 1e-6)
+        assertEquals(Pair(364, 1.0), BookPosition.split(1.0, 365, 1e-6))
+        assertEquals(Pair(0, 0.0), BookPosition.split(0.0, 365, 1e-6))
+    }
+
     // ---------- banco ----------
 
     @Test

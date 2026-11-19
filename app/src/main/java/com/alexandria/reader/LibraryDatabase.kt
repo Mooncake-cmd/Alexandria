@@ -30,7 +30,13 @@ data class LibraryItem(
     /** Tamanho do arquivo em bytes (0 se desconhecido); junto com o nome, reconhece o mesmo livro aberto de novo. */
     val fileSize: Long = 0,
     /** Quando o arquivo foi apagado para liberar espaço (0 = ainda tem arquivo). Capa e nome continuam na Estante. */
-    val archivedAt: Long = 0
+    val archivedAt: Long = 0,
+    /**
+     * Ponto de leitura preciso ([BookViewer.exactPosition]); -1 se não há. Num EPUB de centenas de
+     * capítulos, [position] (0 a 10000) arredonda para o capítulo vizinho quando se está no começo ou
+     * no fim de um capítulo.
+     */
+    val exactPosition: Long = -1
 ) {
     val finished: Boolean get() = finishedAt > 0
     val archived: Boolean get() = archivedAt > 0
@@ -62,7 +68,7 @@ data class Note(
  */
 data class Bookmark(val id: Long, val itemId: Long, val name: String, val position: Long, val createdAt: Long)
 
-class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.db", null, 8) {
+class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.db", null, 9) {
     override fun onConfigure(db: SQLiteDatabase) {
         db.setForeignKeyConstraintsEnabled(true)
     }
@@ -82,7 +88,8 @@ class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.
                 shelf TEXT NOT NULL DEFAULT '',
                 reading_seconds INTEGER NOT NULL DEFAULT 0,
                 file_size INTEGER NOT NULL DEFAULT 0,
-                archived_at INTEGER NOT NULL DEFAULT 0
+                archived_at INTEGER NOT NULL DEFAULT 0,
+                exact_position INTEGER NOT NULL DEFAULT -1
             )
         """.trimIndent())
         createNotesTable(db)
@@ -137,7 +144,16 @@ class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.
         }
         if (oldVersion < 7) createReadingLog(db)
         if (oldVersion < 8) createBookmarks(db)
+        if (oldVersion < 9 && !hasColumn(db, "library_items", "exact_position")) {
+            db.execSQL("ALTER TABLE library_items ADD COLUMN exact_position INTEGER NOT NULL DEFAULT -1")
+        }
     }
+
+    private fun hasColumn(db: SQLiteDatabase, table: String, column: String): Boolean =
+        db.rawQuery("PRAGMA table_info($table)", null).use { c ->
+            val name = c.getColumnIndex("name")
+            generateSequence { if (c.moveToNext()) c.getString(name) else null }.any { it == column }
+        }
 
     /** Tempo lido por dia (para a sequência de dias) e glossário de termos por livro. */
     private fun createReadingTables(db: SQLiteDatabase) {
@@ -204,9 +220,10 @@ class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.
         }
 
     /** Salva o ponto de leitura. [pageCount] só é gravado quando conhecido (maior que 0). */
-    fun updateProgress(id: Long, position: Int, pageCount: Int = 0) {
+    fun updateProgress(id: Long, position: Int, pageCount: Int = 0, exactPosition: Long = -1) {
         val values = ContentValues().apply {
             put("last_position", position)
+            put("exact_position", exactPosition)
             put("opened_at", System.currentTimeMillis())
             if (pageCount > 0) put("page_count", pageCount)
         }
@@ -477,12 +494,12 @@ class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.
 
     private fun Cursor.toItem() = LibraryItem(
         getLong(0), getString(1), getString(2), getString(3), getLong(4), getInt(5), getInt(6), getLong(7),
-        getLong(8), getString(9), getLong(10), getLong(11), getLong(12)
+        getLong(8), getString(9), getLong(10), getLong(11), getLong(12), getLong(13)
     )
 
     private companion object {
         const val SELECT = "SELECT id, name, uri, format, added_at, last_position, page_count, opened_at, " +
-            "finished_at, shelf, reading_seconds, file_size, archived_at FROM library_items"
+            "finished_at, shelf, reading_seconds, file_size, archived_at, exact_position FROM library_items"
     }
 }
 

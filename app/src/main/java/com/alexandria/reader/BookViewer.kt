@@ -40,8 +40,11 @@ abstract class BookViewer(protected val host: ReaderHost) {
     /** true quando o documento terminou de abrir. */
     abstract val loaded: Boolean
 
-    /** Abre o documento, em [start] (posição salva ou de uma anotação). */
-    abstract fun open(item: LibraryItem, start: Int)
+    /**
+     * Abre o documento, em [start] (posição salva ou de uma anotação). [exact] é o ponto preciso
+     * salvo ([exactPosition]), -1 se não há: os formatos de texto o preferem a [start].
+     */
+    abstract fun open(item: LibraryItem, start: Int, exact: Long = -1)
 
     abstract fun position(): Int
 
@@ -57,6 +60,10 @@ abstract class BookViewer(protected val host: ReaderHost) {
     open val exactScale: Int = 1
     open fun exactPosition(): Long = position().toLong()
     open fun goToExact(position: Long) = goTo((position / exactScale).toInt())
+    /** O ponto preciso salvo combina com a posição salva (o mesmo ponto, só mais fino)? */
+    protected fun exactMatches(start: Int, exact: Long): Boolean =
+        exact >= 0 && kotlin.math.abs(exact.toDouble() / exactScale - start) <= 1.0
+
     /** Rótulo de uma posição precisa (lista de marcadores). */
     open fun describeExact(position: Long): String = describe((position / exactScale).toInt())
     /** Quanto de [exactPosition] cabe numa tela (1 = uma página). */
@@ -249,6 +256,30 @@ class EdgeTaps(
         }
         if (event.actionMasked == MotionEvent.ACTION_MOVE && blockScroll()) return true
         return null
+    }
+}
+
+/**
+ * Converte uma fração do livro (0 a 1) em capítulo (ou bloco) e fração dentro dele. Kotlin puro,
+ * coberto por testes. A posição salva tem resolução limitada ([resolution], em fração do livro):
+ * um ponto no começo de um capítulo pode ter sido arredondado para um fio antes da divisa, e
+ * cair no fim do capítulo anterior. Dentro dessa margem, vale o começo do capítulo seguinte.
+ */
+object BookPosition {
+    fun split(fraction: Double, parts: Int, resolution: Double): Pair<Int, Double> {
+        if (parts <= 0) return Pair(0, 0.0)
+        val raw = fraction.coerceIn(0.0, 1.0) * parts
+        var index = kotlin.math.floor(raw).toInt()
+        var inside = raw - index
+        val margin = parts * resolution * 0.6
+        if (inside > 1 - margin) {
+            index += 1
+            inside = 0.0
+        } else if (inside < margin) {
+            inside = 0.0
+        }
+        if (index >= parts) return Pair(parts - 1, 1.0)
+        return Pair(index, inside)
     }
 }
 

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks'
 import { displayTitle } from '../core/library'
 import { THEMES } from '../core/comfort'
-import { bookFile, findItem, setFinished, updateProgress, type LibraryItem } from '../storage/library'
+import { bookFile, findItem, setFinished, startOf, updateProgress, type LibraryItem } from '../storage/library'
 import { loadPrefs, savePrefs, MAX_TEXT_SIZE, MIN_TEXT_SIZE, type ReadingPrefs } from '../reader/prefs'
 import { loadDocx, loadTxt, type TextContent } from '../reader/textContent'
 import { TextReader, type TextReaderHandle } from '../reader/TextReader'
@@ -63,7 +63,8 @@ export function Reader({ bookId, startAt = null }: { bookId: number; startAt?: n
     ;(async () => {
       const found = await findItem(bookId)
       if (!found) return setState({ status: 'error', message: 'Documento não encontrado na biblioteca.' })
-      const item = startAt !== null ? { ...found, position: startAt } : found
+      // Uma anotação leva ao ponto dela (o ponto preciso salvo é de outra leitura).
+      const item = startAt !== null ? { ...found, position: startAt, exactPosition: -1 } : found
       if (!TEXT_FORMATS.has(item.format) && !REFLOW_FORMATS.has(item.format) && !PAGE_FORMATS.has(item.format)) return setState({ status: 'pending', item })
       const file = await bookFile(bookId)
       if (!file) return setState({ status: 'error', message: 'O arquivo deste livro não está guardado neste navegador. Importe-o de novo.' })
@@ -143,7 +144,7 @@ function ReaderMessage({ title, text, detail }: { title?: string; text: string; 
 }
 
 /** Estado comum dos leitores: preferências, concluir e salvar o ponto de leitura. */
-function useBook(initial: LibraryItem, initialPrefs: ReadingPrefs, pageCount: number, current: () => number) {
+function useBook(initial: LibraryItem, initialPrefs: ReadingPrefs, pageCount: number, current: () => number, currentExact: () => number = () => -1) {
   const [item, setItem] = useState(initial)
   const [prefs, setPrefs] = useState(initialPrefs)
   const saved = useRef(initial.position)
@@ -162,11 +163,13 @@ function useBook(initial: LibraryItem, initialPrefs: ReadingPrefs, pageCount: nu
   // Salva ao abrir, de vez em quando (sem gravar a cada pixel) e ao sair do livro ou fechar a aba.
   const currentRef = useRef(current)
   currentRef.current = current
+  const exactRef = useRef(currentExact)
+  exactRef.current = currentExact
   useEffect(() => {
-    updateProgress(item.id, initial.position, pageCount)
+    updateProgress(item.id, initial.position, pageCount, Date.now(), initial.exactPosition ?? -1)
     const save = () => {
       saved.current = currentRef.current()
-      updateProgress(item.id, saved.current, pageCount)
+      updateProgress(item.id, saved.current, pageCount, Date.now(), exactRef.current())
     }
     window.addEventListener('pagehide', save)
     document.addEventListener('visibilitychange', save)
@@ -179,7 +182,7 @@ function useBook(initial: LibraryItem, initialPrefs: ReadingPrefs, pageCount: nu
   const savePosition = (position: number) => {
     if (position === saved.current) return
     saved.current = position
-    updateProgress(item.id, position, pageCount)
+    updateProgress(item.id, position, pageCount, Date.now(), exactRef.current())
   }
   return { item, prefs, changePrefs, finish, savePosition }
 }
@@ -202,7 +205,8 @@ async function chooseTheme(prefs: ReadingPrefs, changePrefs: (c: Partial<Reading
 function TextBook({ item: initial, content, initialPrefs }: { item: LibraryItem; content: TextContent; initialPrefs: ReadingPrefs }) {
   const handle = useRef<TextReaderHandle | null>(null)
   const [position, setPosition] = useState({ fraction: initial.position, atEnd: false })
-  const { item, prefs, changePrefs, finish, savePosition } = useBook(initial, initialPrefs, 0, () => handle.current?.fraction() ?? position.fraction)
+  const start = startOf(initial, EXACT_SCALE)
+  const { item, prefs, changePrefs, finish, savePosition } = useBook(initial, initialPrefs, 0, () => handle.current?.fraction() ?? position.fraction, () => handle.current?.exact() ?? -1)
   useDebouncedSave(position.fraction, savePosition)
   const textSize = (delta: number) => changePrefs({ textSize: Math.min(MAX_TEXT_SIZE, Math.max(MIN_TEXT_SIZE, prefs.textSize + delta)) })
   const tools: ReaderTools = {
@@ -252,7 +256,7 @@ function TextBook({ item: initial, content, initialPrefs }: { item: LibraryItem;
           paged={prefs.paged}
           textSize={prefs.textSize}
           comfort={prefs.comfort}
-          start={initial.position}
+          start={start}
           onPosition={(fraction, atEnd) => setPosition({ fraction, atEnd })}
           onTextSize={(size) => changePrefs({ textSize: size })}
           handle={(h) => (handle.current = h)}
@@ -266,7 +270,8 @@ function TextBook({ item: initial, content, initialPrefs }: { item: LibraryItem;
 function ReflowBookView({ item: initial, book, initialPrefs }: { item: LibraryItem; book: ReflowBook; initialPrefs: ReadingPrefs }) {
   const handle = useRef<EpubReaderHandle | null>(null)
   const [info, setInfo] = useState({ position: initial.position, chapter: 0, atEnd: false })
-  const { item, prefs, changePrefs, finish, savePosition } = useBook(initial, initialPrefs, book.chapterCount, () => handle.current?.position() ?? info.position)
+  const start = startOf(initial, EXACT_SCALE)
+  const { item, prefs, changePrefs, finish, savePosition } = useBook(initial, initialPrefs, book.chapterCount, () => handle.current?.position() ?? info.position, () => handle.current?.exact() ?? -1)
   useDebouncedSave(info.position, savePosition)
   const textSize = (delta: number) => changePrefs({ textSize: Math.min(MAX_TEXT_SIZE, Math.max(MIN_TEXT_SIZE, prefs.textSize + delta)) })
   const contents = async () => {
@@ -323,7 +328,7 @@ function ReflowBookView({ item: initial, book, initialPrefs }: { item: LibraryIt
           paged={prefs.paged}
           textSize={prefs.textSize}
           comfort={prefs.comfort}
-          start={initial.position}
+          start={start}
           onPosition={(i) => setInfo({ position: i.position, chapter: i.chapter, atEnd: i.atEnd })}
           onTextSize={(size) => changePrefs({ textSize: size })}
           handle={(h) => (handle.current = h)}

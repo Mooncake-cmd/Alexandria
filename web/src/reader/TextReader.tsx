@@ -1,6 +1,6 @@
 import { EXACT_SCALE } from '../core/bookmarks'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks'
-import { afterBackDelta, alignDelta, maskStart, nextDelta, turnDirection } from '../core/pages'
+import { afterBackDelta, alignDelta, maskStart, nextDelta, resolutionOf, splitPosition, turnDirection } from '../core/pages'
 import { FONTS, LINE_WIDTHS, MARGINS, THEMES, hex, type Comfort } from '../core/comfort'
 import { visibleLines } from './lines'
 import { searchRanges, setHighlight, termAtPoint, termRanges, textMap } from './textRanges'
@@ -80,11 +80,13 @@ export function TextReader({ content, paged, textSize, comfort, start, onPositio
     const passed = r.height > 0 ? Math.min(1, Math.max(0, (top - r.top) / r.height)) : 0
     return Math.min(1, Math.max(0, (lo + passed) / list.length))
   }
+  // Último ponto preciso medido: ao sair do livro a lista já foi desmontada e só ele vale.
+  const lastExact = useRef(start * EXACT_SCALE)
   const exact = (): number => {
     const s = scroller.current
-    if (!s || !blocks.current.length) return 0
-    if (atEnd()) return 10000 * EXACT_SCALE
-    return Math.round(fractionAt(s.getBoundingClientRect().top + WIN_TOP) * 10000 * EXACT_SCALE)
+    if (!s || !s.isConnected || !blocks.current.length) return lastExact.current
+    lastExact.current = atEnd() ? 10000 * EXACT_SCALE : Math.round(fractionAt(s.getBoundingClientRect().top + WIN_TOP) * 10000 * EXACT_SCALE)
+    return lastExact.current
   }
   const span = (): number => {
     const s = scroller.current
@@ -109,11 +111,11 @@ export function TextReader({ content, paged, textSize, comfort, start, onPositio
     if (!s || !list.length) return
     restoring.current = true
     const place = () => {
-      const exact = (Math.min(10000, Math.max(0, value)) * list.length) / 10000 + 1e-6
-      const index = Math.min(list.length - 1, Math.floor(exact))
+      // No começo de um bloco, o arredondamento não pode jogar a leitura para o fim do anterior.
+      const [index, inside] = splitPosition(value / 10000, list.length, resolutionOf(value))
       const target = list[index]
       const y = target.getBoundingClientRect().top - s.getBoundingClientRect().top + s.scrollTop
-      s.scrollTop = Math.round(y - WIN_TOP + (exact - index) * target.getBoundingClientRect().height)
+      s.scrollTop = Math.round(y - WIN_TOP + inside * target.getBoundingClientRect().height)
     }
     place()
     // Os blocos perto do ponto só ganham a altura real depois de desenhados: confere de novo.

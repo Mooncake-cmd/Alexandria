@@ -7,7 +7,7 @@ import {
   readingDays, removeItem, renameShelf, saveTerm, setCover, setFinished, setShelf, shelves, termsFor, updateProgress
 } from './library'
 import { exportBackup, importBackup } from './backup'
-import { addBookmark, bookmarksFor, removeBookmark, renameBookmark } from './library'
+import { addBookmark, bookmarksFor, removeBookmark, renameBookmark, startOf } from './library'
 import { fold } from '../core/text'
 
 const blob = (text: string) => new NodeBlob([text]) as unknown as Blob
@@ -153,3 +153,21 @@ describe('marcadores no navegador', () => {
     expect((await bookmarksFor(item.id)).map((b) => b.name)).toEqual(['Prefácio'])
   })
 })
+
+describe('ponto de leitura preciso', () => {
+  it('guarda o ponto preciso e volta ao capítulo certo (não ao vizinho)', async () => {
+    const { item } = await addBook('Moby.epub', 'epub', blob('epub'), 1000)
+    // Começo do capítulo 17 de 365: 438 sozinho cairia no fim do capítulo 16.
+    await updateProgress(item.id, 438, 365, 2000, 43_836)
+    const saved = (await findItem(item.id))!
+    expect(saved.exactPosition).toBe(43_836)
+    const start = startOf(saved, 100)
+    expect(Math.floor((start * 365) / 10000 + 1e-6)).toBe(16)
+    expect(Math.floor((438 * 365) / 10000 + 1e-6)).toBe(15)
+    // Ponto preciso que não combina com a posição (ex.: anotação) é ignorado; livros antigos não têm.
+    expect(startOf({ ...saved, position: 5000 }, 100)).toBe(5000)
+    expect(startOf({ ...saved, exactPosition: undefined }, 100)).toBe(438)
+    expect(startOf(saved, 1)).toBe(438)
+  })
+})
+

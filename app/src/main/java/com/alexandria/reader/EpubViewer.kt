@@ -94,7 +94,7 @@ class EpubViewer(
         applyBackground()
     }
 
-    override fun open(item: LibraryItem, start: Int) {
+    override fun open(item: LibraryItem, start: Int, exact: Long) {
         host.worker.execute {
             val result = try {
                 val file = ZipFile(epubFile(item))
@@ -114,7 +114,7 @@ class EpubViewer(
             onUi {
                 zip = result.first
                 book = result.second
-                goTo(start)
+                if (exactMatches(start, exact)) goToExact(exact) else goTo(start)
             }
         }
     }
@@ -138,9 +138,8 @@ class EpubViewer(
     override fun goTo(position: Int) {
         val total = pageCount()
         if (total == 0) return
-        val exact = position.coerceIn(0, 10_000).toDouble() * total / 10_000 + 1e-6
-        val index = exact.toInt().coerceIn(0, total - 1)
-        openChapter(index, (exact - index).coerceIn(0.0, 1.0))
+        val (index, inside) = BookPosition.split(position / 10_000.0, total, 1e-4)
+        openChapter(index, inside)
     }
 
     override val exactScale = EXACT_SCALE
@@ -154,16 +153,15 @@ class EpubViewer(
     override fun goToExact(position: Long) {
         val total = pageCount()
         if (total == 0) return
-        val exact = position.coerceIn(0, 10_000L * EXACT_SCALE).toDouble() * total / (10_000.0 * EXACT_SCALE) + 1e-9
-        val index = exact.toInt().coerceIn(0, total - 1)
-        openChapter(index, (exact - index).coerceIn(0.0, 1.0))
+        val (index, inside) = BookPosition.split(position / (10_000.0 * EXACT_SCALE), total, 1e-4 / EXACT_SCALE)
+        openChapter(index, inside)
     }
 
     /** No começo de um capítulo, a posição inteira (0 a 10000) cairia no capítulo anterior. */
     override fun describeExact(position: Long): String {
         val total = pageCount()
         if (total == 0) return "${position / (100 * EXACT_SCALE)}%"
-        val index = (position.toDouble() * total / (10_000.0 * EXACT_SCALE) + 1e-6).toInt().coerceIn(0, total - 1)
+        val index = BookPosition.split(position / (10_000.0 * EXACT_SCALE), total, 1e-4 / EXACT_SCALE).first
         return "Cap. ${index + 1} · ${position / (100 * EXACT_SCALE)}%"
     }
 
@@ -182,7 +180,7 @@ class EpubViewer(
     override fun describe(position: Int): String {
         val total = pageCount()
         if (total == 0) return "${position / 100}%"
-        val index = (position.toDouble() * total / 10_000).toInt().coerceIn(0, total - 1)
+        val index = BookPosition.split(position / 10_000.0, total, 1e-4).first
         return "Cap. ${index + 1} · ${position / 100}%"
     }
 

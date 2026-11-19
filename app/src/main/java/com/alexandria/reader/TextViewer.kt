@@ -24,7 +24,6 @@ import android.widget.TextView
 import android.widget.Toast
 import java.io.ByteArrayOutputStream
 import java.util.zip.ZipFile
-import kotlin.math.floor
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
@@ -120,7 +119,7 @@ class TextViewer(host: ReaderHost, private val load: (LibraryItem) -> TextConten
         }
     }
 
-    override fun open(item: LibraryItem, start: Int) {
+    override fun open(item: LibraryItem, start: Int, exact: Long) {
         host.worker.execute {
             val content = try {
                 load(item)
@@ -143,7 +142,7 @@ class TextViewer(host: ReaderHost, private val load: (LibraryItem) -> TextConten
                         if (content.truncated) {
                             Toast.makeText(context, "Arquivo muito grande: exibindo só o começo.", Toast.LENGTH_LONG).show()
                         }
-                        restoreFraction(start)
+                        if (exactMatches(start, exact)) restoreExact(exact.toDouble() / (10_000.0 * EXACT_SCALE)) else restoreFraction(start)
                     }
                 }
             }
@@ -646,16 +645,14 @@ class TextViewer(host: ReaderHost, private val load: (LibraryItem) -> TextConten
     }
 
     /** Leva a lista até [fraction]: posiciona o bloco e, depois do layout, rola dentro dele. */
-    private fun restoreFraction(fraction: Int) = restoreExact(fraction.coerceIn(0, 10_000) / 10_000.0)
+    private fun restoreFraction(fraction: Int) = restoreExact(fraction.coerceIn(0, 10_000) / 10_000.0, 1e-4)
 
     /** Leva a lista até a fração [fraction] (0 a 1) do texto. */
-    private fun restoreExact(fraction: Double) {
+    private fun restoreExact(fraction: Double, resolution: Double = 1e-4 / EXACT_SCALE) {
         val count = chunks.size
         if (count == 0) return
-        // O epsilon evita que 5000/10000 de 76 blocos vire 37,999… e caia no bloco anterior.
-        val exact = fraction.coerceIn(0.0, 1.0) * count + 1e-6
-        val index = floor(exact).toInt().coerceIn(0, count - 1)
-        val passed = (exact - index).coerceIn(0.0, 1.0)
+        // No começo de um bloco, o arredondamento não pode jogar a leitura para o fim do anterior.
+        val (index, passed) = BookPosition.split(fraction, count, resolution)
         scrollToChunk(index) { child -> (passed * child.height).toInt() }
     }
 

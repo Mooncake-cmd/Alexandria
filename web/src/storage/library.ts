@@ -20,6 +20,11 @@ export interface LibraryItem {
   fileSize: number
   /** Quando o arquivo foi apagado para liberar espaço (0 = ainda tem). Capa e nome continuam na Estante. */
   archivedAt: number
+  /**
+   * Ponto preciso (como nos marcadores: 0 a 1.000.000 nos textos); -1 ou ausente se não há. Num EPUB
+   * de centenas de capítulos, `position` arredonda para o capítulo vizinho no começo ou fim de um capítulo.
+   */
+  exactPosition?: number
 }
 
 export interface Note {
@@ -101,8 +106,16 @@ async function update(id: number, change: (item: LibraryItem) => Partial<Library
   changed()
 }
 
-export const updateProgress = (id: number, position: number, pageCount = 0, now = Date.now()) =>
-  update(id, () => ({ position, openedAt: now, ...(pageCount > 0 ? { pageCount } : {}) }))
+export const updateProgress = (id: number, position: number, pageCount = 0, now = Date.now(), exactPosition = -1) =>
+  update(id, () => ({ position, exactPosition, openedAt: now, ...(pageCount > 0 ? { pageCount } : {}) }))
+
+/** Ponto de partida de um leitor de texto: o preciso, se combina com a posição salva; senão a posição. */
+export function startOf(item: LibraryItem, scale: number): number {
+  const exact = item.exactPosition ?? -1
+  if (exact < 0 || scale <= 1) return item.position
+  const fine = exact / scale
+  return Math.abs(fine - item.position) <= 1 ? fine : item.position
+}
 export const updatePageCount = (id: number, pageCount: number) => update(id, () => ({ pageCount }))
 export const setFinished = (id: number, finished: boolean, now = Date.now()) => update(id, () => ({ finishedAt: finished ? now : 0 }))
 export const setShelf = (id: number, shelf: string) => update(id, () => ({ shelf }))

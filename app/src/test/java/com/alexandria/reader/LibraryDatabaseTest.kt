@@ -226,4 +226,26 @@ class LibraryDatabaseTest {
         assertEquals(mapOf("a" to 5L), ReadingTime.spreadRemoval(mapOf("a" to 5L, "b" to 0L), 50))
         assertEquals(emptyMap<String, Long>(), ReadingTime.spreadRemoval(emptyMap(), 50))
     }
+
+    @Test
+    fun exactPositionIsSavedAndSurvivesTheUpgrade() {
+        // Banco da 0.16 (versão 8): sem a posição precisa.
+        val file = context.getDatabasePath("alexandria.db").apply { parentFile?.mkdirs() }
+        LibraryDatabase(context).use { it.writableDatabase }
+        SQLiteDatabase.openOrCreateDatabase(file, null).use { old ->
+            old.execSQL("INSERT INTO library_items (name, uri, format, added_at, last_position) VALUES ('Moby.epub', 'content://m', 'epub', 0, 438)")
+            old.version = 8
+        }
+        database = LibraryDatabase(context)
+        val item = database.all().single()
+        assertEquals(-1L, item.exactPosition)
+        // Começo do capítulo 17 de 365: 438 arredondado cairia no fim do capítulo 16; o preciso não.
+        database.updateProgress(item.id, 438, 365, 43_836)
+        val saved = database.find(item.id)!!
+        assertEquals(438, saved.position)
+        assertEquals(43_836L, saved.exactPosition)
+        assertEquals(16, (saved.exactPosition.toDouble() * 365 / 1_000_000 + 1e-9).toInt())
+        assertEquals(15, (saved.position.toDouble() * 365 / 10_000 + 1e-6).toInt())
+    }
 }
+

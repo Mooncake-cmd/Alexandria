@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks'
 import { epubCss, THEMES, hex, type Comfort } from '../core/comfort'
-import { turnDirection } from '../core/pages'
+import { resolutionOf, splitPosition, turnDirection } from '../core/pages'
 import { atkinsonFontFaces } from './fonts'
 import { ensureSpacer, FRAME_TOP, isLastPage, maskTop, nextPage, previousPage, snapToLine } from './framePager'
 import type { LinkTarget, ReflowBook } from './reflowBook'
@@ -61,10 +61,11 @@ type Anchor = ((doc: Document) => Element | null) | null
  */
 export function EpubReader({ book, paged, textSize, comfort, start, onPosition, onTextSize, handle, onTap, onDoubleTap, terms = [], onTerm, onSelection, onInteraction, onNote, onJump }: Props) {
   const frame = useRef<HTMLIFrameElement>(null)
-  const [chapter, setChapter] = useState(() => Math.min(book.chapterCount - 1, Math.floor((start * book.chapterCount) / 10000 + 1e-6)))
+  const [startChapter, startInside] = splitPosition(start / 10000, book.chapterCount, resolutionOf(start))
+  const [chapter, setChapter] = useState(startChapter)
   const [src, setSrc] = useState<string | null>(null)
   const [mask, setMask] = useState(1e6)
-  const pending = useRef<{ fraction: number; anchor: Anchor }>({ fraction: (start * book.chapterCount) / 10000 - chapter, anchor: null })
+  const pending = useRef<{ fraction: number; anchor: Anchor }>({ fraction: startInside, anchor: null })
   const ready = useRef(false)
   const lastPosition = useRef(start)
 
@@ -86,10 +87,13 @@ export function EpubReader({ book, paged, textSize, comfort, start, onPosition, 
     if (!w || !ready.current) return lastPosition.current
     return Math.min(10000, Math.max(0, Math.round(((chapter + chapterFraction(w)) / book.chapterCount) * 10000)))
   }, [chapter, paged])
+  // Último ponto preciso medido: ao sair do livro o capítulo já foi desmontado e só ele vale.
+  const lastExact = useRef(start * EXACT_SCALE)
   const exact = () => {
     const w = win()
-    if (!w || !ready.current) return lastPosition.current * EXACT_SCALE
-    return Math.min(10000 * EXACT_SCALE, Math.max(0, Math.round(((chapter + chapterFraction(w)) / book.chapterCount) * 10000 * EXACT_SCALE)))
+    if (!w || !ready.current || !w.document?.documentElement) return lastExact.current
+    lastExact.current = Math.min(10000 * EXACT_SCALE, Math.max(0, Math.round(((chapter + chapterFraction(w)) / book.chapterCount) * 10000 * EXACT_SCALE)))
+    return lastExact.current
   }
   const span = () => {
     const w = win()
@@ -98,21 +102,21 @@ export function EpubReader({ book, paged, textSize, comfort, start, onPosition, 
     const screen = r <= 0 ? 1 : Math.min(1, w.innerHeight / (r + w.innerHeight))
     return Math.max(1, Math.round((screen / book.chapterCount) * 10000 * EXACT_SCALE))
   }
-  const goToFraction = (value: number) => {
-    const exactChapter = Math.min(1, Math.max(0, value)) * book.chapterCount + 1e-9
-    const index = Math.min(book.chapterCount - 1, Math.floor(exactChapter))
+  const goToFraction = (value: number, resolution: number) => {
+    const [index, inside] = splitPosition(value, book.chapterCount, resolution)
     if (index === chapter && win() && ready.current) {
       const w = win()!
-      w.scrollTo(0, Math.round((exactChapter - index) * range(w)))
+      w.scrollTo(0, Math.round(inside * range(w)))
       if (paged) snapToLine(w)
       report()
-    } else openChapter(index, exactChapter - index)
+    } else openChapter(index, inside)
   }
 
   const report = () => {
     const w = win()
     if (!w || !ready.current) return
     lastPosition.current = position()
+    exact()
     onPosition({ position: lastPosition.current, chapter, atEnd: atEnd(w), ready: true })
     if (paged) setMask(maskTop(w))
   }
@@ -191,10 +195,10 @@ export function EpubReader({ book, paged, textSize, comfort, start, onPosition, 
     position,
     exact,
     span,
-    goToExact: (value) => goToFraction(value / (10000 * EXACT_SCALE)),
+    goToExact: (value) => goToFraction(value / (10000 * EXACT_SCALE), 1e-4 / EXACT_SCALE),
     goToChapter: (index) => openChapter(index, 0),
     turnChapter: (direction) => openChapter(chapter + direction, 0),
-    goTo: (value) => goToFraction(value / 10000),
+    goTo: (value) => goToFraction(value / 10000, resolutionOf(value)),
     async search(term, isCancelled) {
       const hits: SearchHit[] = []
       for (let i = 0; i < book.chapterCount && !isCancelled(); i++) {

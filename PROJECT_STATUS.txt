@@ -1,9 +1,9 @@
 ALEXANDRIA — STATUS DA ENTREGA
 
-Versão do projeto: 0.17.0
+Versão do projeto: 0.17.1
 
 Build: compilado com sucesso (AGP 8.7.3, Gradle 8.14.3, SDK 35, NDK 27.0.12077973). Lint sem avisos.
-148 testes automatizados passando, incluindo integração com os motores do OpenReadEra compilados para Linux.
+150 testes automatizados passando, incluindo integração com os motores do OpenReadEra compilados para Linux.
 APK: ~14,5 MB, não versionado; gerado pelo GitHub Actions (artefato Alexandria-debug-apk) ou por ./gradlew assembleDebug.
 
 Formatos com leitor: PDF, EPUB, MOBI/AZW/AZW3, DJVU, CBZ, CBR (RAR 4/5 ou ZIP), DOCX, TXT.

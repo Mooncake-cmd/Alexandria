@@ -110,8 +110,8 @@ class ReaderActivity : Activity(), ReaderHost {
         reloadGlossary()
         marks = database.bookmarksFor(item.id)
         // Uma anotação aberta pela aba Notas leva direto ao ponto dela.
-        val start = intent.getIntExtra(EXTRA_POSITION, -1).takeIf { it >= 0 } ?: item.position
-        created.open(item, start)
+        val fromNote = intent.getIntExtra(EXTRA_POSITION, -1).takeIf { it >= 0 }
+        created.open(item, fromNote ?: item.position, if (fromNote != null) -1 else item.exactPosition)
     }
 
     override fun onResume() {
@@ -182,7 +182,7 @@ class ReaderActivity : Activity(), ReaderHost {
     private fun saveProgress() {
         val item = current ?: return
         val view = viewer ?: return
-        if (view.loaded) database.updateProgress(item.id, view.position(), view.pageCount())
+        if (view.loaded) database.updateProgress(item.id, view.position(), view.pageCount(), view.exactPosition())
     }
 
     /** O dedo começou na alça da régua: o gesto inteiro é dela, não do livro. */

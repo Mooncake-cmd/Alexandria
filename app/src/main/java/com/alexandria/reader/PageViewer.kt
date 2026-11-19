@@ -321,7 +321,7 @@ class PageViewer(host: ReaderHost, private val openSource: (LibraryItem) -> Page
     private fun showSelectionActions() =
         textLayer.showActions(pageView) { textLayer.selectionBounds(pageIndex, pageView.pageRect()) }
 
-    override fun open(item: LibraryItem, start: Int) {
+    override fun open(item: LibraryItem, start: Int, exact: Long) {
         openPageSource(host, openSource, item, kind) { opened ->
             source = opened.first
             count = opened.second
@@ -781,7 +781,7 @@ class PageScrollViewer(host: ReaderHost, private val openSource: (LibraryItem) -
         adapter.notifyDataSetChanged()
     }
 
-    override fun open(item: LibraryItem, start: Int) {
+    override fun open(item: LibraryItem, start: Int, exact: Long) {
         openPageSource(host, openSource, item, kind) { (opened, total) ->
             source = opened
             host.worker.execute {
