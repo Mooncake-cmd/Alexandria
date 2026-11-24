@@ -115,18 +115,56 @@ object Streak {
 }
 
 /**
- * Relógio de leitura de uma sessão. Conta o tempo com o livro aberto e em primeiro plano, mas para
- * de contar quando passa [idleLimitMs] sem nenhum toque ou troca de página (celular largado aberto).
- * O tempo é separado por dia, para a virada da meia-noite contar no dia certo. Kotlin puro: o
- * horário é sempre passado de fora.
+ * Relógio de leitura de uma sessão. Conta o tempo com o livro aberto e em primeiro plano, separado
+ * por dia (a virada da meia-noite conta no dia certo). Kotlin puro: o horário vem sempre de fora.
+ *
+ * Para não contar o tempo longe do livro:
+ * - **Ritmo de leitura**: aprende quanto tempo o leitor costuma ficar numa página ([pageTurn]) e
+ *   pausa depois de 3 vezes esse tempo sem toque (entre [minIdleMs] e [idleLimitMs]).
+ * - **Desconto da espera**: depois do último toque, só o tempo normal de uma página ([graceMs])
+ *   conta direto. O que passa disso fica "provisório": vale se o leitor tocar de novo antes da pausa
+ *   (estava lendo uma página longa) e é descartado se a pausa chegar ou o livro for fechado.
+ * - **Pausa manual** ([pause]/[resume]).
+ * Sem ritmo conhecido (menos de 3 viradas), pausa em [idleLimitMs] e conta tudo até lá.
  */
-class ReadingClock(private val idleLimitMs: Long = 5 * 60_000L) {
+class ReadingClock(
+    private val idleLimitMs: Long = 5 * 60_000L,
+    private val minIdleMs: Long = 60_000L,
+    pace: List<Long> = emptyList()
+) {
     private var lastTick: Long? = null
     private var lastInteraction = 0L
     private val pending = LinkedHashMap<String, Long>() // milissegundos ainda não salvos, por dia
-    /** Milissegundos contados nesta sessão. */
+    private val provisional = LinkedHashMap<String, Long>()
+    private val turns = ArrayDeque(pace.filter { it in MIN_TURN_MS..MAX_TURN_MS }.takeLast(SAMPLES))
+    private var lastTurn: Long? = null
+    /** Milissegundos contados nesta sessão (sem o tempo provisório). */
     var sessionMs = 0L
         private set
+    /** Tempo provisório: depois do tempo normal de uma página, à espera de um novo toque. */
+    var provisionalMs = 0L
+        private set
+    /** O leitor pausou o cronômetro (botão ⏱). */
+    var paused = false
+        private set
+
+    /** O que o cronômetro mostra: o tempo contado e o provisório. */
+    val shownMs: Long get() = sessionMs + provisionalMs
+
+    /** Últimos intervalos entre viradas de página (para guardar e continuar no próximo uso). */
+    fun pace(): List<Long> = turns.toList()
+
+    /** Tempo típico numa página: a mediana das últimas viradas, ou null se ainda não há o bastante. */
+    fun typicalPageMs(): Long? {
+        if (turns.size < 3) return null
+        val sorted = turns.sorted()
+        return sorted[sorted.size / 2]
+    }
+
+    fun idleLimit(): Long = typicalPageMs()?.let { (it * 3).coerceIn(minIdleMs, idleLimitMs) } ?: idleLimitMs
+
+    /** Quanto tempo depois do último toque conta direto: o tempo normal de uma página. */
+    fun graceMs(): Long = typicalPageMs()?.coerceIn(MIN_GRACE_MS, idleLimit()) ?: idleLimit()
 
     fun start(now: Long) {
         lastTick = now
@@ -134,25 +172,79 @@ class ReadingClock(private val idleLimitMs: Long = 5 * 60_000L) {
     }
 
     fun interaction(now: Long) {
+        if (paused) return
+        // Tocou antes da pausa: o tempo provisório era leitura. Depois da pausa, já foi descartado.
+        if (now - lastInteraction <= idleLimit()) commitProvisional() else dropProvisional()
         lastInteraction = now
     }
 
-    fun isIdle(now: Long) = now - lastInteraction > idleLimitMs
+    /** Uma página (ou uma tela de texto) foi virada: aprende o ritmo de leitura. */
+    fun pageTurn(now: Long) {
+        interaction(now)
+        val previous = lastTurn
+        lastTurn = now
+        if (previous == null || paused) return
+        val interval = now - previous
+        if (interval in MIN_TURN_MS..MAX_TURN_MS) {
+            turns.addLast(interval)
+            while (turns.size > SAMPLES) turns.removeFirst()
+        }
+    }
+
+    fun isIdle(now: Long) = paused || now - lastInteraction > idleLimit()
 
     fun tick(now: Long, day: String) {
         val last = lastTick ?: return
         lastTick = now
-        if (now <= last) return
-        val activeUntil = lastInteraction + idleLimitMs
-        val counted = (minOf(now, activeUntil) - last).coerceAtLeast(0)
-        if (counted == 0L) return
-        sessionMs += counted
-        pending[day] = (pending[day] ?: 0) + counted
+        if (now <= last || paused) return
+        val activeUntil = lastInteraction + idleLimit()
+        val directUntil = lastInteraction + graceMs()
+        val end = minOf(now, activeUntil)
+        val direct = (minOf(end, directUntil) - last).coerceAtLeast(0)
+        val extra = (end - maxOf(last, directUntil)).coerceAtLeast(0)
+        if (direct > 0) {
+            sessionMs += direct
+            pending[day] = (pending[day] ?: 0) + direct
+        }
+        if (extra > 0) {
+            provisionalMs += extra
+            provisional[day] = (provisional[day] ?: 0) + extra
+        }
+        if (now >= activeUntil) dropProvisional()
     }
 
+    /** Livro fechado ou tela apagada: o tempo provisório não conta (o leitor não voltou a tocar). */
     fun stop(now: Long, day: String) {
         tick(now, day)
+        dropProvisional()
         lastTick = null
+    }
+
+    /** Pausa manual: o toque no botão é um sinal de presença, então o tempo até aqui conta. */
+    fun pause(now: Long, day: String) {
+        if (paused) return
+        interaction(now)
+        tick(now, day)
+        paused = true
+    }
+
+    fun resume(now: Long) {
+        if (!paused) return
+        paused = false
+        lastTick = now
+        lastInteraction = now
+        lastTurn = null
+    }
+
+    private fun commitProvisional() {
+        for ((day, ms) in provisional) pending[day] = (pending[day] ?: 0) + ms
+        sessionMs += provisionalMs
+        dropProvisional()
+    }
+
+    private fun dropProvisional() {
+        provisional.clear()
+        provisionalMs = 0
     }
 
     /** Segundos inteiros prontos para salvar, por dia (o resto fracionário fica para a próxima vez). */
@@ -165,6 +257,13 @@ class ReadingClock(private val idleLimitMs: Long = 5 * 60_000L) {
         }
         pending.entries.removeAll { it.value == 0L }
         return result
+    }
+
+    companion object {
+        const val SAMPLES = 20
+        const val MIN_TURN_MS = 3_000L
+        const val MAX_TURN_MS = 10 * 60_000L
+        const val MIN_GRACE_MS = 20_000L
     }
 }
 

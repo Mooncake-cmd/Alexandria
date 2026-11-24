@@ -205,6 +205,13 @@ object ReadingPrefs {
         return true
     }
 
+    /** Ritmo de leitura de um livro: os últimos intervalos entre viradas de página (ms). */
+    fun pace(context: Activity, itemId: Long): List<Long> =
+        context.getSharedPreferences(PREFS, Activity.MODE_PRIVATE).getString("pace_$itemId", null)
+            ?.split(',')?.mapNotNull { it.toLongOrNull() } ?: emptyList()
+    fun setPace(context: Activity, itemId: Long, pace: List<Long>) =
+        context.getSharedPreferences(PREFS, Activity.MODE_PRIVATE).edit().putString("pace_$itemId", pace.joinToString(",")).apply()
+
     /** Bloqueio lateral (PDF, DJVU, quadrinhos): com zoom, o dedo só move a página para cima e para baixo. */
     fun sideLock(context: Activity) = context.getSharedPreferences(PREFS, Activity.MODE_PRIVATE).getBoolean(KEY_SIDE_LOCK, false)
     fun setSideLock(context: Activity, value: Boolean) =

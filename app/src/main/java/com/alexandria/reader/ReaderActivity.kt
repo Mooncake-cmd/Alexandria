@@ -107,6 +107,7 @@ class ReaderActivity : Activity(), ReaderHost {
             showControls(true)
         }
         bookSecondsAtOpen = item.readingSeconds
+        clock = ReadingClock(pace = ReadingPrefs.pace(this, item.id))
         reloadGlossary()
         marks = database.bookmarksFor(item.id)
         // Uma anotação aberta pela aba Notas leva direto ao ponto dela.
@@ -133,8 +134,13 @@ class ReaderActivity : Activity(), ReaderHost {
 
     // ---------- tempo de leitura ----------
 
-    /** Conta o tempo com o livro aberto; para sozinho depois de 5 minutos sem toque. */
-    private val clock = ReadingClock()
+    /**
+     * Conta o tempo com o livro aberto. Pausa sozinho pelo ritmo de leitura do livro (3 vezes o
+     * tempo normal de uma página sem toque) e só confirma a espera longa se o leitor voltar a tocar.
+     */
+    private var clock = ReadingClock()
+    /** Ponto (preciso) da última "virada de página", para medir o ritmo de leitura. */
+    private var lastTurnExact: Long? = null
     private val timerHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private lateinit var timerLabel: TextView
     private var bookSecondsAtOpen = 0L
@@ -153,6 +159,7 @@ class ReaderActivity : Activity(), ReaderHost {
 
     private fun flushReadingTime() {
         val item = current ?: return
+        ReadingPrefs.setPace(this, item.id, clock.pace())
         for ((day, seconds) in clock.drain()) {
             database.addReadingTime(item.id, day, seconds)
             savedSessionSeconds += seconds
@@ -160,10 +167,15 @@ class ReaderActivity : Activity(), ReaderHost {
     }
 
     private fun updateTimerLabel(now: Long) {
-        val session = clock.sessionMs / 1000
+        val session = clock.shownMs / 1000
         val total = bookSecondsAtOpen + session
-        val paused = if (clock.isIdle(now)) " · pausado" else ""
+        val paused = when {
+            clock.paused -> " · pausado (toque para retomar)"
+            clock.isIdle(now) -> " · pausado"
+            else -> ""
+        }
         timerLabel.text = "⏱ ${ReadingTime.clock(session)} · ${ReadingTime.format(total)} neste livro$paused"
+        timerLabel.contentDescription = "Tempo de leitura: ${ReadingTime.clock(session)}, ${ReadingTime.format(total)} neste livro$paused. Toque para ${if (clock.paused) "retomar" else "pausar"}."
     }
 
     override fun onDestroy() {
@@ -259,8 +271,10 @@ class ReaderActivity : Activity(), ReaderHost {
         bar.addView(barButton("‹", "Voltar") { finish() })
         timerLabel = label("⏱ 0:00", 11f, Color.rgb(202, 207, 214)).apply {
             maxLines = 1
-            setPadding(dp(4), dp(1), dp(8), 0)
-            contentDescription = "Tempo de leitura"
+            setPadding(dp(4), dp(4), dp(8), dp(4))
+            minHeight = dp(28)
+            gravity = Gravity.CENTER_VERTICAL
+            setOnClickListener { toggleTimer() }
         }
         bar.addView(
             LinearLayout(this).apply {
@@ -568,8 +582,45 @@ class ReaderActivity : Activity(), ReaderHost {
         ) { applyComfort(it) }
     }
 
+    /** Toque no ⏱: pausa ou retoma o cronômetro. */
+    private fun toggleTimer() {
+        val now = System.currentTimeMillis()
+        if (clock.paused) {
+            clock.resume(now)
+            Toast.makeText(this, "Cronômetro retomado.", Toast.LENGTH_SHORT).show()
+        } else {
+            clock.pause(now, Days.today(now))
+            flushReadingTime()
+            Toast.makeText(this, "Cronômetro pausado. Toque no ⏱ ou vire a página para retomar.", Toast.LENGTH_LONG).show()
+        }
+        updateTimerLabel(now)
+    }
+
+    /** Mudou a posição: se andou pelo menos meia tela, é uma virada de página (ritmo de leitura). */
+    private fun noteMovement(view: BookViewer) {
+        if (!view.loaded) return
+        val now = System.currentTimeMillis()
+        val exact = view.exactPosition()
+        val last = lastTurnExact
+        if (last == null) {
+            lastTurnExact = exact
+            return
+        }
+        val step = (view.screenSpan() * 0.6).toLong().coerceAtLeast(1)
+        if (kotlin.math.abs(exact - last) < step) {
+            clock.interaction(now)
+            return
+        }
+        lastTurnExact = exact
+        if (clock.paused) {
+            clock.resume(now)
+            Toast.makeText(this, "Cronômetro retomado.", Toast.LENGTH_SHORT).show()
+        }
+        clock.pageTurn(now)
+    }
+
     override fun onPositionChanged() {
-        clock.interaction(System.currentTimeMillis())
+        viewer?.let { noteMovement(it) } ?: clock.interaction(System.currentTimeMillis())
         val view = viewer ?: return
         val item = current ?: return
         val show = view.loaded && view.atEnd() && !item.finished

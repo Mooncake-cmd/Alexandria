@@ -1,6 +1,6 @@
 # Alexandria — projeto Android
 
-**Versão:** 0.17.1  
+**Versão:** 0.18.0  
 **Pacote:** `com.alexandria.reader`  
 **Plataforma:** Android 6.0 ou superior (API 23+)  
 **Idioma da interface:** Português (Brasil)
@@ -92,8 +92,15 @@ Em todos os formatos:
   Vale sem diferenciar maiúsculas e acentos, só para palavras inteiras, e cada livro tem o seu glossário (menu ⋮ →
   "Glossário do livro"; todos aparecem também na aba Notas). Vale também no PDF. Em DJVU e quadrinhos o texto é
   imagem: dá para cadastrar termos pelo menu, mas não há sublinhado.
-- **Tempo de leitura**: o cronômetro aparece embaixo do título ao abrir o livro. Para quando o app sai da tela ou depois
-  de 5 minutos sem nenhum toque. O total de cada livro aparece no cartão da biblioteca.
+- **Tempo de leitura**: o cronômetro aparece embaixo do título ao abrir o livro. Para quando o app sai da tela, e conta
+  só o tempo de leitura de verdade:
+  - **pelo seu ritmo**: o app aprende quanto tempo você costuma ficar em cada página daquele livro e pausa depois de
+    3 vezes esse tempo sem toque (entre 1 e 5 minutos; antes de aprender, 5 minutos);
+  - **sem a espera**: depois do último toque, só o tempo normal de uma página conta direto. O que passar disso só vale
+    se você virar a página ou tocar antes da pausa; se a pausa chegar ou você fechar o livro, esse tempo sai;
+  - **pausa manual**: toque no ⏱ para pausar; toque de novo, ou vire a página, para retomar.
+
+  O total de cada livro aparece no cartão da biblioteca.
 - **Limpar estatísticas** (aba Estatísticas): zera tempo de leitura e sequência, sem mexer em livros, progresso,
   Estante, anotações e glossário.
 - **Sequência de dias**: um dia conta a partir de 5 minutos de leitura. A biblioteca mostra "🔥 N dias seguidos" e a aba

@@ -64,6 +64,71 @@ class ReadingLogicTest {
         assertEquals(emptyMap<String, Long>(), clock.drain())
     }
 
+    @Test
+    fun clockLearnsThePaceAndPausesSooner() {
+        val clock = ReadingClock(pace = listOf(40_000, 50_000, 60_000, 1_000 /* rápido demais: ignorado */))
+        assertEquals(50_000L, clock.typicalPageMs())
+        assertEquals(150_000L, clock.idleLimit()) // 3 páginas sem toque
+        assertEquals(50_000L, clock.graceMs()) // conta direto só uma página depois do último toque
+        // Sem ritmo conhecido: como antes (5 min, tudo conta).
+        assertEquals(300_000L, ReadingClock().idleLimit())
+        assertEquals(300_000L, ReadingClock().graceMs())
+        // Ritmo muito rápido: nunca pausa antes de 1 minuto.
+        assertEquals(60_000L, ReadingClock(pace = listOf(5_000, 5_000, 5_000)).idleLimit())
+    }
+
+    @Test
+    fun timeAwayIsNotCountedUnlessTheReaderComesBack() {
+        val day = "2026-11-24"
+        // Leitor que vira a página a cada 50 s: pausa em 150 s, conta direto 50 s após o toque.
+        val away = ReadingClock(pace = listOf(50_000, 50_000, 50_000))
+        away.start(0)
+        for (t in 1..400) away.tick(t * 1_000L, day)
+        assertTrue(away.isIdle(400_000))
+        assertEquals(50_000L, away.sessionMs) // os 100 s de espera depois da página não contaram
+        assertEquals(0L, away.provisionalMs)
+        assertEquals(mapOf(day to 50L), away.drain())
+
+        // Página longa: ficou 120 s sem tocar e virou a página antes da pausa: os 120 s contam.
+        val slow = ReadingClock(pace = listOf(50_000, 50_000, 50_000))
+        slow.start(0)
+        for (t in 1..120) slow.tick(t * 1_000L, day)
+        assertEquals(50_000L, slow.sessionMs)
+        assertEquals(70_000L, slow.provisionalMs)
+        assertEquals(120_000L, slow.shownMs)
+        slow.pageTurn(120_000)
+        assertEquals(120_000L, slow.sessionMs)
+        assertEquals(mapOf(day to 120L), slow.drain())
+
+        // Fechou o livro com tempo provisório: não conta.
+        val closed = ReadingClock(pace = listOf(50_000, 50_000, 50_000))
+        closed.start(0)
+        for (t in 1..90) closed.tick(t * 1_000L, day)
+        closed.stop(90_000, day)
+        assertEquals(50_000L, closed.sessionMs)
+    }
+
+    @Test
+    fun manualPauseStopsCountingUntilResumed() {
+        val day = "2026-11-24"
+        val clock = ReadingClock()
+        clock.start(0)
+        clock.tick(30_000, day)
+        clock.pause(30_000, day)
+        assertTrue(clock.paused)
+        assertTrue(clock.isIdle(31_000))
+        clock.interaction(40_000) // tocar na tela não retoma sozinho
+        for (t in 31..200) clock.tick(t * 1_000L, day)
+        assertEquals(30_000L, clock.sessionMs)
+        clock.resume(200_000)
+        clock.tick(210_000, day)
+        assertEquals(40_000L, clock.sessionMs)
+        // Virar a página logo depois de retomar não vira um intervalo de ritmo falso.
+        clock.pageTurn(215_000)
+        assertEquals(null, clock.typicalPageMs())
+        assertTrue(clock.pace().isEmpty())
+    }
+
     private fun term(id: Long, text: String) = GlossaryTerm(id, 1, text, "def", 0)
 
     @Test

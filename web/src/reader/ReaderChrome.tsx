@@ -83,6 +83,23 @@ export function ReaderChrome({ title, prefs, onPrefs, typography, menu, headerEx
   const [returnTo, setReturnTo] = useState<number | null>(null)
   const here = tools ? indexOnScreen(marks, tools.exact(), tools.span()) : -1
   const markIndex = marks.findIndex((m) => m.id === markId)
+  // Virar a página (andar meia tela ou mais) ensina o ritmo de leitura ao cronômetro.
+  const lastTurn = useRef<number | null>(null)
+  useEffect(() => {
+    if (!tools) return
+    const exact = tools.exact()
+    const last = lastTurn.current
+    if (last === null) {
+      lastTurn.current = exact
+      return
+    }
+    if (Math.abs(exact - last) >= Math.max(1, tools.span() * 0.6)) {
+      lastTurn.current = exact
+      const wasPaused = timer.paused
+      timer.pageTurn()
+      if (wasPaused) toast('Cronômetro retomado.')
+    }
+  })
   // Andando pelo livro com a barra aberta, "1 de 3" segue o marcador da tela.
   useEffect(() => {
     if (markMode && here >= 0 && marks[here].id !== markId) setMarkId(marks[here].id)
@@ -294,7 +311,10 @@ export function ReaderChrome({ title, prefs, onPrefs, typography, menu, headerEx
         <a href="#/biblioteca" class="bar-button" aria-label="Voltar para a biblioteca">‹</a>
         <div class="reader-title">
           <strong>{title}</strong>
-          <span class="reader-timer" aria-label="Tempo de leitura">{timer.label}</span>
+          <button type="button" class="reader-timer" title={timer.paused ? 'Retomar o cronômetro' : 'Pausar o cronômetro'} onClick={() => {
+            const paused = timer.toggle()
+            toast(paused ? 'Cronômetro pausado. Clique no ⏱ ou vire a página para retomar.' : 'Cronômetro retomado.')
+          }}>{timer.label}</button>
         </div>
         {headerExtra}
         {tools?.search && <button type="button" class="bar-button" aria-label="Buscar no livro" title="Buscar no livro (Ctrl + F)" onClick={() => setPanelState((p) => (p === 'search' ? null : 'search'))}>🔍</button>}

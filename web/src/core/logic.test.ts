@@ -221,3 +221,57 @@ describe('páginas (PageTurnTest, LinePagerTest)', () => {
     expect(alignDelta(lines(10, 5), 10, 110)).toBe(0)
   })
 })
+
+describe('cronômetro pelo ritmo de leitura (ReadingLogicTest)', () => {
+  const day = '2026-11-24'
+  it('aprende o ritmo e pausa antes', () => {
+    const clock = new ReadingClock(undefined, undefined, [40_000, 50_000, 60_000, 1_000])
+    expect(clock.typicalPageMs()).toBe(50_000)
+    expect(clock.idleLimit()).toBe(150_000)
+    expect(clock.graceMs()).toBe(50_000)
+    expect(new ReadingClock().idleLimit()).toBe(300_000)
+    expect(new ReadingClock().graceMs()).toBe(300_000)
+    expect(new ReadingClock(undefined, undefined, [5_000, 5_000, 5_000]).idleLimit()).toBe(60_000)
+  })
+
+  it('o tempo longe não conta, a não ser que o leitor volte antes da pausa', () => {
+    const away = new ReadingClock(undefined, undefined, [50_000, 50_000, 50_000])
+    away.start(0)
+    for (let t = 1; t <= 400; t++) away.tick(t * 1000, day)
+    expect(away.isIdle(400_000)).toBe(true)
+    expect(away.sessionMs).toBe(50_000)
+    expect(away.provisionalMs).toBe(0)
+    expect(away.drain()).toEqual({ [day]: 50 })
+
+    const slow = new ReadingClock(undefined, undefined, [50_000, 50_000, 50_000])
+    slow.start(0)
+    for (let t = 1; t <= 120; t++) slow.tick(t * 1000, day)
+    expect([slow.sessionMs, slow.provisionalMs, slow.shownMs]).toEqual([50_000, 70_000, 120_000])
+    slow.pageTurn(120_000)
+    expect(slow.sessionMs).toBe(120_000)
+    expect(slow.drain()).toEqual({ [day]: 120 })
+
+    const closed = new ReadingClock(undefined, undefined, [50_000, 50_000, 50_000])
+    closed.start(0)
+    for (let t = 1; t <= 90; t++) closed.tick(t * 1000, day)
+    closed.stop(90_000, day)
+    expect(closed.sessionMs).toBe(50_000)
+  })
+
+  it('pausa manual para até retomar', () => {
+    const clock = new ReadingClock()
+    clock.start(0)
+    clock.tick(30_000, day)
+    clock.pause(30_000, day)
+    expect(clock.paused && clock.isIdle(31_000)).toBe(true)
+    clock.interaction(40_000)
+    for (let t = 31; t <= 200; t++) clock.tick(t * 1000, day)
+    expect(clock.sessionMs).toBe(30_000)
+    clock.resume(200_000)
+    clock.tick(210_000, day)
+    expect(clock.sessionMs).toBe(40_000)
+    clock.pageTurn(215_000)
+    expect(clock.typicalPageMs()).toBeNull()
+  })
+})
+

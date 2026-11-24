@@ -285,7 +285,8 @@ button.link { background: none; border: 0; padding: 0; color: var(--gold-text); 
 .selection-bar { position: absolute; z-index: 40; display: flex; gap: 2px; background: var(--ink); border-radius: 10px; padding: 3px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3); transform: translate(-50%, 8px); }
 .selection-bar button { background: none; border: 0; color: #fff; font-size: 13px; padding: 7px 10px; border-radius: 8px; cursor: pointer; white-space: nowrap; }
 .selection-bar button:hover { background: rgba(255, 255, 255, 0.12); }
-.reader-timer { display: block; color: #cacfd6; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.reader-timer { display: block; max-width: 100%; color: #cacfd6; font: inherit; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: none; border: 0; padding: 2px 0; text-align: left; cursor: pointer; }
+.reader-timer:hover { color: #fff; text-decoration: underline; }
 
 /* ---------- estatísticas e notas ---------- */
 .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 9px; margin: 10px 0; }

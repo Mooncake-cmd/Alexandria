@@ -77,17 +77,61 @@ export function streakSummary(days: Record<string, number>, todayText: string): 
 }
 
 /**
- * Relógio de uma sessão de leitura: conta com o livro aberto e para depois de `idleLimitMs` sem
- * interação. Separa o tempo por dia (virada da meia-noite). O horário sempre vem de fora.
+ * Relógio de leitura de uma sessão (porte de ReadingClock do app). Conta com o livro aberto e a aba
+ * à vista, separado por dia. Para não contar o tempo longe do livro:
+ * - ritmo de leitura: aprende o tempo normal numa página (`pageTurn`) e pausa depois de 3 vezes esse
+ *   tempo sem toque (entre `minIdleMs` e `idleLimitMs`);
+ * - desconto da espera: depois do último toque, só o tempo normal de uma página conta direto; o resto
+ *   fica provisório e só vale se o leitor tocar de novo antes da pausa;
+ * - pausa manual (`pause`/`resume`).
+ * Sem ritmo conhecido (menos de 3 viradas), pausa em `idleLimitMs` e conta tudo até lá.
  */
 export class ReadingClock {
+  static readonly SAMPLES = 20
+  static readonly MIN_TURN_MS = 3_000
+  static readonly MAX_TURN_MS = 10 * 60_000
+  static readonly MIN_GRACE_MS = 20_000
   private lastTick: number | null = null
   private lastInteraction = 0
   private pending = new Map<string, number>()
-  /** Milissegundos contados nesta sessão. */
+  private provisional = new Map<string, number>()
+  private turns: number[]
+  private lastTurn: number | null = null
+  /** Milissegundos contados nesta sessão (sem o tempo provisório). */
   sessionMs = 0
+  /** Tempo provisório: depois do tempo normal de uma página, à espera de um novo toque. */
+  provisionalMs = 0
+  /** O leitor pausou o cronômetro (botão ⏱). */
+  paused = false
 
-  constructor(private readonly idleLimitMs = 5 * 60_000) {}
+  constructor(private readonly idleLimitMs = 5 * 60_000, private readonly minIdleMs = 60_000, pace: number[] = []) {
+    this.turns = pace.filter((t) => t >= ReadingClock.MIN_TURN_MS && t <= ReadingClock.MAX_TURN_MS).slice(-ReadingClock.SAMPLES)
+  }
+
+  /** O que o cronômetro mostra: o tempo contado e o provisório. */
+  get shownMs() {
+    return this.sessionMs + this.provisionalMs
+  }
+
+  pace(): number[] {
+    return [...this.turns]
+  }
+
+  typicalPageMs(): number | null {
+    if (this.turns.length < 3) return null
+    const sorted = [...this.turns].sort((a, b) => a - b)
+    return sorted[Math.floor(sorted.length / 2)]
+  }
+
+  idleLimit(): number {
+    const typical = this.typicalPageMs()
+    return typical === null ? this.idleLimitMs : Math.min(this.idleLimitMs, Math.max(this.minIdleMs, typical * 3))
+  }
+
+  graceMs(): number {
+    const typical = this.typicalPageMs()
+    return typical === null ? this.idleLimit() : Math.min(this.idleLimit(), Math.max(ReadingClock.MIN_GRACE_MS, typical))
+  }
 
   start(now: number) {
     this.lastTick = now
@@ -95,28 +139,83 @@ export class ReadingClock {
   }
 
   interaction(now: number) {
+    if (this.paused) return
+    // Tocou antes da pausa: o tempo provisório era leitura. Depois da pausa, já foi descartado.
+    if (now - this.lastInteraction <= this.idleLimit()) this.commitProvisional()
+    else this.dropProvisional()
     this.lastInteraction = now
   }
 
+  /** Uma página (ou uma tela de texto) foi virada: aprende o ritmo de leitura. */
+  pageTurn(now: number) {
+    this.interaction(now)
+    const previous = this.lastTurn
+    this.lastTurn = now
+    if (previous === null || this.paused) return
+    const interval = now - previous
+    if (interval >= ReadingClock.MIN_TURN_MS && interval <= ReadingClock.MAX_TURN_MS) {
+      this.turns.push(interval)
+      if (this.turns.length > ReadingClock.SAMPLES) this.turns.shift()
+    }
+  }
+
   isIdle(now: number) {
-    return now - this.lastInteraction > this.idleLimitMs
+    return this.paused || now - this.lastInteraction > this.idleLimit()
   }
 
   tick(now: number, day: string) {
     const last = this.lastTick
     if (last === null) return
     this.lastTick = now
-    if (now <= last) return
-    const activeUntil = this.lastInteraction + this.idleLimitMs
-    const counted = Math.max(0, Math.min(now, activeUntil) - last)
-    if (counted === 0) return
-    this.sessionMs += counted
-    this.pending.set(day, (this.pending.get(day) ?? 0) + counted)
+    if (now <= last || this.paused) return
+    const activeUntil = this.lastInteraction + this.idleLimit()
+    const directUntil = this.lastInteraction + this.graceMs()
+    const end = Math.min(now, activeUntil)
+    const direct = Math.max(0, Math.min(end, directUntil) - last)
+    const extra = Math.max(0, end - Math.max(last, directUntil))
+    if (direct > 0) {
+      this.sessionMs += direct
+      this.pending.set(day, (this.pending.get(day) ?? 0) + direct)
+    }
+    if (extra > 0) {
+      this.provisionalMs += extra
+      this.provisional.set(day, (this.provisional.get(day) ?? 0) + extra)
+    }
+    if (now >= activeUntil) this.dropProvisional()
   }
 
+  /** Livro fechado ou aba escondida: o tempo provisório não conta. */
   stop(now: number, day: string) {
     this.tick(now, day)
+    this.dropProvisional()
     this.lastTick = null
+  }
+
+  /** Pausa manual: o clique no botão é sinal de presença, então o tempo até aqui conta. */
+  pause(now: number, day: string) {
+    if (this.paused) return
+    this.interaction(now)
+    this.tick(now, day)
+    this.paused = true
+  }
+
+  resume(now: number) {
+    if (!this.paused) return
+    this.paused = false
+    this.lastTick = now
+    this.lastInteraction = now
+    this.lastTurn = null
+  }
+
+  private commitProvisional() {
+    for (const [day, ms] of this.provisional) this.pending.set(day, (this.pending.get(day) ?? 0) + ms)
+    this.sessionMs += this.provisionalMs
+    this.dropProvisional()
+  }
+
+  private dropProvisional() {
+    this.provisional.clear()
+    this.provisionalMs = 0
   }
 
   /** Segundos inteiros prontos para salvar, por dia (a fração fica para a próxima vez). */
