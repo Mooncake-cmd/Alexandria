@@ -113,6 +113,20 @@ class ReaderActivity : Activity(), ReaderHost {
         // Uma anotação aberta pela aba Notas leva direto ao ponto dela.
         val fromNote = intent.getIntExtra(EXTRA_POSITION, -1).takeIf { it >= 0 }
         created.open(item, fromNote ?: item.position, if (fromNote != null) -1 else item.exactPosition)
+        // Posição salva em outro aparelho (se a sincronização estiver ligada). Uma anotação aberta pela
+        // aba Notas tem prioridade: nesse caso só grava.
+        syncSize = item.fileSize.takeIf { it > 0 } ?: IncomingBooks.describe(this, android.net.Uri.parse(item.uri)).second
+        if (syncSize > 0 && item.fileSize <= 0) database.relink(item.id, item.uri, item.format, syncSize)
+        if (fromNote != null || syncSize <= 0) {
+            pullDone = true
+        } else {
+            PositionSync.pull(this, item.name, syncSize) { entry ->
+                if (closed) return@pull
+                pullDone = true
+                remote = entry
+                applyRemote()
+            }
+        }
     }
 
     override fun onResume() {
@@ -126,6 +140,7 @@ class ReaderActivity : Activity(), ReaderHost {
     override fun onPause() {
         super.onPause()
         saveProgress()
+        pushPosition()
         timerHandler.removeCallbacks(timerTick)
         val now = System.currentTimeMillis()
         clock.stop(now, Days.today(now))
@@ -152,6 +167,7 @@ class ReaderActivity : Activity(), ReaderHost {
             val now = System.currentTimeMillis()
             clock.tick(now, Days.today(now))
             if (++ticks % 30 == 0) flushReadingTime()
+            if (ticks % 180 == 0) pushPosition()
             updateTimerLabel(now)
             timerHandler.postDelayed(this, 1000)
         }
@@ -195,6 +211,43 @@ class ReaderActivity : Activity(), ReaderHost {
         val item = current ?: return
         val view = viewer ?: return
         if (view.loaded) database.updateProgress(item.id, view.position(), view.pageCount(), view.exactPosition())
+    }
+
+    // ---------- sincronização da posição entre aparelhos ----------
+
+    private var syncSize = 0L
+    /** Já se sabe a posição do outro aparelho (ou não há): só então este grava a sua. */
+    private var pullDone = false
+    private var remote: SyncEntry? = null
+    private var remoteApplied = false
+    private var lastPushed: Long? = null
+
+    /** Livro pronto e posição do outro aparelho em mãos: continua de onde parou lá, se for mais recente. */
+    private fun applyRemote() {
+        val item = current ?: return
+        val view = viewer ?: return
+        val entry = remote ?: return
+        if (remoteApplied || !view.loaded) return
+        remoteApplied = true
+        if (entry.format != item.format) return
+        val here = view.exactPosition()
+        if (!SyncData.shouldApply(entry, item.openedAt, here, view.screenSpan(), PositionSync.device())) return
+        offerReturn(here)
+        if (view.exactScale > 1 && entry.exact >= 0 && kotlin.math.abs(entry.exact.toDouble() / view.exactScale - entry.position) <= 1.0) view.goToExact(entry.exact)
+        else view.goTo(entry.position)
+        lastTurnExact = null
+        showSnack("Continuando de onde você parou no ${entry.device}.", "VOLTAR") { goBack() }
+    }
+
+    /** Grava a posição deste aparelho no gist (se mudou desde a última vez). */
+    private fun pushPosition() {
+        val item = current ?: return
+        val view = viewer ?: return
+        if (!pullDone || syncSize <= 0 || !view.loaded) return
+        val exact = view.exactPosition()
+        if (exact == lastPushed) return
+        lastPushed = exact
+        PositionSync.push(this, item.name, syncSize, SyncEntry(item.format, view.position(), exact, view.pageCount(), System.currentTimeMillis(), PositionSync.device()))
     }
 
     /** O dedo começou na alça da régua: o gesto inteiro é dela, não do livro. */
@@ -621,6 +674,7 @@ class ReaderActivity : Activity(), ReaderHost {
 
     override fun onPositionChanged() {
         viewer?.let { noteMovement(it) } ?: clock.interaction(System.currentTimeMillis())
+        if (!remoteApplied && remote != null) applyRemote()
         val view = viewer ?: return
         val item = current ?: return
         val show = view.loaded && view.atEnd() && !item.finished

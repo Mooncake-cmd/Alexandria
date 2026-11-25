@@ -1,5 +1,5 @@
 import { strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate'
-import { clear, closeDb, getAll, getAllKeys, put, transaction, type StoreName } from './db'
+import { clear, closeDb, get, getAll, getAllKeys, put, transaction, type StoreName } from './db'
 import { notifyLibraryChanged } from './library'
 
 /**
@@ -23,6 +23,12 @@ export async function exportBackup(includeBooks: boolean, now = Date.now()): Pro
   const raw = await transaction(stores, 'readonly', async (tx) => {
     const out: Record<string, { keys: IDBValidKey[]; values: unknown[] }> = {}
     for (const store of stores) out[store] = { keys: await getAllKeys(tx, store), values: await getAll(tx, store) }
+    // O token da sincronização (GitHub) não vai para o backup: o arquivo pode ser compartilhado.
+    const prefs = out.prefs
+    if (prefs) {
+      const keep = prefs.keys.map((k, i) => (k === 'sync' ? -1 : i)).filter((i) => i >= 0)
+      out.prefs = { keys: keep.map((i) => prefs.keys[i]), values: keep.map((i) => prefs.values[i]) }
+    }
     return out
   })
   const files: Zippable = {}
@@ -63,7 +69,10 @@ export async function importBackup(file: Blob): Promise<RestoreSummary> {
   if (dump.version > BACKUP_VERSION) throw new Error('Backup feito numa versão mais nova do Alexandria. Atualize a página e tente de novo.')
   const all: StoreName[] = [...DATA_STORES, ...BLOB_STORES]
   await transaction(all, 'readwrite', async (tx) => {
+    // A sincronização configurada neste navegador continua depois de restaurar.
+    const sync = await get(tx, 'prefs', 'sync')
     for (const store of all) await clear(tx, store)
+    if (sync) await put(tx, 'prefs', sync, 'sync')
     for (const [store, { keys, values }] of Object.entries(dump.stores)) {
       if (!all.includes(store as StoreName)) continue
       for (let i = 0; i < keys.length; i++) {

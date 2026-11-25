@@ -15,6 +15,8 @@ const WIN_BOTTOM = 24
 
 export interface TextReaderHandle {
   fraction: () => number
+  /** O texto já foi posto no ponto de partida (a posição já é a real). */
+  ready: () => boolean
   /** Posição precisa (0 a 1.000.000) e quanto dela cabe numa tela: marcadores. */
   exact: () => number
   span: () => number
@@ -236,7 +238,7 @@ export function TextReader({ content, paged, textSize, comfort, start, onPositio
     setHighlight(window, 'alx-search-current', [])
   }
 
-  handle?.({ fraction, exact, span, goToExact: (v) => restore(v / EXACT_SCALE), goTo: (f) => restore(f), search, showHit, clearSearch })
+  handle?.({ fraction, ready: () => !restoring.current && blocks.current.length > 0, exact, span, goToExact: (v) => restore(v / EXACT_SCALE), goTo: (f) => restore(f), search, showHit, clearSearch })
 
   // Abre na posição salva; muda de modo ou de letra mantendo o ponto de leitura.
   const lastFraction = useRef(start)

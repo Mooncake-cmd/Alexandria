@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks'
 import { exportBackup, importBackup, requestPersistence, storageInfo } from '../storage/backup'
 import { confirmDialog, shortcutsDialog, toast } from '../ui/dialogs'
+import { connectSync, disconnectSync, SyncError, syncSettings, type SyncSettings } from '../storage/sync'
 
 const size = (bytes: number) =>
   bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1).replace('.', ',')} GB` : bytes >= 1e6 ? `${(bytes / 1e6).toFixed(1).replace('.', ',')} MB` : `${Math.round(bytes / 1e3)} KB`
@@ -116,6 +117,8 @@ export function Settings() {
         ))}
       </ul>
 
+      <SyncSection />
+
       <h2>Backup</h2>
       <p class="muted">Limpar os dados do navegador apaga a biblioteca. Faça backups de vez em quando.</p>
       <div class="panel">
@@ -143,3 +146,66 @@ export function Settings() {
     </>
   )
 }
+
+/** Sincronização da posição de leitura com o app do celular, por um gist secreto do GitHub. */
+function SyncSection() {
+  const [settings, setSettings] = useState<SyncSettings | null | undefined>(undefined)
+  const [token, setToken] = useState('')
+  const [busy, setBusy] = useState(false)
+  const load = () => syncSettings().then((s) => setSettings(s ?? null))
+  useEffect(() => {
+    load()
+  }, [])
+  const connect = async (e: Event) => {
+    e.preventDefault()
+    if (!token.trim()) return
+    setBusy(true)
+    try {
+      const login = await connectSync(token)
+      setToken('')
+      toast(`Conectado como @${login}. A posição de leitura vai sincronizar.`)
+    } catch (error) {
+      const status = error instanceof SyncError ? error.status : 0
+      toast(status === 401 ? 'O GitHub recusou o token. Confira se copiou inteiro.' : status === 403 ? 'O token não tem permissão de gists (Account permissions → Gists → Read and write).' : status ? `O GitHub respondeu com erro (${status}).` : 'Sem conexão com o GitHub. Tente de novo com internet.')
+    } finally {
+      setBusy(false)
+      load()
+    }
+  }
+  const disconnect = async () => {
+    if (!(await confirmDialog('Desligar a sincronização?', 'O token é esquecido neste navegador. O gist continua na sua conta do GitHub.', 'Desligar'))) return
+    await disconnectSync()
+    load()
+  }
+  if (settings === undefined) return null
+  return (
+    <>
+      <h2>Sincronizar posição entre aparelhos</h2>
+      {settings ? (
+        <div class="sync-box">
+          <p>Conectado como <strong>@{settings.login}</strong>. Última sincronização: {settings.lastSync ? new Date(settings.lastSync).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : 'ainda não'}.</p>
+          {settings.error && <p class="sync-error">⚠ {settings.error} Desligue e conecte de novo com um token novo.</p>}
+          <p class="muted small">Ao abrir um livro, se ele foi lido depois em outro aparelho (o celular, outro computador), o site continua de lá, com a opção de voltar. Ao sair do livro, e a cada 3 minutos de leitura, a posição daqui é gravada.</p>
+          <button type="button" class="secondary" onClick={disconnect}>Desligar a sincronização</button>
+        </div>
+      ) : (
+        <form class="sync-box" onSubmit={connect}>
+          <p>Leia no computador e continue no celular (no app Alexandria) de onde parou, e vice-versa. Os arquivos não viajam: carregue o mesmo livro nos dois. Só a posição vai, num gist secreto da sua conta do GitHub, com um código no lugar do nome do livro.</p>
+          <ol class="sync-steps">
+            <li>Abra <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">a página de novo token do GitHub</a> (Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token).</li>
+            <li>Dê um nome (ex.: Alexandria) e escolha a validade.</li>
+            <li>Em <em>Account permissions</em>, procure <strong>Gists</strong> e escolha <strong>Read and write</strong>. Não precisa de mais nada.</li>
+            <li>Clique em <em>Generate token</em>, copie o token (começa com <code>github_pat_</code>) e cole abaixo. Use o mesmo token no app do celular (Ajustes → Sincronizar posição).</li>
+          </ol>
+          <label class="field">
+            <span>Token do GitHub</span>
+            <input type="password" autoComplete="off" spellcheck={false} placeholder="github_pat_…" value={token} onInput={(e) => setToken((e.target as HTMLInputElement).value)} />
+          </label>
+          <p class="muted small">O token fica guardado só neste navegador (não vai para o backup) e só dá acesso aos seus gists.</p>
+          <button type="submit" class="primary" disabled={busy || !token.trim()}>{busy ? 'Conectando…' : 'Conectar com o GitHub'}</button>
+        </form>
+      )}
+    </>
+  )
+}
+

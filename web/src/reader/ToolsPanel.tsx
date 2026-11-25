@@ -31,6 +31,8 @@ export interface ReaderTools {
   goToExact: (position: number) => void
   /** Posição precisa ÷ exactScale = posição de [describe]. */
   exactScale: number
+  /** O livro já está no ponto de partida (para aplicar a posição de outro aparelho). */
+  ready?: () => boolean
 }
 
 export function SearchPanel({ tools, onClose }: { tools: ReaderTools; onClose: () => void }) {

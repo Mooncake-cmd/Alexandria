@@ -15,6 +15,8 @@ import { DEFAULT_TEXT_SIZE, MAX_TEXT_SIZE, MIN_TEXT_SIZE } from './prefs'
 
 export interface EpubReaderHandle {
   position: () => number
+  /** O capítulo terminou de abrir (a posição já é a real). */
+  ready: () => boolean
   /** Posição precisa (0 a 1.000.000) e quanto dela cabe numa tela: marcadores e "Voltar". */
   exact: () => number
   span: () => number
@@ -193,6 +195,7 @@ export function EpubReader({ book, paged, textSize, comfort, start, onPosition, 
   }
   handle?.({
     position,
+    ready: () => ready.current,
     exact,
     span,
     goToExact: (value) => goToFraction(value / (10000 * EXACT_SCALE), 1e-4 / EXACT_SCALE),

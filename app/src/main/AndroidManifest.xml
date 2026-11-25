@@ -1,5 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!--
+        Internet: usada só pela sincronização da posição de leitura (opcional, desligada até a pessoa
+        colocar um token do GitHub em Ajustes). Os livros abertos no WebView continuam sem rede.
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!--
         allowBackup desligado de propósito: a biblioteca guarda URIs com permissão persistida,
         e essa permissão não é restaurada em outro aparelho. Um backup traria itens quebrados.
     -->

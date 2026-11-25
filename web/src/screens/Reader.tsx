@@ -221,7 +221,8 @@ function TextBook({ item: initial, content, initialPrefs }: { item: LibraryItem;
     exact: () => handle.current?.exact() ?? position.fraction * EXACT_SCALE,
     span: () => handle.current?.span() ?? 1,
     goToExact: (p) => handle.current?.goToExact(p),
-    exactScale: EXACT_SCALE
+    exactScale: EXACT_SCALE,
+    ready: () => handle.current?.ready() ?? false
   }
   return (
     <ReaderChrome
@@ -230,6 +231,7 @@ function TextBook({ item: initial, content, initialPrefs }: { item: LibraryItem;
       onPrefs={changePrefs}
       typography
       tools={tools}
+      sync={{ name: initial.name, size: initial.fileSize, format: initial.format, openedAt: initial.openedAt, pageCount: 0 }}
       readingSeconds={initial.readingSeconds}
       menu={[
         [prefs.paged ? 'Modo: rolagem contínua' : 'Modo: páginas (setas, roda do mouse ou clique duplo na borda)', () => changePrefs({ paged: !prefs.paged })],
@@ -292,7 +294,8 @@ function ReflowBookView({ item: initial, book, initialPrefs }: { item: LibraryIt
     exact: () => handle.current?.exact() ?? info.position * EXACT_SCALE,
     span: () => handle.current?.span() ?? 1,
     goToExact: (p) => handle.current?.goToExact(p),
-    exactScale: EXACT_SCALE
+    exactScale: EXACT_SCALE,
+    ready: () => handle.current?.ready() ?? false
   }
   return (
     <ReaderChrome
@@ -301,6 +304,7 @@ function ReflowBookView({ item: initial, book, initialPrefs }: { item: LibraryIt
       onPrefs={changePrefs}
       typography
       tools={tools}
+      sync={{ name: initial.name, size: initial.fileSize, format: initial.format, openedAt: initial.openedAt, pageCount: book.chapterCount }}
       readingSeconds={initial.readingSeconds}
       menu={[
         ['Sumário', contents],
@@ -375,7 +379,8 @@ function PageBookView({ item: initial, source, initialPrefs }: { item: LibraryIt
     exact: () => handle.current?.current() ?? info.page,
     span: () => 1,
     goToExact: (p) => handle.current?.goTo(p),
-    exactScale: 1
+    exactScale: 1,
+    ready: () => !!handle.current
   }
   return (
     <ReaderChrome
@@ -384,6 +389,7 @@ function PageBookView({ item: initial, source, initialPrefs }: { item: LibraryIt
       onPrefs={changePrefs}
       typography={false}
       tools={tools}
+      sync={{ name: initial.name, size: initial.fileSize, format: initial.format, openedAt: initial.openedAt, pageCount: source.pageCount }}
       readingSeconds={initial.readingSeconds}
       keys={{ g: askPage }}
       menu={[

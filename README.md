@@ -1,6 +1,6 @@
 # Alexandria — projeto Android
 
-**Versão:** 0.18.0  
+**Versão:** 0.19.0  
 **Pacote:** `com.alexandria.reader`  
 **Plataforma:** Android 6.0 ou superior (API 23+)  
 **Idioma da interface:** Português (Brasil)
@@ -92,6 +92,13 @@ Em todos os formatos:
   Vale sem diferenciar maiúsculas e acentos, só para palavras inteiras, e cada livro tem o seu glossário (menu ⋮ →
   "Glossário do livro"; todos aparecem também na aba Notas). Vale também no PDF. Em DJVU e quadrinhos o texto é
   imagem: dá para cadastrar termos pelo menu, mas não há sublinhado.
+- **Sincronizar a posição entre aparelhos** (opcional): leia no celular e continue no computador (no site), ou o
+  contrário. Os arquivos não viajam — carregue o mesmo livro nos dois; o livro é reconhecido pelo nome e tamanho do
+  arquivo. Só a posição vai, num **gist secreto da sua conta do GitHub**, com um código no lugar do nome do livro.
+  Ajustes → "Sincronizar posição entre aparelhos": crie um token *fine-grained* no GitHub com a permissão de conta
+  **Gists: Read and write** e cole no app e no site. Ao abrir um livro lido depois em outro aparelho, ele continua de
+  lá (com "↩ Voltar"); ao sair do livro, e a cada 3 minutos de leitura, a posição é gravada. É o único uso de internet
+  do app; sem token configurado, nada é enviado. No site, o token não vai para o backup.
 - **Tempo de leitura**: o cronômetro aparece embaixo do título ao abrir o livro. Para quando o app sai da tela, e conta
   só o tempo de leitura de verdade:
   - **pelo seu ritmo**: o app aprende quanto tempo você costuma ficar em cada página daquele livro e pausa depois de

@@ -983,9 +983,43 @@ class MainActivity : Activity() {
                 "?"
             }
             addView(label("Versão $version", 13f, ink))
-            addView(label("Leitor de PDF, EPUB, MOBI, AZW3, DJVU, CBZ, CBR, DOCX e TXT. Sem anúncios, sem conta e sem acesso à internet: seus livros e anotações ficam só neste aparelho.", 12f, muted).apply {
+            addView(label("Leitor de PDF, EPUB, MOBI, AZW3, DJVU, CBZ, CBR, DOCX e TXT. Sem anúncios e sem conta: seus livros e anotações ficam só neste aparelho. A internet só é usada se você ligar a sincronização da posição de leitura.", 12f, muted).apply {
                 setPadding(0, dp(6), 0, 0)
             })
+        }
+
+        settingsPanel("Sincronizar posição entre aparelhos") {
+            val sync = PositionSync.settings(this@MainActivity)
+            if (sync == null) {
+                addView(label("Leia no celular e continue no computador (no site do Alexandria) de onde parou, e vice-versa. Os arquivos não viajam: carregue o mesmo livro nos dois. Só a posição vai, num gist secreto da sua conta do GitHub, com um código no lugar do nome do livro.", 12f, muted).apply {
+                    setPadding(0, 0, 0, dp(10))
+                })
+                addView(Button(this@MainActivity).apply {
+                    text = "Conectar com o GitHub"
+                    setAllCaps(false)
+                    setTextColor(Color.WHITE)
+                    background = rounded(ink, 10)
+                    setOnClickListener { askSyncToken() }
+                }, LinearLayout.LayoutParams(-1, dp(48)))
+            } else {
+                val last = if (sync.lastSync > 0) java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT).format(java.util.Date(sync.lastSync)) else "ainda não"
+                addView(label("Conectado como @${sync.login}. Última sincronização: $last.", 13f, ink))
+                if (sync.error != null) addView(label("⚠ ${sync.error} Desconecte e conecte de novo com um token novo.", 12f, Color.rgb(163, 57, 47)).apply { setPadding(0, dp(6), 0, 0) })
+                addView(label("Ao abrir um livro, se ele foi lido depois em outro aparelho, o app continua de lá (com a opção de voltar). Ao sair do livro, e a cada 3 minutos de leitura, a posição daqui é gravada.", 12f, muted).apply {
+                    setPadding(0, dp(6), 0, dp(10))
+                })
+                addView(Button(this@MainActivity).apply {
+                    text = "Desconectar"
+                    setAllCaps(false)
+                    setTextColor(ink)
+                    background = rounded(Color.rgb(236, 233, 226), 10)
+                    setOnClickListener {
+                        PositionSync.disconnect(this@MainActivity)
+                        Toast.makeText(this@MainActivity, "Sincronização desligada. O gist continua na sua conta do GitHub.", Toast.LENGTH_LONG).show()
+                        showSettings()
+                    }
+                }, LinearLayout.LayoutParams(-1, dp(48)))
+            }
         }
 
         settingsPanel("Conforto visual") {
@@ -1039,6 +1073,65 @@ class MainActivity : Activity() {
                 })
             }
         }
+    }
+
+    /** Passo a passo do token do GitHub e o campo para colar. */
+    private fun askSyncToken() {
+        val steps = """
+            1. No GitHub (pode ser no computador), abra Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token. O botão abaixo abre essa página.
+            2. Dê um nome (ex.: Alexandria) e escolha a validade.
+            3. Em "Account permissions", procure "Gists" e escolha "Read and write". Não precisa de mais nada.
+            4. Toque em "Generate token", copie o token (começa com github_pat_) e cole aqui.
+
+            Use o mesmo token no site do Alexandria (Ajustes → Sincronizar posição). Ele só dá acesso aos seus gists e fica guardado só neste aparelho.
+        """.trimIndent()
+        val input = EditText(this).apply {
+            hint = "github_pat_…"
+            maxLines = 1
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(22), dp(8), dp(22), 0)
+            addView(label(steps, 13f, ink).apply { setPadding(0, 0, 0, dp(10)) })
+            addView(label("›  Abrir a página do token no GitHub", 14f, gold, true).apply {
+                minHeight = dp(44)
+                gravity = Gravity.CENTER_VERTICAL
+                setOnClickListener {
+                    try {
+                        startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://github.com/settings/personal-access-tokens/new")))
+                    } catch (e: Exception) {
+                        Toast.makeText(this@MainActivity, "Nenhum navegador encontrado.", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            })
+            addView(input, LinearLayout.LayoutParams(-1, -2))
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Conectar com o GitHub")
+            .setView(android.widget.ScrollView(this).apply { addView(box) })
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Conectar") { _, _ ->
+                val token = input.text.toString().trim()
+                if (token.isEmpty()) return@setPositiveButton
+                Toast.makeText(this, "Conectando…", Toast.LENGTH_SHORT).show()
+                PositionSync.connect(this, token) { result ->
+                    if (destroyed) return@connect
+                    result.onSuccess { login ->
+                        Toast.makeText(this, "Conectado como @$login. A posição de leitura vai sincronizar.", Toast.LENGTH_LONG).show()
+                    }.onFailure { e ->
+                        val message = when ((e as? SyncException)?.code) {
+                            401 -> "O GitHub recusou o token. Confira se copiou inteiro."
+                            403 -> "O token não tem permissão de gists (Account permissions → Gists → Read and write)."
+                            null -> "Sem conexão com o GitHub. Tente de novo com internet."
+                            else -> "O GitHub respondeu com erro (${(e as SyncException).code})."
+                        }
+                        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+                    }
+                    if (section == SECTION_SETTINGS) showSettings()
+                }
+            }
+            .show()
     }
 
     private fun settingsPanel(title: String, fill: LinearLayout.() -> Unit) {

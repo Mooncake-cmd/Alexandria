@@ -6,6 +6,7 @@ import { indexOnScreen, onScreen, type Bookmark } from '../core/bookmarks'
 import { BookmarkBar, BookmarkCorner, BookmarkList } from './Bookmarks'
 import type { NoteContent } from './notes'
 import { noteDialog, promptDialog } from '../ui/dialogs'
+import { DEVICE, pullPosition, pushPosition, shouldApply, type SyncEntry } from '../storage/sync'
 import { useLibraryData } from '../storage/useLibrary'
 import type { GlossaryTerm } from '../core/glossary'
 import { annotate, defineTerm, NotesPanel, SearchPanel, type ReaderTools } from './ToolsPanel'
@@ -54,6 +55,8 @@ interface Props {
   readingSeconds: number
   /** Atalhos próprios do formato (tecla minúscula → ação): S sumário, G ir para a página. */
   keys?: Record<string, () => void>
+  /** Livro para a sincronização da posição entre aparelhos (nome e tamanho do arquivo). */
+  sync?: { name: string; size: number; format: string; openedAt: number; pageCount: number }
   children: (api: ChromeApi) => ComponentChildren
 }
 
@@ -62,7 +65,7 @@ interface Props {
  * filtro, régua, painel de conforto e tela limpa (as barras ficam por cima do livro e somem; um
  * clique no meio mostra e esconde; Esc mostra; F põe em tela cheia).
  */
-export function ReaderChrome({ title, prefs, onPrefs, typography, menu, headerExtra, footer, finished, atEnd, onFinish, overlay, tools, readingSeconds, keys = {}, children }: Props) {
+export function ReaderChrome({ title, prefs, onPrefs, typography, menu, headerExtra, footer, finished, atEnd, onFinish, overlay, tools, readingSeconds, keys = {}, sync, children }: Props) {
   const timer = useReadingClock(tools?.itemId ?? -1, readingSeconds)
   const [shown, setShown] = useState(!prefs.cleanScreen)
   const [panel, setPanelState] = useState<null | 'comfort' | 'search' | 'notes'>(null)
@@ -83,6 +86,68 @@ export function ReaderChrome({ title, prefs, onPrefs, typography, menu, headerEx
   const [returnTo, setReturnTo] = useState<number | null>(null)
   const here = tools ? indexOnScreen(marks, tools.exact(), tools.span()) : -1
   const markIndex = marks.findIndex((m) => m.id === markId)
+  // ---------- sincronização da posição entre aparelhos ----------
+  const toolsRef = useRef(tools)
+  toolsRef.current = tools
+  const syncState = useRef<{ pulled: boolean; remote: SyncEntry | null; applied: boolean; lastPushed: number | null }>({ pulled: !sync, remote: null, applied: false, lastPushed: null })
+  /** Livro pronto e posição do outro aparelho em mãos: continua de lá, se for mais recente. */
+  const applyRemote = () => {
+    const st = syncState.current
+    const t = toolsRef.current
+    const remote = st.remote
+    if (!remote || st.applied || !t || !sync || !(t.ready?.() ?? true)) return
+    st.applied = true
+    if (remote.format !== sync.format) return
+    const here = t.exact()
+    if (!shouldApply(remote, sync.openedAt, here, t.span())) return
+    setReturnTo(here)
+    if (t.exactScale > 1 && remote.exact >= 0 && Math.abs(remote.exact / t.exactScale - remote.position) <= 1) t.goToExact(remote.exact)
+    else t.goTo(remote.position)
+    lastTurn.current = null
+    showSnack(`Continuando de onde você parou no ${remote.device}.`, { label: 'VOLTAR', run: () => {
+      setReturnTo(null)
+      toolsRef.current?.goToExact(here)
+    } })
+  }
+  /** Grava a posição deste aparelho (se mudou desde a última vez). */
+  const push = (keepalive = false) => {
+    const st = syncState.current
+    const t = toolsRef.current
+    if (!sync || !st.pulled || !t || !(t.ready?.() ?? true)) return
+    const exact = t.exact()
+    if (exact === st.lastPushed) return
+    st.lastPushed = exact
+    pushPosition(sync.name, sync.size, { format: sync.format, position: Math.round(t.current()), exact, pageCount: sync.pageCount, updated: Date.now(), device: DEVICE }, keepalive)
+  }
+  useEffect(() => {
+    if (!sync || sync.size <= 0) {
+      syncState.current.pulled = true
+      return
+    }
+    let alive = true
+    pullPosition(sync.name, sync.size).then((entry) => {
+      if (!alive) return
+      syncState.current.pulled = true
+      syncState.current.remote = entry
+      applyRemote()
+    })
+    const timer = setInterval(() => push(), 180_000)
+    const onHide = () => document.hidden && push(true)
+    const onLeave = () => push(true)
+    document.addEventListener('visibilitychange', onHide)
+    window.addEventListener('pagehide', onLeave)
+    return () => {
+      alive = false
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', onHide)
+      window.removeEventListener('pagehide', onLeave)
+      push(true)
+    }
+  }, [])
+  useEffect(() => {
+    if (syncState.current.remote && !syncState.current.applied) applyRemote()
+  })
+
   // Virar a página (andar meia tela ou mais) ensina o ritmo de leitura ao cronômetro.
   const lastTurn = useRef<number | null>(null)
   useEffect(() => {

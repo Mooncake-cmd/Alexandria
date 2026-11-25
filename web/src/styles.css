@@ -401,3 +401,11 @@ kbd { font-family: inherit; font-size: 12px; background: var(--paper, #f5f2eb); 
 .chunk-html .docx-table.bordered td { border: 1px solid currentColor; }
 .chunk-html .docx-table td > p, .chunk-html .docx-table td > h1, .chunk-html .docx-table td > h2, .chunk-html .docx-table td > h3, .chunk-html .docx-table td > h4 { margin: 0; text-indent: 0; }
 .chunk-html .docx-table td > p + p { margin-top: 0.3em; }
+
+/* ---------- sincronização ---------- */
+.sync-box { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px 18px; max-width: 720px; }
+.sync-box p { margin: 0 0 10px; font-size: 14px; line-height: 1.5; }
+.sync-steps { margin: 0 0 12px; padding-left: 20px; font-size: 14px; line-height: 1.5; }
+.sync-box .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; max-width: 420px; }
+.sync-box input { padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; font: inherit; background: var(--paper); color: var(--text); }
+.sync-error { color: #a3392f; }
