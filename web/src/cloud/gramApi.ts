@@ -135,7 +135,11 @@ export function gramApi(client: TelegramClient): TgApi {
     },
     async upload(name, bytes, caption, onProgress) {
       const file = new CustomFile(name, bytes.byteLength, '', Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength))
-      const sent = await client.sendFile('me', { file, caption, forceDocument: true, workers: 1, progressCallback: (p: number) => onProgress?.(p) })
+      // A GramJS, sozinha, trata arquivos acima de 20 MB como caminho no disco (só existe no Node) e falha
+      // com "Either one of `buffer` or `filePath` should be specified". Enviando antes, com o limite do
+      // buffer no tamanho do arquivo, ela lê da memória. O nome e o tipo vêm do arquivo enviado.
+      const uploaded = await client.uploadFile({ file, workers: 1, maxBufferSize: bytes.byteLength + 1, onProgress: (p: number) => onProgress?.(p) })
+      const sent = await client.sendFile('me', { file: uploaded, caption, forceDocument: true })
       return toMessage(sent)
     },
     async download(messageId, onProgress) {
