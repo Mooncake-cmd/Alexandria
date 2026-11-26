@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { closeDb, DB_NAME } from './db'
-import { bookKey, connectSync, GistClient, mergeSync, parseSync, pullPosition, pushPosition, serializeSync, setClientFactory, shouldApply, SYNC_FILE, syncSettings, type SyncEntry } from './sync'
+import { bookKey, sha256, connectSync, GistClient, mergeSync, parseSync, pullPosition, pushPosition, serializeSync, setClientFactory, shouldApply, SYNC_FILE, syncSettings, type SyncEntry } from './sync'
 import { exportBackup } from './backup'
 import { strFromU8, unzipSync } from 'fflate'
 
@@ -51,6 +51,11 @@ describe('sincronização da posição', () => {
     expect(await bookKey('  Moby Dick.EPUB ', 1_234_567)).toBe('aa55f5ee8e81a304cbcd6932')
     expect(await bookKey('Memórias Póstumas.epub', 98_765)).toBe('49b69d275333095ce62c4373')
     expect(await bookKey('Moby Dick.epub', 1_234_568)).not.toBe('aa55f5ee8e81a304cbcd6932')
+    // A conta em JavaScript (páginas sem crypto.subtle) dá o mesmo resultado.
+    const hex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('')
+    expect(hex(sha256(new TextEncoder().encode('')))).toBe('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855')
+    expect(hex(sha256(new TextEncoder().encode('moby dick.epub|1234567'))).slice(0, 24)).toBe('aa55f5ee8e81a304cbcd6932')
+    expect(hex(sha256(new TextEncoder().encode('a'.repeat(1000))))).toBe('41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3')
   })
 
   it('vale a posição mais recente de cada livro; o arquivo vai e volta igual', () => {

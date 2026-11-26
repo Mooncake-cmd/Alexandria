@@ -43,7 +43,7 @@ Levar **todas as funcionalidades do app Android** para um site em
 | iPhone/Safari | — | Safari apaga dados de sites **não instalados** após ~7 dias sem uso | No iPhone, instalar na tela inicial é obrigatório para uso contínuo |
 | Leitor de tela | O app detecta e deixa a alça da régua visível | Navegador não informa se há leitor de tela | Ajuste manual "Alça da régua sempre visível" |
 | Motores | Programas nativos (MuPDF, libmobi, DjVuLibre, EraComic) | Bibliotecas JavaScript/WebAssembly | Mesmos formatos, outras bibliotecas (seção 4) |
-| Sincronizar com o app | — | Não há servidor | A biblioteca não migra (decisão 3); a **posição de leitura** sincroniza (opcional) por um gist secreto do GitHub da própria pessoa (app 0.19) |
+| Sincronizar com o app | — | Não há servidor | A biblioteca não migra (decisão 3); a **posição de leitura** sincroniza (opcional) por um gist secreto do GitHub da própria pessoa (app 0.19); com a **nuvem pelo Telegram** (app 0.20), os próprios livros viajam pelas Mensagens salvas da pessoa |
 
 ### 2.1 Computador primeiro: como os gestos do app viram mouse e teclado
 

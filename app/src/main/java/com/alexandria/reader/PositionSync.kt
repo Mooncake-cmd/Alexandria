@@ -214,8 +214,30 @@ object PositionSync {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().apply()
     }
 
-    /** Posição deste livro guardada no gist (null sem sincronização, sem internet ou sem registro). */
+    /**
+     * Por onde vai a posição: "telegram", "github" ou null. Vale o escolhido em Ajustes; sem escolha,
+     * o único configurado (com os dois, o Telegram).
+     */
+    fun provider(context: Context): String? {
+        val chosen = context.getSharedPreferences("cloud", Context.MODE_PRIVATE).getString("provider", null)
+        val telegram = TelegramCloud.connected(context)
+        val github = settings(context) != null
+        return when {
+            chosen == "telegram" && telegram -> "telegram"
+            chosen == "github" && github -> "github"
+            telegram -> "telegram"
+            github -> "github"
+            else -> null
+        }
+    }
+
+    fun setProvider(context: Context, provider: String) {
+        context.getSharedPreferences("cloud", Context.MODE_PRIVATE).edit().putString("provider", provider).apply()
+    }
+
+    /** Posição deste livro no gist ou no Telegram (null sem sincronização, sem internet ou sem registro). */
     fun pull(context: Activity, name: String, size: Long, done: (SyncEntry?) -> Unit) {
+        if (provider(context) == "telegram") return TelegramCloud.pullPosition(context, SyncData.key(name, size), done)
         val s = settings(context) ?: return done(null)
         val app = context.applicationContext
         executor.execute {
@@ -233,6 +255,7 @@ object PositionSync {
 
     /** Grava a posição deste livro (em segundo plano; erros de rede são ignorados). */
     fun push(context: Context, name: String, size: Long, entry: SyncEntry) {
+        if (provider(context) == "telegram") return TelegramCloud.pushPosition(context, SyncData.key(name, size), entry)
         val s = settings(context) ?: return
         val app = context.applicationContext
         executor.execute {

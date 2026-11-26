@@ -184,4 +184,40 @@ class ShelfPreviewTest {
         save(root, File(dir, "controles.png"))
         controller.pause().stop().destroy()
     }
+
+    @Test
+    fun cloudPreview() {
+        val dir = File(System.getenv("SHELF_PREVIEW") ?: "")
+        assumeTrue(dir.isDirectory)
+        context.deleteDatabase("alexandria.db")
+        val engine = TelegramCloudTest.FakeEngine().apply { session = "SESSAO" }
+        TelegramCloud.reset()
+        TelegramCloud.engineFactory = { engine }
+        context.getSharedPreferences("telegram", Context.MODE_PRIVATE).edit()
+            .putInt("api_id", 1).putString("api_hash", "x").putString("session", "SESSAO").putString("name", "Leitora").commit()
+        val local = File(context.cacheDir, "Dom Casmurro.txt").apply { writeText("Uma noite destas, vindo da cidade para o Engenho Novo…") }
+        LibraryDatabase(context).use { db ->
+            val id = db.add(local.name, android.net.Uri.fromFile(local).toString(), "txt", local.length())!!
+            db.updateProgress(id, 2_000, 10)
+        }
+        engine.files[SyncData.key(local.name, local.length())] = CloudBook(SyncData.key(local.name, local.length()), local.name, local.length(), "txt", 1, 1) to ByteArray(0)
+        engine.files["k2"] = CloudBook("k2", "Moby Dick.epub", 2_400_000, "epub", 2, 1) to ByteArray(0)
+        engine.files["k3"] = CloudBook("k3", "Os Sertões.pdf", 14_800_000, "pdf", 3, 1) to ByteArray(0)
+        try {
+            val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+            shadowOf(Looper.getMainLooper()).idle()
+            save(activity.window.decorView, File(dir, "nuvem-biblioteca.png"))
+            val settings = Robolectric.buildActivity(MainActivity::class.java).setup(android.os.Bundle().apply { putString("section", "Ajustes") }).get()
+            shadowOf(Looper.getMainLooper()).idle()
+            val root = settings.window.decorView
+            val scroll = find(root) { it is ScrollView } as ScrollView
+            val panel = find(root) { it is TextView && it.text == "Nuvem pelo Telegram" }!!
+            scroll.scrollTo(0, (panel.parent as View).top - 20)
+            shadowOf(Looper.getMainLooper()).idle()
+            save(root, File(dir, "nuvem-ajustes.png"))
+        } finally {
+            TelegramCloud.reset()
+            TelegramCloud.engineFactory = { WebViewCloudEngine(it) }
+        }
+    }
 }

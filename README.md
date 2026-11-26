@@ -1,6 +1,6 @@
 # Alexandria — projeto Android
 
-**Versão:** 0.19.0  
+**Versão:** 0.20.0  
 **Pacote:** `com.alexandria.reader`  
 **Plataforma:** Android 6.0 ou superior (API 23+)  
 **Idioma da interface:** Português (Brasil)
@@ -10,7 +10,7 @@
 
 ## O que esta versão contém
 
-- Aplicativo Android nativo em Kotlin, sem dependências externas no APK.
+- Aplicativo Android nativo em Kotlin. A única biblioteca de terceiros no APK é a GramJS (MIT), em `assets/cloud`, usada só pela nuvem opcional do Telegram.
 - Abas com ícones: livro (Biblioteca), caneta pena (Notas), ábaco (Estatísticas) e bússola (Ajustes).
 - Ícone próprio (farol sobre livros), adaptativo e com versão monocromática para ícones temáticos (Android 13+).
 
@@ -92,13 +92,29 @@ Em todos os formatos:
   Vale sem diferenciar maiúsculas e acentos, só para palavras inteiras, e cada livro tem o seu glossário (menu ⋮ →
   "Glossário do livro"; todos aparecem também na aba Notas). Vale também no PDF. Em DJVU e quadrinhos o texto é
   imagem: dá para cadastrar termos pelo menu, mas não há sublinhado.
-- **Sincronizar a posição entre aparelhos** (opcional): leia no celular e continue no computador (no site), ou o
-  contrário. Os arquivos não viajam — carregue o mesmo livro nos dois; o livro é reconhecido pelo nome e tamanho do
-  arquivo. Só a posição vai, num **gist secreto da sua conta do GitHub**, com um código no lugar do nome do livro.
-  Ajustes → "Sincronizar posição entre aparelhos": crie um token *fine-grained* no GitHub com a permissão de conta
-  **Gists: Read and write** e cole no app e no site. Ao abrir um livro lido depois em outro aparelho, ele continua de
-  lá (com "↩ Voltar"); ao sair do livro, e a cada 3 minutos de leitura, a posição é gravada. É o único uso de internet
-  do app; sem token configurado, nada é enviado. No site, o token não vai para o backup.
+- **Nuvem pelo Telegram** (opcional, 0.20): os livros viajam entre o celular e o site pelas **Mensagens salvas da
+  sua própria conta do Telegram**, e a posição de leitura vai junto. Ajustes → "Nuvem pelo Telegram" → "Entrar no
+  Telegram": crie o seu **api_id** e **api_hash** em my.telegram.org ("API development tools"), cole no app com o
+  telefone e digite o código que o Telegram manda (e a senha de duas etapas, se a conta tiver). Na biblioteca, toque
+  longo num livro → "☁ Enviar para a nuvem (Telegram)"; o cartão ganha ☁. Em outro aparelho, a seção **"☁ Na nuvem"**
+  lista os livros que ainda não estão nele: um toque baixa, coloca na biblioteca e abre (toque longo → apagar da
+  nuvem). Cada livro é uma mensagem com a etiqueta `#alexandria_livro`; as posições ficam num arquivo
+  `alexandria-posicoes.json` com a etiqueta `#alexandria_posicoes`. O livro é reconhecido pelo nome e tamanho (mesmo
+  código no app e no site), e enviar de novo não duplica. Uma transferência por vez, e o app respeita as esperas que o
+  Telegram pede.
+  - **Regras da API do Telegram**: cada pessoa usa o próprio api_id; o app avisa que usa a API do Telegram e não é um
+    app oficial; não usa o logo nem "Telegram" no nome. O Telegram deixa contas que entram por apps não oficiais sob
+    observação (core.telegram.org/api/obtaining_api_id) — use por sua conta e risco.
+  - **Por dentro**: a conexão roda num WebView escondido, com o mesmo código do site (GramJS), gerado por
+    `npm run build:android-cloud` na pasta `web/` para `app/src/main/assets/cloud`. O WebView só carrega as páginas do
+    próprio app e só se conecta a `wss://*.web.telegram.org`. A sessão fica só no aparelho (backup do Android desligado).
+- **Sincronizar só a posição pelo GitHub** (alternativa): os arquivos não viajam — carregue o mesmo livro nos dois.
+  A posição vai num **gist secreto da sua conta do GitHub**, com um código no lugar do nome do livro.
+  Ajustes → "Sincronizar a posição pelo GitHub": crie um token *fine-grained* no GitHub com a permissão de conta
+  **Gists: Read and write** e cole no app e no site. Com o Telegram e o GitHub ligados, Ajustes mostra por onde a
+  posição vai. Ao abrir um livro lido depois em outro aparelho, ele continua de lá (com "↩ Voltar"); ao sair do livro,
+  e a cada 3 minutos de leitura, a posição é gravada. Sem nada configurado, nada é enviado. No site, token e sessão
+  não vão para o backup.
 - **Tempo de leitura**: o cronômetro aparece embaixo do título ao abrir o livro. Para quando o app sai da tela, e conta
   só o tempo de leitura de verdade:
   - **pelo seu ritmo**: o app aprende quanto tempo você costuma ficar em cada página daquele livro e pausa depois de
@@ -239,7 +255,7 @@ Gerado por `art/gerar_icones.py` a partir de `art/icone-original.jpg` (requer Py
 
 ## Privacidade
 
-A aplicação não contém analytics, anúncios, login ou comunicação de rede. Os documentos são selecionados pelo usuário e seus identificadores são armazenados localmente no banco SQLite do aplicativo. O app não pede permissão de internet: nem o leitor de EPUB nem os motores conseguem acessar a rede. O backup automático e a transferência entre aparelhos estão desligados (`allowBackup`, `fullBackupContent` e `dataExtractionRules`), porque as permissões de acesso aos arquivos não são restauradas em outro aparelho.
+A aplicação não contém analytics nem anúncios. Os documentos são selecionados pelo usuário e seus identificadores são armazenados localmente no banco SQLite do aplicativo. A permissão de internet existe só para as funções opcionais (nuvem pelo Telegram e posição pelo GitHub); sem elas configuradas, nada sai do aparelho. O leitor de EPUB e os motores continuam sem acesso à rede. O backup automático e a transferência entre aparelhos estão desligados (`allowBackup`, `fullBackupContent` e `dataExtractionRules`), porque as permissões de acesso aos arquivos não são restauradas em outro aparelho.
 
 ## Alternativa de compilação na nuvem (GitHub Actions)
 

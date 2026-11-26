@@ -1,10 +1,10 @@
 ALEXANDRIA — STATUS DA ENTREGA
 
-Versão do projeto: 0.19.0
+Versão do projeto: 0.20.0
 
 Build: compilado com sucesso (AGP 8.7.3, Gradle 8.14.3, SDK 35, NDK 27.0.12077973). Lint sem avisos.
-159 testes automatizados passando, incluindo integração com os motores do OpenReadEra compilados para Linux.
-APK: ~14,5 MB, não versionado; gerado pelo GitHub Actions (artefato Alexandria-debug-apk) ou por ./gradlew assembleDebug.
+165 testes automatizados passando, incluindo integração com os motores do OpenReadEra compilados para Linux.
+APK: ~15,3 MB, não versionado; gerado pelo GitHub Actions (artefato Alexandria-debug-apk) ou por ./gradlew assembleDebug.
 
 Formatos com leitor: PDF, EPUB, MOBI/AZW/AZW3, DJVU, CBZ, CBR (RAR 4/5 ou ZIP), DOCX, TXT.
 Leitura: modo páginas (toque duplo nas bordas, página inteira) ou rolagem contínua, com zoom nos dois; páginas com linhas inteiras (EPUB/MOBI/TXT/DOCX), apagar o tempo de um livro;
@@ -14,7 +14,8 @@ EPUB/MOBI: notas de rodapé abrem numa janela, toque tolerante nos números e "�
 régua configurável (alça aparece ao tocar) e modo foco (só a régua visível);
 DOCX mais fiel: figuras no tamanho e lado do documento, tabelas com bordas e mesclas, alinhamento, tamanhos de letra e recuos.
 Conforto visual: temas (também em PDF/DJVU/quadrinhos), brilho, luz quente, sobreposição colorida e tipografia; DOCX com imagens.
-Sincronização opcional da posição de leitura entre app e site por um gist secreto do GitHub (token em Ajustes).
+Nuvem opcional pelo Telegram (Mensagens salvas da própria conta, api_id próprio): livros e posição viajam entre app e site;
+alternativa só para a posição: gist secreto do GitHub (token em Ajustes).
 Glossário por livro (definir termo pela seleção, sublinhado e toque para ver), tempo de leitura (pausa pelo ritmo de leitura,
 sem contar a espera longe do livro, pausa manual no ⏱) e sequência de dias.
 PDF pelo EraPDF (MuPDF): texto selecionável, glossário sublinhado, busca e anotação de trechos; fontes Liberation

@@ -211,6 +211,7 @@ class MainActivity : Activity() {
         spacer(22)
 
         val items = database.all()
+        localCloudKeys = items.filter { it.fileSize > 0 && !it.archived }.associateBy { SyncData.key(it.name, it.fileSize) }
         prepareMissing(items)
         val reading = items.filter { !it.finished }
         val finished = items.filter { it.finished }
@@ -232,6 +233,7 @@ class MainActivity : Activity() {
         } else {
             addGroupedCards(reading)
         }
+        addCloudSection(items)
 
         spacer(18)
         val arrow = if (shelfOpen) "▼" else "▶"
@@ -319,7 +321,8 @@ class MainActivity : Activity() {
             ellipsize = TextUtils.TruncateAt.END
         })
         info.addView(label(entry.format.uppercase(), 10f, gold, true).apply { setPadding(0, dp(4), 0, 0) })
-        info.addView(label(statusText(entry), 11f, muted).apply { setPadding(0, dp(3), 0, dp(6)) })
+        val inCloud = cloudBooks?.any { it.key == keyOf(entry) } == true
+        info.addView(label(statusText(entry) + if (inCloud) "  ·  ☁" else "", 11f, muted).apply { setPadding(0, dp(3), 0, dp(6)) })
         if (entry.format in Formats.readable) info.addView(progressBar(ReadingStatus.progress(entry)), LinearLayout.LayoutParams(-1, dp(4)))
         card.addView(info, LinearLayout.LayoutParams(0, -2, 1f))
 
@@ -384,6 +387,178 @@ class MainActivity : Activity() {
             .show()
     }
 
+    // ---------- nuvem pelo Telegram ----------
+
+    /** Livros da nuvem (null = ainda não consultado nesta abertura do app). */
+    private var cloudBooks: List<CloudBook>? = null
+    private var cloudError: String? = null
+    private var cloudLoading = false
+    private var localCloudKeys: Map<String, LibraryItem> = emptyMap()
+
+    private fun keyOf(entry: LibraryItem): String? = if (entry.fileSize > 0) SyncData.key(entry.name, entry.fileSize) else null
+
+    private fun refreshCloud() {
+        if (cloudLoading || !TelegramCloud.connected(this)) return
+        cloudLoading = true
+        TelegramCloud.books(this) { result ->
+            cloudLoading = false
+            if (destroyed) return@books
+            result.onSuccess {
+                cloudBooks = it
+                cloudError = null
+            }.onFailure { cloudError = it.message ?: "Não foi possível falar com o Telegram agora." }
+            if (section == SECTION_LIBRARY) showLibrary()
+        }
+    }
+
+    /** "☁ Na nuvem": livros das Mensagens salvas que ainda não estão neste aparelho. */
+    private fun addCloudSection(items: List<LibraryItem>) {
+        if (!TelegramCloud.connected(this)) return
+        spacer(18)
+        content.addView(label("☁  Na nuvem", 17f, ink, true).apply {
+            minHeight = dp(44)
+            gravity = Gravity.CENTER_VERTICAL
+        })
+        val books = cloudBooks
+        if (books == null && cloudError == null) {
+            content.addView(label("Procurando seus livros nas Mensagens salvas do Telegram…", 12f, muted))
+            refreshCloud()
+            return
+        }
+        cloudError?.let { error ->
+            content.addView(label("$error  Toque para tentar de novo.", 12f, muted).apply {
+                setOnClickListener {
+                    cloudError = null
+                    cloudBooks = null
+                    showLibrary()
+                }
+            })
+            return
+        }
+        val missing = books!!.filter { it.key !in localCloudKeys }
+        if (missing.isEmpty()) {
+            content.addView(label(if (books.isEmpty()) "Nenhum livro na nuvem ainda. Toque e segure um livro e escolha \"Enviar para a nuvem\"." else "Os ${books.size} livro(s) da nuvem já estão neste aparelho.", 12f, muted))
+            return
+        }
+        content.addView(label("Livros nas suas Mensagens salvas que ainda não estão neste aparelho. Toque para baixar e abrir.", 12f, muted).apply { setPadding(0, 0, 0, dp(8)) })
+        for (book in missing) {
+            content.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(14), dp(10), dp(10), dp(10))
+                background = rounded(Color.WHITE, 12)
+                setOnClickListener { downloadFromCloud(book) }
+                setOnLongClickListener {
+                    cloudBookOptions(book)
+                    true
+                }
+                addView(label("☁  ${displayTitle(book.name)}", 14f, ink, true).apply {
+                    maxLines = 2
+                    ellipsize = TextUtils.TruncateAt.END
+                }, LinearLayout.LayoutParams(0, -2, 1f))
+                addView(label("${book.format.uppercase()} · ${"%.1f".format(book.size / 1e6).replace('.', ',')} MB", 11f, muted).apply { setPadding(dp(8), 0, 0, 0) })
+            }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
+        }
+    }
+
+    /** Janela de progresso de uma transferência. */
+    private fun progressDialog(title: String): Pair<AlertDialog, (Float) -> Unit> {
+        val bar = android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100 }
+        val percent = label("0%", 13f, muted)
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(22), dp(12), dp(22), dp(4))
+            addView(bar, LinearLayout.LayoutParams(-1, -2))
+            addView(percent)
+        }
+        val dialog = AlertDialog.Builder(this).setTitle(title).setView(box).setCancelable(false).show()
+        return Pair(dialog) { f ->
+            bar.progress = (f * 100).toInt()
+            percent.text = "${(f * 100).toInt()}%"
+        }
+    }
+
+    private fun uploadToCloud(entry: LibraryItem) {
+        val (dialog, progress) = progressDialog("Enviando para a nuvem…")
+        background.execute {
+            val file = try {
+                BookFiles.localCopy(this, entry)
+            } catch (e: Exception) {
+                null
+            }
+            runOnUiThread {
+                if (destroyed) return@runOnUiThread
+                if (file == null) {
+                    dialog.dismiss()
+                    Toast.makeText(this, "Não foi possível ler o arquivo deste livro.", Toast.LENGTH_LONG).show()
+                    return@runOnUiThread
+                }
+                TelegramCloud.upload(this, entry.name, entry.format, file, progress) { result ->
+                    dialog.dismiss()
+                    if (destroyed) return@upload
+                    result.onSuccess { existed ->
+                        Toast.makeText(this, if (existed) "\"${displayTitle(entry.name)}\" já estava na nuvem." else "\"${displayTitle(entry.name)}\" foi para a nuvem (Mensagens salvas do Telegram).", Toast.LENGTH_LONG).show()
+                        cloudBooks = null
+                        if (section == SECTION_LIBRARY) showLibrary()
+                    }.onFailure { Toast.makeText(this, it.message ?: "Não foi possível enviar para a nuvem.", Toast.LENGTH_LONG).show() }
+                }
+            }
+        }
+    }
+
+    private fun downloadFromCloud(book: CloudBook) {
+        val (dialog, progress) = progressDialog("Baixando da nuvem…")
+        val safe = book.name.replace(Regex("[/\\\\:*?\"<>|]"), "_")
+        val target = File(File(cacheDir, "cloud"), safe)
+        TelegramCloud.download(this, book, target, progress) { result ->
+            result.onFailure {
+                dialog.dismiss()
+                if (!destroyed) Toast.makeText(this, it.message ?: "Não foi possível baixar da nuvem.", Toast.LENGTH_LONG).show()
+            }.onSuccess { file ->
+                background.execute {
+                    val received = try {
+                        IncomingBooks.receive(this, database, android.net.Uri.fromFile(file), null)
+                    } catch (e: Exception) {
+                        null
+                    } finally {
+                        file.delete()
+                    }
+                    runOnUiThread {
+                        dialog.dismiss()
+                        if (destroyed) return@runOnUiThread
+                        if (received == null) {
+                            Toast.makeText(this, "O arquivo baixado não pôde ser aberto.", Toast.LENGTH_LONG).show()
+                            return@runOnUiThread
+                        }
+                        showLibrary()
+                        openItem(received.item)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun cloudBookOptions(book: CloudBook) {
+        AlertDialog.Builder(this)
+            .setTitle(displayTitle(book.name))
+            .setItems(arrayOf("Baixar e abrir", "Apagar da nuvem…")) { _, which ->
+                if (which == 0) downloadFromCloud(book)
+                else AlertDialog.Builder(this)
+                    .setTitle("Apagar da nuvem?")
+                    .setMessage("\"${displayTitle(book.name)}\" sai das suas Mensagens salvas do Telegram. Os aparelhos que já baixaram continuam com o livro.")
+                    .setNegativeButton("Cancelar", null)
+                    .setPositiveButton("Apagar") { _, _ ->
+                        TelegramCloud.remove(this, book.key) {
+                            cloudBooks = null
+                            if (!destroyed && section == SECTION_LIBRARY) showLibrary()
+                        }
+                    }
+                    .show()
+            }
+            .setNegativeButton("Fechar", null)
+            .show()
+    }
+
     private fun itemOptions(entry: LibraryItem) {
         val options = mutableListOf<Pair<String, () -> Unit>>()
         options += (if (entry.shelf.isEmpty()) "Mover para prateleira…" else "Prateleira: ${entry.shelf}…") to { chooseShelf(entry) }
@@ -391,6 +566,12 @@ class MainActivity : Activity() {
             options += (if (entry.finished) "Voltar para \"Lendo agora\"" else "Marcar como concluído") to {
                 database.setFinished(entry.id, !entry.finished)
                 showLibrary()
+            }
+        }
+        if (TelegramCloud.connected(this) && !entry.archived) {
+            val inCloud = cloudBooks?.any { it.key == keyOf(entry) } == true
+            options += (if (inCloud) "☁ Já está na nuvem (Telegram)" else "☁ Enviar para a nuvem (Telegram)") to {
+                if (inCloud) Toast.makeText(this, "Este livro já está nas suas Mensagens salvas.", Toast.LENGTH_SHORT).show() else uploadToCloud(entry)
             }
         }
         if (entry.finished && !entry.archived) options += "Liberar espaço (manter na Estante)…" to { confirmFreeSpace(entry) }
@@ -983,12 +1164,64 @@ class MainActivity : Activity() {
                 "?"
             }
             addView(label("Versão $version", 13f, ink))
-            addView(label("Leitor de PDF, EPUB, MOBI, AZW3, DJVU, CBZ, CBR, DOCX e TXT. Sem anúncios e sem conta: seus livros e anotações ficam só neste aparelho. A internet só é usada se você ligar a sincronização da posição de leitura.", 12f, muted).apply {
+            addView(label("Leitor de PDF, EPUB, MOBI, AZW3, DJVU, CBZ, CBR, DOCX e TXT. Sem anúncios e sem conta: seus livros e anotações ficam só neste aparelho. A internet só é usada se você ligar a nuvem pelo Telegram ou a sincronização pelo GitHub.", 12f, muted).apply {
                 setPadding(0, dp(6), 0, 0)
             })
         }
 
-        settingsPanel("Sincronizar posição entre aparelhos") {
+        settingsPanel("Nuvem pelo Telegram") {
+            val tg = TelegramCloud.settings(this@MainActivity)
+            if (tg == null) {
+                addView(label("Guarde seus livros nas Mensagens salvas da sua própria conta do Telegram e baixe em outro aparelho (celular ou site do Alexandria). A posição de leitura também passa a ir por lá. Para entrar, você usa o seu próprio api_id e api_hash, criados em my.telegram.org.", 12f, muted).apply {
+                    setPadding(0, 0, 0, dp(6))
+                })
+                addView(label(TELEGRAM_NOTICE, 11f, muted).apply { setPadding(0, 0, 0, dp(10)) })
+                addView(Button(this@MainActivity).apply {
+                    text = "Entrar no Telegram"
+                    setAllCaps(false)
+                    setTextColor(Color.WHITE)
+                    background = rounded(ink, 10)
+                    setOnClickListener { askTelegramApi() }
+                }, LinearLayout.LayoutParams(-1, dp(48)))
+            } else {
+                addView(label("Conectado${if (tg.name.isNotBlank()) " como ${tg.name}" else ""}. Os livros enviados ficam nas suas Mensagens salvas, com a etiqueta #alexandria_livro.", 13f, ink))
+                if (tg.error != null) addView(label("⚠ ${tg.error}", 12f, Color.rgb(163, 57, 47)).apply { setPadding(0, dp(6), 0, 0) })
+                addView(label("Para enviar um livro, toque e segure nele na biblioteca e escolha \"Enviar para a nuvem\". Os livros da nuvem que não estão neste aparelho aparecem na biblioteca, em \"Na nuvem\". " + TELEGRAM_NOTICE, 12f, muted).apply {
+                    setPadding(0, dp(6), 0, dp(10))
+                })
+                if (PositionSync.settings(this@MainActivity) != null) {
+                    addView(label("A posição de leitura vai por:", 13f, ink, true))
+                    val group = android.widget.RadioGroup(this@MainActivity).apply { orientation = android.widget.RadioGroup.VERTICAL }
+                    val current = PositionSync.provider(this@MainActivity)
+                    listOf("telegram" to "Telegram (Mensagens salvas)", "github" to "GitHub (gist secreto)").forEach { (id, text) ->
+                        group.addView(android.widget.RadioButton(this@MainActivity).apply {
+                            this.text = text
+                            setTextColor(ink)
+                            minHeight = dp(44)
+                            isChecked = current == id
+                            setOnClickListener { PositionSync.setProvider(this@MainActivity, id) }
+                        })
+                    }
+                    addView(group)
+                }
+                addView(Button(this@MainActivity).apply {
+                    text = "Sair do Telegram"
+                    setAllCaps(false)
+                    setTextColor(ink)
+                    background = rounded(Color.rgb(236, 233, 226), 10)
+                    setOnClickListener {
+                        TelegramCloud.logout(this@MainActivity) {
+                            cloudBooks = null
+                            if (destroyed) return@logout
+                            Toast.makeText(this@MainActivity, "Você saiu do Telegram neste aparelho. Os livros continuam nas suas Mensagens salvas.", Toast.LENGTH_LONG).show()
+                            if (section == SECTION_SETTINGS) showSettings()
+                        }
+                    }
+                }, LinearLayout.LayoutParams(-1, dp(48)))
+            }
+        }
+
+        settingsPanel("Sincronizar a posição pelo GitHub") {
             val sync = PositionSync.settings(this@MainActivity)
             if (sync == null) {
                 addView(label("Leia no celular e continue no computador (no site do Alexandria) de onde parou, e vice-versa. Os arquivos não viajam: carregue o mesmo livro nos dois. Só a posição vai, num gist secreto da sua conta do GitHub, com um código no lugar do nome do livro.", 12f, muted).apply {
@@ -1072,6 +1305,135 @@ class MainActivity : Activity() {
                     setOnClickListener { showLicense(title, file) }
                 })
             }
+        }
+    }
+
+    /** Passo 1 do login no Telegram: api_id, api_hash e telefone. */
+    private fun askTelegramApi() {
+        val steps = """
+            1. Abra my.telegram.org (botão abaixo), entre com o seu número e o código que o Telegram envia.
+            2. Toque em "API development tools" e preencha: App title "Alexandria Leitor", Short name "alexandrialeitor", Platform "Android". O resto pode ficar em branco.
+            3. Copie o api_id (só números) e o api_hash e cole aqui. Eles ficam só neste aparelho; não mande para ninguém.
+        """.trimIndent()
+        val apiId = EditText(this).apply {
+            hint = "api_id"
+            maxLines = 1
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+        }
+        val apiHash = EditText(this).apply {
+            hint = "api_hash"
+            maxLines = 1
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        val phone = EditText(this).apply {
+            hint = "Telefone com DDI (ex.: +55 11 91234-5678)"
+            maxLines = 1
+            inputType = android.text.InputType.TYPE_CLASS_PHONE
+        }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(22), dp(8), dp(22), 0)
+            addView(label(steps, 13f, ink).apply { setPadding(0, 0, 0, dp(6)) })
+            addView(label("›  Abrir my.telegram.org", 14f, gold, true).apply {
+                minHeight = dp(44)
+                gravity = Gravity.CENTER_VERTICAL
+                setOnClickListener {
+                    try {
+                        startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://my.telegram.org/apps")))
+                    } catch (e: Exception) {
+                        Toast.makeText(this@MainActivity, "Nenhum navegador encontrado.", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            })
+            addView(apiId, LinearLayout.LayoutParams(-1, -2))
+            addView(apiHash, LinearLayout.LayoutParams(-1, -2))
+            addView(phone, LinearLayout.LayoutParams(-1, -2))
+            addView(label(TELEGRAM_NOTICE, 11f, muted).apply { setPadding(0, dp(8), 0, 0) })
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Entrar no Telegram")
+            .setView(android.widget.ScrollView(this).apply { addView(box) })
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Enviar código") { _, _ ->
+                val id = apiId.text.toString().trim().toIntOrNull()
+                val hash = apiHash.text.toString().trim()
+                val number = phone.text.toString().replace(Regex("[^+0-9]"), "")
+                if (id == null || hash.length < 16 || number.length < 8) {
+                    Toast.makeText(this, "Preencha o api_id, o api_hash e o telefone com DDI.", Toast.LENGTH_LONG).show()
+                    return@setPositiveButton
+                }
+                Toast.makeText(this, "Pedindo o código ao Telegram…", Toast.LENGTH_SHORT).show()
+                TelegramCloud.sendCode(this, id, hash, number) { result ->
+                    if (destroyed) return@sendCode
+                    result.onSuccess { askTelegramCode(id, hash) }
+                        .onFailure { Toast.makeText(this, it.message ?: "Não foi possível pedir o código.", Toast.LENGTH_LONG).show() }
+                }
+            }
+            .show()
+    }
+
+    /** Passo 2: o código que o Telegram mandou (no próprio app do Telegram ou por SMS). */
+    private fun askTelegramCode(apiId: Int, apiHash: String) {
+        val input = EditText(this).apply {
+            hint = "Código"
+            maxLines = 1
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Código do Telegram")
+            .setMessage("O Telegram mandou um código para o seu app do Telegram (ou por SMS). Digite aqui. Nunca passe esse código para outra pessoa.")
+            .setView(LinearLayout(this).apply {
+                setPadding(dp(22), 0, dp(22), 0)
+                addView(input, LinearLayout.LayoutParams(-1, -2))
+            })
+            .setCancelable(false)
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Entrar") { _, _ ->
+                val code = input.text.toString().trim()
+                if (code.isEmpty()) return@setPositiveButton
+                TelegramCloud.signIn(this, code) { result ->
+                    if (destroyed) return@signIn
+                    result.onSuccess { done -> if (done) finishTelegram(apiId, apiHash) else askTelegramPassword(apiId, apiHash) }
+                        .onFailure { Toast.makeText(this, it.message ?: "O código não foi aceito.", Toast.LENGTH_LONG).show() }
+                }
+            }
+            .show()
+    }
+
+    /** Passo 3 (só para contas com verificação em duas etapas). */
+    private fun askTelegramPassword(apiId: Int, apiHash: String) {
+        val input = EditText(this).apply {
+            hint = "Senha da verificação em duas etapas"
+            maxLines = 1
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Senha do Telegram")
+            .setMessage("Sua conta tem verificação em duas etapas. Digite a senha dela (não fica guardada).")
+            .setView(LinearLayout(this).apply {
+                setPadding(dp(22), 0, dp(22), 0)
+                addView(input, LinearLayout.LayoutParams(-1, -2))
+            })
+            .setCancelable(false)
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Entrar") { _, _ ->
+                TelegramCloud.password(this, input.text.toString()) { result ->
+                    if (destroyed) return@password
+                    result.onSuccess { finishTelegram(apiId, apiHash) }
+                        .onFailure { Toast.makeText(this, it.message ?: "A senha não foi aceita.", Toast.LENGTH_LONG).show() }
+                }
+            }
+            .show()
+    }
+
+    private fun finishTelegram(apiId: Int, apiHash: String) {
+        TelegramCloud.finish(this, apiId, apiHash) { result ->
+            if (destroyed) return@finish
+            result.onSuccess { name ->
+                cloudBooks = null
+                Toast.makeText(this, "Conectado ao Telegram${if (name.isNotBlank()) " como $name" else ""}.", Toast.LENGTH_LONG).show()
+            }.onFailure { Toast.makeText(this, it.message ?: "Não foi possível concluir o login.", Toast.LENGTH_LONG).show() }
+            if (section == SECTION_SETTINGS) showSettings()
         }
     }
 
@@ -1205,8 +1567,12 @@ class MainActivity : Activity() {
             "Common CLI viewer interface — Apache 2.0" to "Apache-2.0.txt",
             "libjpeg-turbo, libpng, libwebp, MiniZip, EasyBMP, FreeType, OpenJPEG" to "terceiros.txt",
             "Fonte Atkinson Hyperlegible — SIL OFL 1.1" to "OFL-1.1-Atkinson.txt",
-            "Fontes Liberation (PDFs sem fontes embutidas) — SIL OFL 1.1" to "OFL-1.1-Liberation.txt"
+            "Fontes Liberation (PDFs sem fontes embutidas) — SIL OFL 1.1" to "OFL-1.1-Liberation.txt",
+            "GramJS (nuvem pelo Telegram) — MIT" to "gramjs-MIT.txt"
         )
+
+        /** Aviso exigido pelas regras da API do Telegram (item 2.2). */
+        const val TELEGRAM_NOTICE = "Esta função usa a API do Telegram e faz parte do ecossistema do Telegram; o Alexandria não é um app oficial do Telegram. Contas que entram por apps não oficiais ficam sob observação do Telegram, segundo as regras dele (core.telegram.org/api/obtaining_api_id)."
         private val COVER_FORMATS = setOf("pdf", "cbz", "cbr", "epub", "mobi", "djvu")
     }
 }

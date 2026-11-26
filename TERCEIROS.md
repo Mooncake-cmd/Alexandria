@@ -38,7 +38,8 @@ padrão e mapas de caracteres dele), **libarchive.js** (MIT, com o libarchive em
 **DjVu.js** (GPL-2.0-or-later, de RussCoder, cópia do código em `web/vendor/djvujs` com a alteração descrita no
 `LEIA-ME.txt` de lá), **GramJS** (MIT, pacote `telegram`, com as dependências dele — buffer, pako, big-integer,
 htmlparser2, mime, store2, async-mutex e outras de licença MIT/ISC/BSD —, carregado só quando a nuvem pelo Telegram é
-usada) e a fonte **Atkinson Hyperlegible** (SIL OFL 1.1,
+usada; a mesma GramJS vai no APK, em `app/src/main/assets/cloud/engine.js`, gerada por `npm run build:android-cloud`,
+com a licença em `app/src/main/assets/licenses/gramjs-MIT.txt`) e a fonte **Atkinson Hyperlegible** (SIL OFL 1.1,
 em `web/public/fonts`). As ferramentas de build e teste (Vite, TypeScript, Vitest, jsdom, fake-indexeddb,
 vite-plugin-pwa/Workbox) não são distribuídas no site publicado.
 
