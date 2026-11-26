@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'preact/hooks'
 import { exportBackup, importBackup, requestPersistence, storageInfo } from '../storage/backup'
 import { confirmDialog, shortcutsDialog, toast } from '../ui/dialogs'
 import { connectSync, disconnectSync, SyncError, syncSettings, type SyncSettings } from '../storage/sync'
+import { saveTelegram, setSyncProvider, syncProvider, telegramSettings, type SyncProvider, type TelegramSettings } from '../cloud/cloud'
+import { setPref } from '../storage/library'
 
 const size = (bytes: number) =>
   bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1).replace('.', ',')} GB` : bytes >= 1e6 ? `${(bytes / 1e6).toFixed(1).replace('.', ',')} MB` : `${Math.round(bytes / 1e3)} KB`
@@ -14,6 +16,7 @@ const LICENSES: [string, string][] = [
   ['libarchive.js (CBR/RAR) — MIT', 'libarchive.js-MIT.txt'],
   ['fflate (ZIP) — MIT', 'fflate-MIT.txt'],
   ['Preact — MIT', 'preact-MIT.txt'],
+  ['GramJS (nuvem pelo Telegram) — MIT', 'gramjs-MIT.txt'],
   ['Fonte Atkinson Hyperlegible — SIL OFL 1.1', 'OFL-1.1-Atkinson.txt']
 ]
 
@@ -74,7 +77,7 @@ export function Settings() {
         <dt>Versão</dt>
         <dd>{__APP_VERSION__} (web)</dd>
         <dt>Seus dados</dt>
-        <dd>Ficam só neste navegador, neste computador. Nada é enviado para a internet.</dd>
+        <dd>Ficam só neste navegador, neste computador. Nada vai para a internet, a não ser que você ligue a nuvem ou a sincronização (abaixo).</dd>
         <dt>Espaço usado</dt>
         <dd>{info ? `${size(info.usage)}${info.quota ? ` de ${size(info.quota)} disponíveis para o site` : ''}` : '—'}</dd>
         <dt>Proteção dos dados</dt>
@@ -117,6 +120,7 @@ export function Settings() {
         ))}
       </ul>
 
+      <TelegramSection />
       <SyncSection />
 
       <h2>Backup</h2>
@@ -180,7 +184,7 @@ function SyncSection() {
   if (settings === undefined) return null
   return (
     <>
-      <h2>Sincronizar posição entre aparelhos</h2>
+      <h3>Sincronizar a posição pelo GitHub</h3>
       {settings ? (
         <div class="sync-box">
           <p>Conectado como <strong>@{settings.login}</strong>. Última sincronização: {settings.lastSync ? new Date(settings.lastSync).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : 'ainda não'}.</p>
@@ -204,6 +208,157 @@ function SyncSection() {
           <p class="muted small">O token fica guardado só neste navegador (não vai para o backup) e só dá acesso aos seus gists.</p>
           <button type="submit" class="primary" disabled={busy || !token.trim()}>{busy ? 'Conectando…' : 'Conectar com o GitHub'}</button>
         </form>
+      )}
+    </>
+  )
+}
+
+/**
+ * Nuvem pelo Telegram: livros e posição de leitura nas Mensagens salvas da própria pessoa. Login em
+ * etapas (número, código, senha de duas etapas) com o api_id/api_hash dela.
+ */
+function TelegramSection() {
+  const [settings, setSettings] = useState<TelegramSettings | null | undefined>(undefined)
+  const [provider, setProvider] = useState<SyncProvider | null>(null)
+  const [github, setGithub] = useState(false)
+  const [step, setStep] = useState<'form' | 'code' | 'password'>('form')
+  const [form, setForm] = useState({ apiId: '', apiHash: '', phone: '', code: '', password: '' })
+  const [busy, setBusy] = useState(false)
+  const login = useRef<import('../cloud/gramApi').TelegramLogin | null>(null)
+  const load = async () => {
+    setSettings((await telegramSettings()) ?? null)
+    setProvider(await syncProvider())
+    setGithub(!!(await syncSettings())?.token)
+  }
+  useEffect(() => {
+    load()
+  }, [])
+  const field = (key: keyof typeof form) => (e: Event) => setForm({ ...form, [key]: (e.target as HTMLInputElement).value })
+  const run = async (work: () => Promise<void>) => {
+    setBusy(true)
+    try {
+      await work()
+    } catch (e) {
+      const { telegramError } = await import('../cloud/gramApi')
+      toast(e instanceof Error && !(e as { errorMessage?: string }).errorMessage && !/^[A-Z_]+/.test(e.message) ? e.message : telegramError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const finish = async () => {
+    const { session, name } = await login.current!.finish()
+    await saveTelegram({ apiId: Number(form.apiId), apiHash: form.apiHash.trim(), session, name, error: null })
+    await setSyncProvider('telegram')
+    setForm({ apiId: '', apiHash: '', phone: '', code: '', password: '' })
+    setStep('form')
+    login.current = null
+    toast(`Conectado ao Telegram como ${name}.`)
+    load()
+  }
+  const sendCode = (e: Event) => {
+    e.preventDefault()
+    run(async () => {
+      const apiId = Number(form.apiId)
+      if (!Number.isInteger(apiId) || apiId <= 0 || !form.apiHash.trim()) throw new Error('Preencha o api_id (só números) e o api_hash, de my.telegram.org.')
+      if (!/^\+?\d{8,15}$/.test(form.phone.replace(/[\s()-]/g, ''))) throw new Error('Digite o número com +55 e DDD, por exemplo +55 11 91234-5678.')
+      const { TelegramLogin } = await import('../cloud/gramApi')
+      login.current = new TelegramLogin({ apiId, apiHash: form.apiHash.trim() })
+      await login.current.sendCode(form.phone)
+      setStep('code')
+      toast('O Telegram mandou um código para o app do Telegram (ou por SMS).')
+    })
+  }
+  const sendLoginCode = (e: Event) => {
+    e.preventDefault()
+    run(async () => {
+      const result = await login.current!.signIn(form.code)
+      if (result === 'password') setStep('password')
+      else await finish()
+    })
+  }
+  const sendPassword = (e: Event) => {
+    e.preventDefault()
+    run(async () => {
+      await login.current!.password(form.password)
+      await finish()
+    })
+  }
+  const logout = async () => {
+    if (!settings || !(await confirmDialog('Sair do Telegram?', 'A sessão do Alexandria é encerrada no Telegram (some da lista de dispositivos) e esquecida neste navegador. Os livros e posições continuam nas suas Mensagens salvas.', 'Sair'))) return
+    run(async () => {
+      try {
+        const { logOut } = await import('../cloud/gramApi')
+        await logOut({ apiId: settings.apiId, apiHash: settings.apiHash }, settings.session)
+      } catch {
+        // Sem internet ou sessão já encerrada: esquece aqui mesmo assim.
+      }
+      await setPref('telegram', null)
+      toast('Sessão do Telegram encerrada.')
+      load()
+    })
+  }
+  if (settings === undefined) return null
+  const notice = (
+    <p class="muted small telegram-notice">
+      Esta função usa a <strong>API do Telegram</strong> e faz parte do ecossistema do Telegram; o Alexandria não é um app oficial do Telegram. Contas que entram por apps não oficiais ficam sob observação do Telegram, segundo as regras dele (core.telegram.org/api/obtaining_api_id).
+    </p>
+  )
+  return (
+    <>
+      <h2>Nuvem e sincronização</h2>
+      <h3>☁ Nuvem pelo Telegram (livros e posição)</h3>
+      {settings?.session ? (
+        <div class="sync-box">
+          <p>Conectado ao Telegram como <strong>{settings.name}</strong>. Os livros enviados para a nuvem e as posições de leitura ficam nas suas <strong>Mensagens salvas</strong>, com a marca #alexandria.</p>
+          {settings.error && <p class="sync-error">⚠ {settings.error}</p>}
+          {notice}
+          <button type="button" class="secondary" disabled={busy} onClick={logout}>Sair do Telegram</button>
+        </div>
+      ) : (
+        <div class="sync-box">
+          <p>Leve livros e a posição de leitura entre o computador e o celular (app Alexandria) pelas suas <strong>Mensagens salvas</strong> do Telegram, com arquivos de até 2 GB.</p>
+          {notice}
+          {step === 'form' && (
+            <form onSubmit={sendCode}>
+              <ol class="sync-steps">
+                <li>Em <a href="https://my.telegram.org/apps" target="_blank" rel="noopener">my.telegram.org</a>, entre com seu número e abra <em>API development tools</em>.</li>
+                <li>Crie o aplicativo (nome: Alexandria Leitor; plataforma: Outro). Copie o <strong>api_id</strong> e o <strong>api_hash</strong>.</li>
+                <li>Cole abaixo, digite seu número e peça o código. Cada aparelho entra uma vez.</li>
+              </ol>
+              <label class="field"><span>api_id</span><input inputMode="numeric" autoComplete="off" value={form.apiId} onInput={field('apiId')} /></label>
+              <label class="field"><span>api_hash</span><input type="password" autoComplete="off" spellcheck={false} value={form.apiHash} onInput={field('apiHash')} /></label>
+              <label class="field"><span>Número do Telegram</span><input type="tel" autoComplete="tel" placeholder="+55 11 91234-5678" value={form.phone} onInput={field('phone')} /></label>
+              <p class="muted small">A sessão fica guardada só neste navegador (não vai para o backup).</p>
+              <button type="submit" class="primary" disabled={busy}>{busy ? 'Enviando…' : 'Enviar código'}</button>
+            </form>
+          )}
+          {step === 'code' && (
+            <form onSubmit={sendLoginCode}>
+              <label class="field"><span>Código que chegou no Telegram</span><input inputMode="numeric" autoComplete="one-time-code" value={form.code} onInput={field('code')} autoFocus /></label>
+              <button type="submit" class="primary" disabled={busy || !form.code.trim()}>{busy ? 'Entrando…' : 'Entrar'}</button>{' '}
+              <button type="button" class="secondary" disabled={busy} onClick={() => setStep('form')}>Voltar</button>
+            </form>
+          )}
+          {step === 'password' && (
+            <form onSubmit={sendPassword}>
+              <label class="field"><span>Senha de duas etapas do Telegram</span><input type="password" autoComplete="current-password" value={form.password} onInput={field('password')} autoFocus /></label>
+              <button type="submit" class="primary" disabled={busy || !form.password}>{busy ? 'Entrando…' : 'Entrar'}</button>
+            </form>
+          )}
+        </div>
+      )}
+      {settings?.session && github && (
+        <div class="sync-box provider-box" role="radiogroup" aria-label="Sincronizar a posição por">
+          <p>Sincronizar a posição de leitura por:</p>
+          {(['telegram', 'github'] as SyncProvider[]).map((p) => (
+            <label key={p} class="toggle">
+              <input type="radio" name="provider" checked={provider === p} onChange={async () => {
+                await setSyncProvider(p)
+                setProvider(p)
+              }} /> {p === 'telegram' ? 'Telegram' : 'GitHub'}
+            </label>
+          ))}
+        </div>
       )}
     </>
   )

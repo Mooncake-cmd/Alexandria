@@ -15,6 +15,10 @@ import { readingDays } from '../storage/library'
 import { useLibraryData } from '../storage/useLibrary'
 import { STREAK_MIN_SECONDS, streakSummary, today } from '../core/days'
 import { formatReadingTime } from '../core/readingTime'
+import { displayTitle } from '../core/library'
+import { cloudBooks, deleteFromCloud, fetchFromCloud, localKeys, onCloudActivity, sendToCloud, telegramSettings, type CloudActivity } from '../cloud/cloud'
+import type { CloudBook } from '../cloud/telegramCloud'
+import { confirmDialog, menuDialog } from '../ui/dialogs'
 
 /** Prateleiras abertas (como no app, começam fechadas); lembradas enquanto o site está aberto. */
 const openShelves = new Set<string>()
@@ -50,6 +54,60 @@ export function Library() {
   const reading = items.filter((i) => !isFinished(i))
   const finished = items.filter((i) => isFinished(i))
 
+  // ---------- nuvem pelo Telegram ----------
+  const [cloudOn, setCloudOn] = useState(false)
+  const [cloud, setCloud] = useState<CloudBook[] | null>(null)
+  const [cloudError, setCloudError] = useState<string | null>(null)
+  const [keys, setKeys] = useState<Map<string, LibraryItem>>(new Map())
+  const [activity, setActivity] = useState<CloudActivity | null>(null)
+  useEffect(() => onCloudActivity(setActivity), [])
+  const refreshCloud = async () => {
+    const s = await telegramSettings()
+    setCloudOn(!!s?.session)
+    if (!s?.session) return setCloud(null)
+    try {
+      setCloud(await cloudBooks())
+      setCloudError(null)
+    } catch {
+      setCloudError('Não foi possível falar com o Telegram agora (sem internet?).')
+    }
+  }
+  useEffect(() => {
+    refreshCloud()
+  }, [])
+  useEffect(() => {
+    localKeys(items).then(setKeys)
+  }, [items])
+  const inCloud = new Set((cloud ?? []).map((b) => b.key))
+  const keyOf = (item: LibraryItem) => [...keys.entries()].find(([, i]) => i.id === item.id)?.[0]
+  const missing = (cloud ?? []).filter((b) => !keys.has(b.key))
+  const upload = async (item: LibraryItem) => {
+    try {
+      const { existed } = await sendToCloud(item, displayTitle(item.name))
+      toast(existed ? `"${displayTitle(item.name)}" já estava na nuvem.` : `"${displayTitle(item.name)}" foi para a nuvem (Mensagens salvas do Telegram).`)
+      refreshCloud()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Não foi possível enviar para a nuvem.')
+    }
+  }
+  const download = async (book: CloudBook) => {
+    try {
+      const item = await fetchFromCloud(book, displayTitle(book.name))
+      toast(`"${displayTitle(book.name)}" baixado da nuvem.`)
+      openBook(item)
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Não foi possível baixar da nuvem.')
+    }
+  }
+  const cloudOptions = async (book: CloudBook) => {
+    const choice = await menuDialog(displayTitle(book.name), ['Baixar e abrir', 'Apagar da nuvem…'], `${book.format.toUpperCase()} · ${(book.size / 1e6).toFixed(1).replace('.', ',')} MB · na nuvem`)
+    if (choice === 0) download(book)
+    if (choice === 1 && (await confirmDialog('Apagar da nuvem?', `"${displayTitle(book.name)}" sai das suas Mensagens salvas do Telegram. Os aparelhos que já baixaram continuam com o livro.`, 'Apagar', true))) {
+      await deleteFromCloud(book)
+      refreshCloud()
+    }
+  }
+
   const grouped = (list: LibraryItem[]) => {
     const loose = list.filter((i) => !i.shelf)
     const groups = new Map<string, LibraryItem[]>()
@@ -81,12 +139,27 @@ export function Library() {
     )
   }
 
-  const card = (item: LibraryItem) => <BookCard key={item.id} item={item} onOpen={() => openBook(item)} onOptions={() => itemOptions(item)} />
+  const cloudExtra = (item: LibraryItem) => {
+    if (!cloudOn || isArchived(item)) return []
+    const key = keyOf(item)
+    if (key && inCloud.has(key)) return [{ label: '☁ Já está na nuvem (Telegram)', run: () => toast('Este livro já está nas suas Mensagens salvas.') }]
+    return [{ label: '☁ Enviar para a nuvem (Telegram)', run: () => upload(item) }]
+  }
+  const card = (item: LibraryItem) => {
+    const key = keyOf(item)
+    return <BookCard key={item.id} item={item} cloud={!!key && inCloud.has(key)} onOpen={() => openBook(item)} onOptions={() => itemOptions(item, cloudExtra(item))} />
+  }
 
   const days = useLibraryData<Record<string, number>>(readingDays, {})
   const streak = streakSummary(days, today())
   return (
     <>
+      {activity && (
+        <div class="cloud-activity" role="status" aria-live="polite">
+          ☁ {activity.label} · {Math.round(activity.fraction * 100)}%
+          <div class="bar"><div style={{ width: `${Math.round(activity.fraction * 100)}%` }} /></div>
+        </div>
+      )}
       <h2>Minha biblioteca</h2>
       <p class="muted">Seus documentos ficam guardados só neste navegador, no seu computador.</p>
       {(streak.current > 0 || streak.todaySeconds > 0) && (
@@ -121,6 +194,34 @@ export function Library() {
         <p class="muted small">Nenhum livro em andamento. Os concluídos estão na Estante, abaixo.</p>
       ) : (
         grouped(reading)
+      )}
+
+      {cloudOn && (
+        <section class="cloud-section">
+          <h2>☁ Na nuvem</h2>
+          {cloudError ? (
+            <p class="muted small">{cloudError} <button type="button" class="link" onClick={refreshCloud}>Tentar de novo</button></p>
+          ) : cloud === null ? (
+            <p class="muted small">Procurando seus livros nas Mensagens salvas do Telegram…</p>
+          ) : missing.length === 0 ? (
+            <p class="muted small">{cloud.length ? `Os ${cloud.length} livro(s) da nuvem já estão neste navegador.` : 'Nenhum livro na nuvem ainda. No menu de um livro (⋯), use "Enviar para a nuvem".'}</p>
+          ) : (
+            <>
+              <p class="muted small">Livros nas suas Mensagens salvas que ainda não estão neste navegador:</p>
+              <ul class="cloud-list">
+                {missing.map((book) => (
+                  <li key={book.key}>
+                    <span class="name">☁ {displayTitle(book.name)} <span class="muted small">· {book.format.toUpperCase()} · {(book.size / 1e6).toFixed(1).replace('.', ',')} MB</span></span>
+                    <span>
+                      <button type="button" class="secondary" onClick={() => download(book)}>Baixar e abrir</button>
+                      <button type="button" class="card-more" aria-label={`Opções de ${displayTitle(book.name)} na nuvem`} onClick={() => cloudOptions(book)}>⋯</button>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </section>
       )}
 
       {items.length > 0 && (

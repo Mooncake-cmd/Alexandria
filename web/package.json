@@ -16,7 +16,8 @@
     "foliate-js": "1.0.1",
     "libarchive.js": "2.0.2",
     "pdfjs-dist": "6.4.299",
-    "preact": "10.27.3"
+    "preact": "10.27.3",
+    "telegram": "^2.26.22"
   },
   "devDependencies": {
     "@preact/preset-vite": "2.10.1",

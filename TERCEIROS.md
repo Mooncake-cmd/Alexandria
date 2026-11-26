@@ -36,7 +36,9 @@ O site usa, além do próprio código (AGPL-3.0-or-later): **Preact** (MIT), **f
 **foliate-js** (MIT, leitura de MOBI/AZW3, de John Factotum), **pdf.js** (Apache-2.0, Mozilla, com as fontes
 padrão e mapas de caracteres dele), **libarchive.js** (MIT, com o libarchive em WebAssembly, BSD-2, para CBR em RAR),
 **DjVu.js** (GPL-2.0-or-later, de RussCoder, cópia do código em `web/vendor/djvujs` com a alteração descrita no
-`LEIA-ME.txt` de lá) e a fonte **Atkinson Hyperlegible** (SIL OFL 1.1,
+`LEIA-ME.txt` de lá), **GramJS** (MIT, pacote `telegram`, com as dependências dele — buffer, pako, big-integer,
+htmlparser2, mime, store2, async-mutex e outras de licença MIT/ISC/BSD —, carregado só quando a nuvem pelo Telegram é
+usada) e a fonte **Atkinson Hyperlegible** (SIL OFL 1.1,
 em `web/public/fonts`). As ferramentas de build e teste (Vite, TypeScript, Vitest, jsdom, fake-indexeddb,
 vite-plugin-pwa/Workbox) não são distribuídas no site publicado.
 

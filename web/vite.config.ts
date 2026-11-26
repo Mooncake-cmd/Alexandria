@@ -2,6 +2,7 @@ import { defineConfig } from 'vitest/config'
 import preact from '@preact/preset-vite'
 import { VitePWA } from 'vite-plugin-pwa'
 import { cpSync, existsSync, readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 
 const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string }
 
@@ -28,7 +29,25 @@ function copyReaderAssets() {
 }
 
 // O site fica em https://mooncake-cmd.github.io/Alexandria/ (GitHub Pages do repositório).
+/**
+ * A GramJS (nuvem pelo Telegram) foi feita para o Node: no navegador, o que ela pede do Node vira
+ * as versões para navegador (crypto e path) ou peças vazias (rede TCP, proxy, arquivos), que ela só
+ * usa fora do navegador. Ela só é carregada quando a nuvem pelo Telegram é usada.
+ */
+const nodeShims = {
+  util: fileURLToPath(new URL('./src/cloud/utilShim.ts', import.meta.url)),
+  os: fileURLToPath(new URL('./src/cloud/osShim.ts', import.meta.url)),
+  path: 'path-browserify',
+  crypto: fileURLToPath(new URL('./node_modules/telegram/crypto/crypto.js', import.meta.url)),
+  events: fileURLToPath(new URL('./src/cloud/emptyShim.ts', import.meta.url)),
+  socks: fileURLToPath(new URL('./src/cloud/emptyShim.ts', import.meta.url)),
+  net: fileURLToPath(new URL('./src/cloud/emptyShim.ts', import.meta.url)),
+  fs: fileURLToPath(new URL('./src/cloud/emptyShim.ts', import.meta.url)),
+  'node-localstorage': fileURLToPath(new URL('./src/cloud/emptyShim.ts', import.meta.url))
+}
+
 export default defineConfig({
+  resolve: { alias: nodeShims },
   base: '/Alexandria/',
   define: { __APP_VERSION__: JSON.stringify(pkg.version) },
   plugins: [

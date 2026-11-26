@@ -409,3 +409,13 @@ kbd { font-family: inherit; font-size: 12px; background: var(--paper, #f5f2eb); 
 .sync-box .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; max-width: 420px; }
 .sync-box input { padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; font: inherit; background: var(--paper); color: var(--text); }
 .sync-error { color: #a3392f; }
+.telegram-notice { border-left: 3px solid var(--line); padding-left: 10px; }
+.provider-box { margin-top: 10px; }
+.sync-box h3, .main h3 { margin: 18px 0 8px; font-size: 16px; }
+.cloud-activity { position: sticky; top: 0; z-index: 5; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; margin: 0 0 12px; font-size: 13px; }
+.cloud-activity .bar { height: 4px; background: var(--line); border-radius: 2px; margin-top: 6px; overflow: hidden; }
+.cloud-activity .bar > div { height: 100%; background: var(--gold); }
+.cloud-badge { font-size: 12px; margin-left: 4px; }
+.cloud-list { list-style: none; padding: 0; margin: 0 0 16px; display: grid; gap: 8px; }
+.cloud-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; }
+.cloud-list .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

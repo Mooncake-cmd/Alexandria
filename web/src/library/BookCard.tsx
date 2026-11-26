@@ -49,7 +49,7 @@ export function Cover({ item, class: className = 'cover' }: { item: LibraryItem;
   )
 }
 
-export function BookCard({ item, onOpen, onOptions }: { item: LibraryItem; onOpen: () => void; onOptions: (e: MouseEvent) => void }) {
+export function BookCard({ item, cloud = false, onOpen, onOptions }: { item: LibraryItem; cloud?: boolean; onOpen: () => void; onOptions: (e: MouseEvent) => void }) {
   const progress = progressOf(item)
   return (
     <article
@@ -64,7 +64,7 @@ export function BookCard({ item, onOpen, onOptions }: { item: LibraryItem; onOpe
         <div class="card-info">
           <h3 class="card-title">{displayTitle(item.name)}</h3>
           <p class="card-format">{item.format.toUpperCase()}</p>
-          <p class="card-status">{statusText(item)}</p>
+          <p class="card-status">{statusText(item)}{cloud && <span class="cloud-badge" title="Também está na nuvem (Telegram)"> · ☁</span>}</p>
           {READABLE.has(item.format) && (
             <div class="progress" role="progressbar" aria-label="Progresso de leitura" aria-valuenow={Math.round(progress * 100)} aria-valuemin={0} aria-valuemax={100}>
               <div style={{ width: `${progress * 100}%` }} />

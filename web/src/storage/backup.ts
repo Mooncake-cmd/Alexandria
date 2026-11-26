@@ -9,6 +9,8 @@ import { notifyLibraryChanged } from './library'
 const DATA_STORES: StoreName[] = ['items', 'notes', 'terms', 'readingDays', 'readingLog', 'prefs', 'bookmarks']
 const BLOB_STORES: StoreName[] = ['covers', 'files']
 export const BACKUP_FORMAT = 'alexandria-backup'
+/** Acessos guardados (token do GitHub, sessão do Telegram): não vão para o backup, que pode ser compartilhado. */
+const PRIVATE_PREFS = ['sync', 'telegram']
 export const BACKUP_VERSION = 1
 
 interface Dump {
@@ -26,7 +28,7 @@ export async function exportBackup(includeBooks: boolean, now = Date.now()): Pro
     // O token da sincronização (GitHub) não vai para o backup: o arquivo pode ser compartilhado.
     const prefs = out.prefs
     if (prefs) {
-      const keep = prefs.keys.map((k, i) => (k === 'sync' ? -1 : i)).filter((i) => i >= 0)
+      const keep = prefs.keys.map((k, i) => (PRIVATE_PREFS.includes(String(k)) ? -1 : i)).filter((i) => i >= 0)
       out.prefs = { keys: keep.map((i) => prefs.keys[i]), values: keep.map((i) => prefs.values[i]) }
     }
     return out
@@ -70,9 +72,13 @@ export async function importBackup(file: Blob): Promise<RestoreSummary> {
   const all: StoreName[] = [...DATA_STORES, ...BLOB_STORES]
   await transaction(all, 'readwrite', async (tx) => {
     // A sincronização configurada neste navegador continua depois de restaurar.
-    const sync = await get(tx, 'prefs', 'sync')
+    const kept: [string, unknown][] = []
+    for (const key of PRIVATE_PREFS) {
+      const value = await get(tx, 'prefs', key)
+      if (value) kept.push([key, value])
+    }
     for (const store of all) await clear(tx, store)
-    if (sync) await put(tx, 'prefs', sync, 'sync')
+    for (const [key, value] of kept) await put(tx, 'prefs', value, key)
     for (const [store, { keys, values }] of Object.entries(dump.stores)) {
       if (!all.includes(store as StoreName)) continue
       for (let i = 0; i < keys.length; i++) {
