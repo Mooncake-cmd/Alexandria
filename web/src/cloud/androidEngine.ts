@@ -7,7 +7,8 @@
  * `AndroidCloud.progress(id, fração)`. Arquivos passam em pedaços (base64): `read(token, início,
  * tamanho)` para enviar e `write(token, base64)` para baixar.
  */
-import { downloadBook, listCloudBooks, pullPositionFrom, pushPositionTo, removeCloudBook, uploadBook, type TgApi } from './telegramCloud'
+import { copyCloud, downloadBook, listCloudBooks, pullPositionFrom, pushPositionTo, removeCloudBook, uploadBook, type TgApi } from './telegramCloud'
+import type { CloudChat, CloudTarget } from './gramApi'
 import type { SyncEntry } from '../storage/sync'
 
 interface Bridge {
@@ -23,8 +24,9 @@ declare global {
   interface Window {
     AndroidCloud?: Bridge
     alxCloud?: { call: (id: string, method: string, args: string) => void }
-    /** Só nos testes: troca a ligação com o Telegram por uma falsa. */
+    /** Só nos testes: troca a ligação com o Telegram por uma falsa (uma por conversa: 'me' ou o id do grupo). */
     __alxTestApi?: TgApi
+    __alxTestApis?: Record<string, TgApi>
   }
 }
 
@@ -47,23 +49,38 @@ interface Settings {
   apiId: number
   apiHash: string
   session: string
+  chat: CloudChat | null
 }
 
 let settings: Settings | null = null
 let login: import('./gramApi').TelegramLogin | null = null
 
-async function api(): Promise<TgApi> {
-  if (window.__alxTestApi) return window.__alxTestApi
+const target = (): CloudTarget => settings?.chat ?? 'me'
+
+async function client() {
   if (!settings?.session) throw Object.assign(new Error('Sem sessão do Telegram'), { errorMessage: 'NO_SESSION' })
-  const { connectedClient, gramApi } = await import('./gramApi')
-  return gramApi(await connectedClient({ apiId: settings.apiId, apiHash: settings.apiHash }, settings.session))
+  const gram = await import('./gramApi')
+  return { gram, client: await gram.connectedClient({ apiId: settings.apiId, apiHash: settings.apiHash }, settings.session) }
+}
+
+async function api(where: CloudTarget = target()): Promise<TgApi> {
+  const fake = window.__alxTestApis?.[where === 'me' ? 'me' : where.id] ?? window.__alxTestApi
+  if (fake) return fake
+  const { gram, client: c } = await client()
+  return gram.gramApi(c, where)
+}
+
+function chatArg(value: unknown): CloudChat {
+  const c = value as Partial<CloudChat> | null
+  if (!c?.id || !c.accessHash) throw new Error('Grupo inválido.')
+  return { id: String(c.id), accessHash: String(c.accessHash), title: String(c.title ?? 'Grupo') }
 }
 
 type Args = Record<string, unknown>
 
 const methods: Record<string, (args: Args, id: string, bridge: Bridge) => Promise<unknown>> = {
   async init(args) {
-    settings = { apiId: Number(args.apiId), apiHash: String(args.apiHash ?? ''), session: String(args.session ?? '') }
+    settings = { apiId: Number(args.apiId), apiHash: String(args.apiHash ?? ''), session: String(args.session ?? ''), chat: args.chat ? chatArg(args.chat) : null }
     return true
   },
   async sendCode(args) {
@@ -120,6 +137,59 @@ const methods: Record<string, (args: Args, id: string, bridge: Bridge) => Promis
   },
   async pushPosition(args) {
     return pushPositionTo(await api(), String(args.key), args.entry as SyncEntry)
+  },
+  // ---------- grupo privado ----------
+  async createGroup() {
+    const { gram, client: c } = await client()
+    return gram.createGroup(c, 'Alexandria — biblioteca')
+  },
+  async joinGroup(args) {
+    const { gram, client: c } = await client()
+    return gram.joinGroup(c, String(args.link ?? ''))
+  },
+  async groups() {
+    const { gram, client: c } = await client()
+    return gram.listGroups(c)
+  },
+  async inviteLink() {
+    if (!settings?.chat) throw new Error('A nuvem está nas Mensagens salvas: não há grupo para convidar.')
+    const { gram, client: c } = await client()
+    return gram.inviteLink(c, settings.chat)
+  },
+  async copyFromSaved() {
+    const chat = settings?.chat
+    if (!chat) throw new Error('Escolha um grupo antes.')
+    const forward = window.__alxTestApis
+      ? async (ids: number[]) => {
+          const from = window.__alxTestApis!.me
+          for (const id of ids) {
+            const m = (await from.search('#alexandria')).find((x) => x.id === id)!
+            await window.__alxTestApis![chat.id].upload(m.fileName ?? 'livro', await from.download(id), m.caption)
+          }
+        }
+      : async (ids: number[]) => {
+          const { gram, client: c } = await client()
+          await gram.forwardFromSaved(c, chat, ids)
+        }
+    return copyCloud(await api('me'), await api(chat), forward)
+  },
+  // ---------- mensagens patrocinadas (regra 3.3) ----------
+  async sponsored() {
+    if (!settings?.chat || window.__alxTestApis || window.__alxTestApi) return []
+    const { gram, client: c } = await client()
+    return gram.sponsoredMessages(c, settings.chat)
+  },
+  async viewSponsored(args) {
+    if (!settings?.chat) return true
+    const { gram, client: c } = await client()
+    await gram.viewSponsored(c, settings.chat, String(args.id))
+    return true
+  },
+  async clickSponsored(args) {
+    if (!settings?.chat) return true
+    const { gram, client: c } = await client()
+    await gram.clickSponsored(c, settings.chat, String(args.id))
+    return true
   }
 }
 

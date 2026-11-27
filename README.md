@@ -1,6 +1,6 @@
 # Alexandria — projeto Android
 
-**Versão:** 0.21.1  
+**Versão:** 0.22.0  
 **Pacote:** `com.alexandria.reader`  
 **Plataforma:** Android 6.0 ou superior (API 23+)  
 **Idioma da interface:** Português (Brasil)
@@ -102,6 +102,17 @@ Em todos os formatos:
   `alexandria-posicoes.json` com a etiqueta `#alexandria_posicoes`. O livro é reconhecido pelo nome e tamanho (mesmo
   código no app e no site), e enviar de novo não duplica. Uma transferência por vez, e o app respeita as esperas que o
   Telegram pede.
+  - **Grupo privado** (0.22): Ajustes → "Nuvem pelo Telegram" → "Usar um grupo privado…" leva a nuvem para um grupo,
+    onde várias contas da pessoa (números diferentes) usam os mesmos livros e a mesma posição de leitura. Dá para criar o
+    grupo pelo app, entrar com o link de convite (t.me/+…) ou escolher um grupo que já existe; "Trazer livros das
+    Mensagens salvas" encaminha para o grupo só o que falta e junta as posições, sem apagar nada. Grupo, e não canal,
+    porque num grupo todo membro pode enviar arquivos. A lista "Na nuvem" mostra quem enviou cada livro.
+  - **Marca escrita à mão**: um arquivo de livro (PDF, EPUB, MOBI/AZW3, DJVU, CBZ, CBR, DOCX, TXT) mandado pelo próprio
+    Telegram, com `#alexandria_livro` na legenda, também entra na nuvem; o código sai do nome e do tamanho do arquivo.
+  - **Mensagens patrocinadas** (item 3.3 das regras: quem acessa conversas de canais deve mostrar os anúncios oficiais):
+    na nuvem de um grupo, o app pede os anúncios ao abrir a lista (guardados por 5 minutos) e, se vier algum, mostra
+    depois de todos os livros, com "Patrocinado"/"Recomendado", registra a visualização e o clique e pede confirmação
+    antes de abrir endereços fora do Telegram, como manda core.telegram.org/api/sponsored-messages.
   - **Regras da API do Telegram**: cada pessoa usa o próprio api_id; o app avisa que usa a API do Telegram e não é um
     app oficial; não usa o logo nem "Telegram" no nome. O Telegram deixa contas que entram por apps não oficiais sob
     observação (core.telegram.org/api/obtaining_api_id) — use por sua conta e risco.

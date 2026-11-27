@@ -16,8 +16,8 @@ import { useLibraryData } from '../storage/useLibrary'
 import { STREAK_MIN_SECONDS, streakSummary, today } from '../core/days'
 import { formatReadingTime } from '../core/readingTime'
 import { displayTitle } from '../core/library'
-import { cloudBooks, deleteFromCloud, fetchFromCloud, localKeys, onCloudActivity, sendToCloud, telegramSettings, type CloudActivity } from '../cloud/cloud'
-import type { CloudBook } from '../cloud/telegramCloud'
+import { cloudBooks, cloudSponsored, deleteFromCloud, fetchFromCloud, localKeys, onCloudActivity, sendToCloud, sponsoredClicked, sponsoredSeen, telegramSettings, type CloudActivity } from '../cloud/cloud'
+import { isTelegramUrl, type CloudBook, type SponsoredItem } from '../cloud/telegramCloud'
 import { confirmDialog, menuDialog } from '../ui/dialogs'
 
 /** Prateleiras abertas (como no app, começam fechadas); lembradas enquanto o site está aberto. */
@@ -60,14 +60,19 @@ export function Library() {
   const [cloudError, setCloudError] = useState<string | null>(null)
   const [keys, setKeys] = useState<Map<string, LibraryItem>>(new Map())
   const [activity, setActivity] = useState<CloudActivity | null>(null)
+  const [place, setPlace] = useState('nas suas Mensagens salvas')
+  const [ads, setAds] = useState<SponsoredItem[]>([])
   useEffect(() => onCloudActivity(setActivity), [])
   const refreshCloud = async () => {
     const s = await telegramSettings()
     setCloudOn(!!s?.session)
     if (!s?.session) return setCloud(null)
+    setPlace(s.chat ? `no grupo "${s.chat.title}"` : 'nas suas Mensagens salvas')
     try {
       setCloud(await cloudBooks())
       setCloudError(null)
+      // Abrir a nuvem de um grupo equivale a abrir a conversa: pede os anúncios oficiais (regra 3.3).
+      setAds(await cloudSponsored())
     } catch {
       setCloudError('Não foi possível falar com o Telegram agora (sem internet?).')
     }
@@ -102,7 +107,7 @@ export function Library() {
   const cloudOptions = async (book: CloudBook) => {
     const choice = await menuDialog(displayTitle(book.name), ['Baixar e abrir', 'Apagar da nuvem…'], `${book.format.toUpperCase()} · ${(book.size / 1e6).toFixed(1).replace('.', ',')} MB · na nuvem`)
     if (choice === 0) download(book)
-    if (choice === 1 && (await confirmDialog('Apagar da nuvem?', `"${displayTitle(book.name)}" sai das suas Mensagens salvas do Telegram. Os aparelhos que já baixaram continuam com o livro.`, 'Apagar', true))) {
+    if (choice === 1 && (await confirmDialog('Apagar da nuvem?', `"${displayTitle(book.name)}" sai da nuvem (${place.replace(/^n[ao]s? (suas )?/, "")}). Os aparelhos que já baixaram continuam com o livro.`, 'Apagar', true))) {
       await deleteFromCloud(book)
       refreshCloud()
     }
@@ -142,7 +147,7 @@ export function Library() {
   const cloudExtra = (item: LibraryItem) => {
     if (!cloudOn || isArchived(item)) return []
     const key = keyOf(item)
-    if (key && inCloud.has(key)) return [{ label: '☁ Já está na nuvem (Telegram)', run: () => toast('Este livro já está nas suas Mensagens salvas.') }]
+    if (key && inCloud.has(key)) return [{ label: '☁ Já está na nuvem (Telegram)', run: () => toast(`Este livro já está ${place}.`) }]
     return [{ label: '☁ Enviar para a nuvem (Telegram)', run: () => upload(item) }]
   }
   const card = (item: LibraryItem) => {
@@ -202,16 +207,16 @@ export function Library() {
           {cloudError ? (
             <p class="muted small">{cloudError} <button type="button" class="link" onClick={refreshCloud}>Tentar de novo</button></p>
           ) : cloud === null ? (
-            <p class="muted small">Procurando seus livros nas Mensagens salvas do Telegram…</p>
+            <p class="muted small">Procurando seus livros {place} do Telegram…</p>
           ) : missing.length === 0 ? (
             <p class="muted small">{cloud.length ? `Os ${cloud.length} livro(s) da nuvem já estão neste navegador.` : 'Nenhum livro na nuvem ainda. No menu de um livro (⋯), use "Enviar para a nuvem".'}</p>
           ) : (
             <>
-              <p class="muted small">Livros nas suas Mensagens salvas que ainda não estão neste navegador:</p>
+              <p class="muted small">Livros {place} que ainda não estão neste navegador:</p>
               <ul class="cloud-list">
                 {missing.map((book) => (
                   <li key={book.key}>
-                    <span class="name">☁ {displayTitle(book.name)} <span class="muted small">· {book.format.toUpperCase()} · {(book.size / 1e6).toFixed(1).replace('.', ',')} MB</span></span>
+                    <span class="name">☁ {displayTitle(book.name)} <span class="muted small">· {book.format.toUpperCase()} · {(book.size / 1e6).toFixed(1).replace('.', ',')} MB{book.sender ? ` · enviado por ${book.sender}` : ''}</span></span>
                     <span>
                       <button type="button" class="secondary" onClick={() => download(book)}>Baixar e abrir</button>
                       <button type="button" class="card-more" aria-label={`Opções de ${displayTitle(book.name)} na nuvem`} onClick={() => cloudOptions(book)}>⋯</button>
@@ -221,6 +226,7 @@ export function Library() {
               </ul>
             </>
           )}
+          {ads.map((ad) => <SponsoredCard key={ad.id} ad={ad} />)}
         </section>
       )}
 
@@ -269,5 +275,42 @@ export function Library() {
       )}
       {items.length > 0 && <p class="muted small hint">Clique num livro para abri-lo. Clique com o botão direito (ou em ⋯) para mover de prateleira, concluir, trocar a capa ou remover. Na Estante, o botão direito na placa renomeia a prateleira.</p>}
     </>
+  )
+}
+
+/**
+ * Anúncio oficial do Telegram, mostrado depois de todos os livros da nuvem de um grupo (regra 3.3 dos
+ * termos da API e core.telegram.org/api/sponsored-messages): visualização registrada quando o texto
+ * inteiro aparece na tela, clique registrado, e confirmação antes de abrir endereços fora do Telegram.
+ */
+function SponsoredCard({ ad }: { ad: SponsoredItem }) {
+  const box = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = box.current
+    if (!el || typeof IntersectionObserver === 'undefined') return
+    let seen = false
+    const observer = new IntersectionObserver((entries) => {
+      if (!seen && entries.some((e) => e.intersectionRatio >= 0.99)) {
+        seen = true
+        observer.disconnect()
+        sponsoredSeen(ad)
+      }
+    }, { threshold: [0.99] })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [ad.id])
+  const open = async () => {
+    await sponsoredClicked(ad)
+    if (!isTelegramUrl(ad.url) && !(await confirmDialog('Abrir o endereço?', ad.url, 'Abrir'))) return
+    window.open(ad.url, '_blank', 'noopener')
+  }
+  const info = [ad.sponsorInfo, ad.additionalInfo].filter(Boolean).join('\n\n')
+  return (
+    <div class="sponsored" ref={box}>
+      <p class="sponsored-label">{ad.recommended ? 'Recomendado' : 'Patrocinado'}{info && <> · <button type="button" class="link" onClick={() => confirmDialog('Sobre o anunciante', info, 'Fechar')}>Sobre o anunciante</button></>}</p>
+      <p class="sponsored-title">{ad.title}</p>
+      <p class="sponsored-text">{ad.message}</p>
+      <button type="button" class="secondary" onClick={open}>{ad.buttonText || 'Abrir'}</button>
+    </div>
   )
 }

@@ -1,14 +1,29 @@
 /**
  * Ligação real com o Telegram pela GramJS (MIT), carregada só quando a nuvem é usada.
- * Usa o api_id/api_hash da própria pessoa (regra 2.1 dos termos da API do Telegram) e mexe só nas
- * Mensagens salvas, nas mensagens do Alexandria.
+ * Usa o api_id/api_hash da própria pessoa (regra 2.1 dos termos da API do Telegram) e mexe só na
+ * conversa da nuvem (Mensagens salvas ou o grupo privado escolhido), nas mensagens do Alexandria.
  */
 import './nodeShim'
 import { Api, TelegramClient } from 'telegram'
 import { StringSession } from 'telegram/sessions'
 import { CustomFile } from 'telegram/client/uploads'
 import { Buffer } from 'buffer'
-import type { TgApi, TgMessage } from './telegramCloud'
+import bigInt from 'big-integer'
+import type { SponsoredItem, TgApi, TgMessage } from './telegramCloud'
+
+/** Grupo privado da nuvem (o access_hash é preciso para falar com ele sem procurar de novo). */
+export interface CloudChat {
+  id: string
+  accessHash: string
+  title: string
+}
+
+/** Conversa da nuvem: as Mensagens salvas ou um grupo. */
+export type CloudTarget = 'me' | CloudChat
+
+export function peerOf(target: CloudTarget): 'me' | Api.InputPeerChannel {
+  return target === 'me' ? 'me' : new Api.InputPeerChannel({ channelId: bigInt(target.id), accessHash: bigInt(target.accessHash) })
+}
 
 export interface TelegramCredentials {
   apiId: number
@@ -41,6 +56,11 @@ export function telegramError(e: unknown): string {
   if (/API_ID_INVALID|API_ID_PUBLISHED_FLOOD/.test(code)) return 'api_id ou api_hash inválidos. Confira em my.telegram.org.'
   if (/FLOOD_WAIT/.test(code)) return 'O Telegram pediu para esperar um pouco antes de tentar de novo.'
   if (/AUTH_KEY_UNREGISTERED|SESSION_REVOKED|USER_DEACTIVATED/.test(code)) return 'A sessão do Telegram foi encerrada. Entre de novo.'
+  if (/INVITE_HASH_EXPIRED|INVITE_HASH_INVALID|INVITE_HASH_EMPTY/.test(code)) return 'O link de convite não vale mais. Peça um novo no aparelho que criou o grupo.'
+  if (/USER_ALREADY_PARTICIPANT/.test(code)) return 'Esta conta já está no grupo.'
+  if (/CHANNELS_TOO_MUCH/.test(code)) return 'Esta conta já está em grupos e canais demais (limite do Telegram).'
+  if (/CHAT_WRITE_FORBIDDEN|CHAT_SEND_MEDIA_FORBIDDEN|CHAT_SEND_DOCS_FORBIDDEN/.test(code)) return 'Esta conta não tem permissão para enviar arquivos no grupo.'
+  if (/CHANNEL_PRIVATE|CHANNEL_INVALID|PEER_ID_INVALID/.test(code)) return 'O grupo da nuvem não está acessível para esta conta (saiu do grupo ou ele foi apagado).'
   return `O Telegram respondeu: ${code}`
 }
 
@@ -120,17 +140,24 @@ export async function logOut(credentials: TelegramCredentials, session: string) 
 
 const toNumber = (value: unknown) => (typeof value === 'number' ? value : Number((value as { toString(): string })?.toString() ?? 0))
 
+function senderName(m: Api.Message): string | undefined {
+  const s = (m as unknown as { _sender?: unknown })._sender
+  if (s instanceof Api.User) return [s.firstName, s.lastName].filter(Boolean).join(' ') || s.username || undefined
+  return undefined
+}
+
 function toMessage(m: Api.Message): TgMessage {
   const document = m.media instanceof Api.MessageMediaDocument && m.media.document instanceof Api.Document ? m.media.document : null
   const fileName = document?.attributes.find((a): a is Api.DocumentAttributeFilename => a instanceof Api.DocumentAttributeFilename)?.fileName
-  return { id: m.id, caption: m.message ?? '', fileName, size: document ? toNumber(document.size) : undefined, date: m.date }
+  return { id: m.id, caption: m.message ?? '', fileName, size: document ? toNumber(document.size) : undefined, date: m.date, sender: senderName(m) }
 }
 
-/** As operações da nuvem (TgApi) sobre as Mensagens salvas. */
-export function gramApi(client: TelegramClient): TgApi {
+/** As operações da nuvem (TgApi) sobre a conversa escolhida (Mensagens salvas, por padrão). */
+export function gramApi(client: TelegramClient, target: CloudTarget = 'me'): TgApi {
+  const peer = peerOf(target)
   return {
     async search(tag) {
-      const messages = await client.getMessages('me', { search: tag, limit: 1000 })
+      const messages = await client.getMessages(peer, { search: tag, limit: 1000 })
       return messages.filter((m) => m instanceof Api.Message).map(toMessage)
     },
     async upload(name, bytes, caption, onProgress) {
@@ -139,11 +166,11 @@ export function gramApi(client: TelegramClient): TgApi {
       // com "Either one of `buffer` or `filePath` should be specified". Enviando antes, com o limite do
       // buffer no tamanho do arquivo, ela lê da memória. O nome e o tipo vêm do arquivo enviado.
       const uploaded = await client.uploadFile({ file, workers: 1, maxBufferSize: bytes.byteLength + 1, onProgress: (p: number) => onProgress?.(p) })
-      const sent = await client.sendFile('me', { file: uploaded, caption, forceDocument: true })
+      const sent = await client.sendFile(peer, { file: uploaded, caption, forceDocument: true })
       return toMessage(sent)
     },
     async download(messageId, onProgress) {
-      const [message] = await client.getMessages('me', { ids: messageId })
+      const [message] = await client.getMessages(peer, { ids: messageId })
       if (!message) throw new Error('A mensagem do livro não foi encontrada no Telegram.')
       const data = await client.downloadMedia(message, {
         progressCallback: (done: unknown, total: unknown) => onProgress?.(toNumber(total) ? toNumber(done) / toNumber(total) : 0)
@@ -152,7 +179,85 @@ export function gramApi(client: TelegramClient): TgApi {
       return new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
     },
     async remove(ids) {
-      await client.deleteMessages('me', ids, { revoke: true })
+      await client.deleteMessages(peer, ids, { revoke: true })
     }
   }
+}
+
+// ---------- grupo privado da nuvem ----------
+
+function chatOf(c: Api.TypeChat | undefined): CloudChat {
+  if (!(c instanceof Api.Channel)) throw new Error('O Telegram não devolveu o grupo.')
+  if (!c.megagroup) throw new Error('Isto é um canal, não um grupo. Use um grupo privado (todos os membros podem enviar arquivos).')
+  return { id: c.id.toString(), accessHash: (c.accessHash ?? bigInt.zero).toString(), title: c.title }
+}
+
+/** Cria o grupo privado da nuvem (só esta conta dentro; as outras entram pelo link). */
+export async function createGroup(client: TelegramClient, title: string): Promise<CloudChat> {
+  const result = await client.invoke(new Api.channels.CreateChannel({ megagroup: true, title, about: 'Biblioteca do Alexandria: livros e posições de leitura.' }))
+  return chatOf('chats' in result ? result.chats[0] : undefined)
+}
+
+/** Link de convite do grupo, para as outras contas entrarem. */
+export async function inviteLink(client: TelegramClient, chat: CloudChat): Promise<string> {
+  const invite = await client.invoke(new Api.messages.ExportChatInvite({ peer: peerOf(chat) }))
+  if (!(invite instanceof Api.ChatInviteExported)) throw new Error('O Telegram não devolveu o link.')
+  return invite.link
+}
+
+/** O código de um link de convite (t.me/+código, t.me/joinchat/código ou só o código). */
+export function inviteHash(link: string): string | null {
+  const text = link.trim()
+  const match = text.match(/(?:t\.me|telegram\.me|telegram\.dog)\/(?:\+|joinchat\/)([\w-]+)/i) ?? text.match(/^\+?([\w-]{10,})$/)
+  return match?.[1] ?? null
+}
+
+/** Entra no grupo pelo link de convite (ou só o encontra, se a conta já estiver nele). */
+export async function joinGroup(client: TelegramClient, link: string): Promise<CloudChat> {
+  const hash = inviteHash(link)
+  if (!hash) throw new Error('Isto não parece um link de convite do Telegram (t.me/+…).')
+  const check = await client.invoke(new Api.messages.CheckChatInvite({ hash }))
+  if (check instanceof Api.ChatInviteAlready) return chatOf(check.chat)
+  const result = await client.invoke(new Api.messages.ImportChatInvite({ hash }))
+  return chatOf('chats' in result ? result.chats[0] : undefined)
+}
+
+/** Grupos desta conta (para escolher um que já existe). */
+export async function listGroups(client: TelegramClient): Promise<CloudChat[]> {
+  const dialogs = await client.getDialogs({ limit: 300 })
+  return dialogs.map((d) => d.entity).filter((e): e is Api.Channel => e instanceof Api.Channel && !!e.megagroup && !e.left).map(chatOf)
+}
+
+/** Encaminha mensagens das Mensagens salvas para o grupo (a legenda vai junto). */
+export async function forwardFromSaved(client: TelegramClient, chat: CloudChat, ids: number[]) {
+  await client.forwardMessages(peerOf(chat), { messages: ids, fromPeer: 'me' })
+}
+
+// ---------- mensagens patrocinadas ----------
+
+const b64 = (bytes: Buffer) => Buffer.from(bytes).toString('base64')
+
+/** Anúncios oficiais para a conversa (num grupo privado, em geral não vem nenhum). */
+export async function sponsoredMessages(client: TelegramClient, target: CloudTarget): Promise<SponsoredItem[]> {
+  if (target === 'me') return []
+  const result = await client.invoke(new Api.messages.GetSponsoredMessages({ peer: peerOf(target) }))
+  if (!(result instanceof Api.messages.SponsoredMessages)) return []
+  return result.messages.map((m) => ({
+    id: b64(m.randomId),
+    title: m.title,
+    message: m.message,
+    url: m.url,
+    buttonText: m.buttonText,
+    recommended: !!m.recommended,
+    sponsorInfo: m.sponsorInfo,
+    additionalInfo: m.additionalInfo
+  }))
+}
+
+export async function viewSponsored(client: TelegramClient, target: CloudTarget, id: string) {
+  if (target !== 'me') await client.invoke(new Api.messages.ViewSponsoredMessage({ peer: peerOf(target), randomId: Buffer.from(id, 'base64') }))
+}
+
+export async function clickSponsored(client: TelegramClient, target: CloudTarget, id: string) {
+  if (target !== 'me') await client.invoke(new Api.messages.ClickSponsoredMessage({ peer: peerOf(target), randomId: Buffer.from(id, 'base64') }))
 }

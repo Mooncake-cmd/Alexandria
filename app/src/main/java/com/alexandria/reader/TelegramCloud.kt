@@ -19,12 +19,67 @@ import java.io.RandomAccessFile
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
-/** Livro guardado na nuvem (Mensagens salvas do Telegram). */
-data class CloudBook(val key: String, val name: String, val size: Long, val format: String, val messageId: Int, val date: Long) {
+/** Livro guardado na nuvem (Mensagens salvas ou grupo privado do Telegram). */
+data class CloudBook(
+    val key: String,
+    val name: String,
+    val size: Long,
+    val format: String,
+    val messageId: Int,
+    val date: Long,
+    /** Quem enviou (num grupo). */
+    val sender: String = "",
+    /** Mandado pelo próprio Telegram, com #alexandria_livro escrito na legenda. */
+    val manual: Boolean = false
+) {
     fun toJson(): JSONObject = JSONObject().put("key", key).put("name", name).put("size", size).put("format", format).put("messageId", messageId).put("date", date)
+        .apply {
+            if (sender.isNotEmpty()) put("sender", sender)
+            if (manual) put("manual", true)
+        }
 
     companion object {
-        fun from(o: JSONObject) = CloudBook(o.getString("key"), o.getString("name"), o.optLong("size"), o.optString("format"), o.getInt("messageId"), o.optLong("date"))
+        fun from(o: JSONObject) = CloudBook(
+            o.getString("key"), o.getString("name"), o.optLong("size"), o.optString("format"), o.getInt("messageId"), o.optLong("date"),
+            o.optString("sender"), o.optBoolean("manual")
+        )
+    }
+}
+
+/** Grupo privado onde fica a nuvem (o access_hash é preciso para falar com ele). */
+data class CloudChat(val id: String, val accessHash: String, val title: String) {
+    fun toJson(): JSONObject = JSONObject().put("id", id).put("accessHash", accessHash).put("title", title)
+
+    companion object {
+        fun from(o: JSONObject?) = o?.let { CloudChat(it.optString("id"), it.optString("accessHash"), it.optString("title")) }?.takeIf { it.id.isNotEmpty() }
+    }
+}
+
+/** Anúncio oficial do Telegram para o grupo da nuvem (regra 3.3 dos termos da API). */
+data class SponsoredItem(
+    val id: String,
+    val title: String,
+    val message: String,
+    val url: String,
+    val buttonText: String,
+    val recommended: Boolean,
+    val info: String
+) {
+    companion object {
+        fun from(o: JSONObject) = SponsoredItem(
+            o.getString("id"), o.optString("title"), o.optString("message"), o.optString("url"), o.optString("buttonText"),
+            o.optBoolean("recommended"), listOf(o.optString("sponsorInfo"), o.optString("additionalInfo")).filter { it.isNotBlank() }.joinToString("\n\n")
+        )
+
+        /** Endereços do próprio Telegram abrem sem confirmação (como pede a documentação). */
+        fun isTelegramUrl(url: String): Boolean {
+            val host = try {
+                android.net.Uri.parse(url).host ?: return false
+            } catch (e: Exception) {
+                return false
+            }
+            return Regex("(^|\\.)(telegram\\.(org|me|dog)|t\\.me|te\\.?legra\\.ph|graph\\.org|fragment\\.com|telesco\\.pe)$").containsMatchIn(host)
+        }
     }
 }
 
@@ -179,12 +234,21 @@ object TelegramCloud {
     var engineFactory: (Context) -> CloudEngine = { WebViewCloudEngine(it) }
     private var engine: CloudEngine? = null
 
-    data class Settings(val apiId: Int, val apiHash: String, val session: String, val name: String, val error: String?)
+    data class Settings(val apiId: Int, val apiHash: String, val session: String, val name: String, val error: String?, val chat: CloudChat? = null)
 
     fun settings(context: Context): Settings? {
         val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val session = p.getString("session", null) ?: return null
-        return Settings(p.getInt("api_id", 0), p.getString("api_hash", "") ?: "", session, p.getString("name", "") ?: "", p.getString("error", null))
+        val chat = p.getString("chat", null)?.let { CloudChat.from(try { JSONObject(it) } catch (e: org.json.JSONException) { null }) }
+        return Settings(p.getInt("api_id", 0), p.getString("api_hash", "") ?: "", session, p.getString("name", "") ?: "", p.getString("error", null), chat)
+    }
+
+    /** Onde fica a nuvem: o grupo privado ou, com null, as Mensagens salvas. */
+    fun useChat(context: Context, chat: CloudChat?) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().apply {
+            if (chat == null) remove("chat") else putString("chat", chat.toJson().toString())
+        }.remove("error").apply()
+        sponsoredCache = null
     }
 
     fun connected(context: Context) = settings(context) != null
@@ -201,18 +265,24 @@ object TelegramCloud {
         val engine = engine(context)
         val app = context.applicationContext
         val init = JSONObject().put("apiId", s?.apiId ?: 0).put("apiHash", s?.apiHash ?: "").put("session", s?.session ?: "")
+            .put("chat", s?.chat?.toJson() ?: JSONObject.NULL)
         val needsSession = method !in setOf("sendCode", "signIn", "password", "finish")
         if (!needsSession) return engine.call(method, args, onProgress, done)
         engine.call("init", init, null) {
             engine.call(method, args, onProgress) { result ->
-                result.exceptionOrNull()?.let { e -> if (e is CloudException && e.code.matches(Regex("AUTH_KEY_UNREGISTERED|SESSION_REVOKED|USER_DEACTIVATED|AUTH_KEY_INVALID"))) markError(app) }
+                result.exceptionOrNull()?.let { e ->
+                    if (e is CloudException && e.code.matches(Regex("AUTH_KEY_UNREGISTERED|SESSION_REVOKED|USER_DEACTIVATED|AUTH_KEY_INVALID"))) markError(app)
+                    if (e is CloudException && s?.chat != null && e.code.matches(Regex("CHANNEL_PRIVATE|CHANNEL_INVALID|PEER_ID_INVALID"))) {
+                        markError(app, "O grupo da nuvem não está acessível para esta conta (saiu do grupo ou ele foi apagado). Escolha outro lugar em Ajustes.")
+                    }
+                }
                 done(result)
             }
         }
     }
 
-    private fun markError(context: Context) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString("error", "A sessão do Telegram foi encerrada. Entre de novo.").apply()
+    private fun markError(context: Context, message: String = "A sessão do Telegram foi encerrada. Entre de novo.") {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString("error", message).apply()
     }
 
     // ---------- login ----------
@@ -295,4 +365,50 @@ object TelegramCloud {
             .put("pageCount", entry.pageCount).put("updated", entry.updated).put("device", entry.device)
         call(context, "pushPosition", JSONObject().put("key", key).put("entry", o)) {}
     }
+
+    // ---------- grupo privado ----------
+
+    private fun chatResult(r: Result<String>): Result<CloudChat> = r.mapCatching { CloudChat.from(JSONObject(it)) ?: throw IllegalStateException("O Telegram não devolveu o grupo.") }
+
+    /** Cria o grupo privado da nuvem e passa a usá-lo. */
+    fun createGroup(context: Context, done: (Result<CloudChat>) -> Unit) {
+        val app = context.applicationContext
+        call(context, "createGroup") { r -> done(chatResult(r).onSuccess { useChat(app, it) }) }
+    }
+
+    /** Entra no grupo pelo link de convite (ou o encontra, se a conta já está nele) e passa a usá-lo. */
+    fun joinGroup(context: Context, link: String, done: (Result<CloudChat>) -> Unit) {
+        val app = context.applicationContext
+        call(context, "joinGroup", JSONObject().put("link", link)) { r -> done(chatResult(r).onSuccess { useChat(app, it) }) }
+    }
+
+    /** Grupos desta conta, para escolher um que já existe. */
+    fun groups(context: Context, done: (Result<List<CloudChat>>) -> Unit) =
+        call(context, "groups") { r -> done(r.map { json -> JSONArray(json).let { a -> (0 until a.length()).mapNotNull { CloudChat.from(a.getJSONObject(it)) } } }) }
+
+    fun inviteLink(context: Context, done: (Result<String>) -> Unit) =
+        call(context, "inviteLink") { r -> done(r.map { JSONObject("{\"v\":$it}").getString("v") }) }
+
+    /** Copia para o grupo os livros e posições das Mensagens salvas. Devolve quantos livros foram. */
+    fun copyFromSaved(context: Context, done: (Result<Int>) -> Unit) =
+        call(context, "copyFromSaved") { r -> done(r.map { JSONObject(it).optInt("books") }) }
+
+    // ---------- mensagens patrocinadas ----------
+
+    /** A documentação pede para guardar o resultado por 5 minutos. */
+    private var sponsoredCache: Triple<Long, String, List<SponsoredItem>>? = null
+
+    /** Anúncios do grupo da nuvem (nas Mensagens salvas, nunca há). Erros viram lista vazia. */
+    fun sponsored(context: Context, done: (List<SponsoredItem>) -> Unit) {
+        val chat = settings(context)?.chat ?: return done(emptyList())
+        sponsoredCache?.let { (at, id, items) -> if (id == chat.id && System.currentTimeMillis() - at < 5 * 60_000) return done(items) }
+        call(context, "sponsored") { r ->
+            val items = r.mapCatching { json -> JSONArray(json).let { a -> (0 until a.length()).map { SponsoredItem.from(a.getJSONObject(it)) } } }.getOrDefault(emptyList())
+            if (r.isSuccess) sponsoredCache = Triple(System.currentTimeMillis(), chat.id, items)
+            done(items)
+        }
+    }
+
+    fun sponsoredSeen(context: Context, item: SponsoredItem) = call(context, "viewSponsored", JSONObject().put("id", item.id)) {}
+    fun sponsoredClicked(context: Context, item: SponsoredItem) = call(context, "clickSponsored", JSONObject().put("id", item.id)) {}
 }

@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'preact/hooks'
 import { exportBackup, importBackup, requestPersistence, storageInfo } from '../storage/backup'
 import { confirmDialog, shortcutsDialog, toast } from '../ui/dialogs'
 import { connectSync, disconnectSync, SyncError, syncSettings, type SyncSettings } from '../storage/sync'
-import { saveTelegram, setSyncProvider, syncProvider, telegramSettings, type SyncProvider, type TelegramSettings } from '../cloud/cloud'
+import { cloudInviteLink, copySavedToGroup, createCloudGroup, joinCloudGroup, myGroups, saveTelegram, setSyncProvider, syncProvider, telegramSettings, useCloudChat, type SyncProvider, type TelegramSettings } from '../cloud/cloud'
+import type { CloudChat } from '../cloud/gramApi'
 import { setPref } from '../storage/library'
 
 const size = (bytes: number) =>
@@ -214,6 +215,80 @@ function SyncSection() {
 }
 
 /**
+ * Onde fica a nuvem: Mensagens salvas (padrão) ou um grupo privado, onde várias contas da pessoa
+ * usam os mesmos livros e a mesma posição de leitura.
+ */
+function CloudPlace({ settings, busy, run, reload }: { settings: TelegramSettings; busy: boolean; run: (work: () => Promise<void>) => Promise<void>; reload: () => void }) {
+  const [groups, setGroups] = useState<CloudChat[] | null>(null)
+  const [link, setLink] = useState('')
+  const [invite, setInvite] = useState('')
+  const offerCopy = async () => {
+    if (!(await confirmDialog('Trazer os livros para o grupo?', 'Os livros e as posições de leitura que estão nas suas Mensagens salvas são copiados para o grupo (só os que ainda não estão lá). Nada é apagado das Mensagens salvas.', 'Trazer'))) return
+    const { books } = await copySavedToGroup()
+    toast(books ? `${books} livro(s) copiado(s) para o grupo.` : 'Os livros das Mensagens salvas já estavam no grupo.')
+  }
+  const chosen = async (work: () => Promise<CloudChat>) =>
+    run(async () => {
+      const chat = await work()
+      setGroups(null)
+      setLink('')
+      reload()
+      toast(`A nuvem agora fica no grupo "${chat.title}".`)
+      await offerCopy()
+    })
+  const chat = settings.chat
+  return (
+    <div class="cloud-place">
+      <p>Onde ficam os livros: <strong>{chat ? `grupo privado "${chat.title}"` : 'Mensagens salvas'}</strong></p>
+      {chat ? (
+        <>
+          <p class="muted small">Todas as suas contas que estiverem neste grupo veem e enviam livros, e a posição de leitura é a mesma para todas. Para outra conta entrar, abra o link de convite nela (no Telegram) ou cole o link em Ajustes do Alexandria com ela conectada.</p>
+          <div class="button-row">
+            <button type="button" class="secondary" disabled={busy} onClick={() => run(async () => {
+              const url = await cloudInviteLink()
+              setInvite(url)
+              await navigator.clipboard?.writeText(url).then(() => toast('Link de convite copiado.'), () => {})
+            })}>Link de convite</button>
+            <button type="button" class="secondary" disabled={busy} onClick={() => run(offerCopy)}>Trazer livros das Mensagens salvas</button>
+            <button type="button" class="secondary" disabled={busy} onClick={() => run(async () => {
+              if (!(await confirmDialog('Voltar para as Mensagens salvas?', 'Os livros do grupo continuam lá; o Alexandria deste navegador passa a usar só as suas Mensagens salvas.', 'Voltar'))) return
+              await useCloudChat(null)
+              reload()
+            })}>Voltar para as Mensagens salvas</button>
+          </div>
+          {invite && <label class="field"><span>Link de convite (não compartilhe: quem entrar vê todos os livros)</span><input readOnly value={invite} onFocus={(e) => (e.target as HTMLInputElement).select()} /></label>}
+        </>
+      ) : (
+        <>
+          <p class="muted small">Num <strong>grupo privado</strong>, várias contas suas do Telegram (por exemplo, de números diferentes) usam os mesmos livros e a mesma posição de leitura. Crie o grupo numa conta e entre com as outras pelo link de convite.</p>
+          <div class="button-row">
+            <button type="button" class="secondary" disabled={busy} onClick={() => chosen(createCloudGroup)}>Criar grupo privado</button>
+            <button type="button" class="secondary" disabled={busy} onClick={() => run(async () => setGroups(await myGroups()))}>Usar um grupo que já tenho</button>
+          </div>
+          <form class="join-form" onSubmit={(e) => {
+            e.preventDefault()
+            chosen(() => joinCloudGroup(link))
+          }}>
+            <label class="field"><span>Entrar com o link de convite</span><input placeholder="https://t.me/+…" autoComplete="off" spellcheck={false} value={link} onInput={(e) => setLink((e.target as HTMLInputElement).value)} /></label>
+            <button type="submit" class="secondary" disabled={busy || !link.trim()}>Entrar no grupo</button>
+          </form>
+          {groups && (groups.length ? (
+            <ul class="group-list">
+              {groups.map((g) => (
+                <li key={g.id}><button type="button" class="link" disabled={busy} onClick={() => chosen(async () => {
+                  await useCloudChat(g)
+                  return g
+                })}>{g.title}</button></li>
+              ))}
+            </ul>
+          ) : <p class="muted small">Esta conta não está em nenhum grupo.</p>)}
+        </>
+      )}
+    </div>
+  )
+}
+
+/**
  * Nuvem pelo Telegram: livros e posição de leitura nas Mensagens salvas da própria pessoa. Login em
  * etapas (número, código, senha de duas etapas) com o api_id/api_hash dela.
  */
@@ -309,8 +384,9 @@ function TelegramSection() {
       <h3>☁ Nuvem pelo Telegram (livros e posição)</h3>
       {settings?.session ? (
         <div class="sync-box">
-          <p>Conectado ao Telegram como <strong>{settings.name}</strong>. Os livros enviados para a nuvem e as posições de leitura ficam nas suas <strong>Mensagens salvas</strong>, com a marca #alexandria.</p>
+          <p>Conectado ao Telegram como <strong>{settings.name}</strong>. Os livros enviados para a nuvem e as posições de leitura levam a marca #alexandria. Um arquivo de livro que você mandar pelo próprio Telegram também entra na nuvem se a legenda tiver <strong>#alexandria_livro</strong>.</p>
           {settings.error && <p class="sync-error">⚠ {settings.error}</p>}
+          <CloudPlace settings={settings} busy={busy} run={run} reload={load} />
           {notice}
           <button type="button" class="secondary" disabled={busy} onClick={logout}>Sair do Telegram</button>
         </div>

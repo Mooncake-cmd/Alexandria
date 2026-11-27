@@ -31,6 +31,8 @@ class TelegramCloudTest {
         val files = LinkedHashMap<String, Pair<CloudBook, ByteArray>>()
         val positions = LinkedHashMap<String, JSONObject>()
         var session = ""
+        var chat: JSONObject? = null
+        val ads = JSONArray()
         var needsPassword = false
         var nextId = 1
 
@@ -40,6 +42,7 @@ class TelegramCloudTest {
                 when (method) {
                     "init" -> {
                         session = args.optString("session")
+                        chat = args.optJSONObject("chat")
                         "true"
                     }
                     "sendCode" -> {
@@ -95,6 +98,16 @@ class TelegramCloudTest {
                                 positions[args.getString("key")] = args.getJSONObject("entry")
                                 "true"
                             }
+                            "createGroup" -> JSONObject().put("id", "777").put("accessHash", "-42").put("title", "Alexandria — biblioteca").toString()
+                            "joinGroup" -> {
+                                if (!args.getString("link").contains("t.me/+")) throw CloudException("INVITE_HASH_INVALID", "O link de convite não vale mais.")
+                                JSONObject().put("id", "888").put("accessHash", "9").put("title", "Livros da família").toString()
+                            }
+                            "groups" -> JSONArray().put(JSONObject().put("id", "999").put("accessHash", "1").put("title", "Leituras")).toString()
+                            "inviteLink" -> if (chat == null) throw CloudException("", "Sem grupo.") else JSONObject.quote("https://t.me/+abcDEF123")
+                            "copyFromSaved" -> JSONObject().put("books", 2).put("positions", true).toString()
+                            "sponsored" -> ads.toString()
+                            "viewSponsored", "clickSponsored" -> "true"
                             else -> throw CloudException("", "Método desconhecido: $method")
                         }
                     }
@@ -254,5 +267,75 @@ class TelegramCloudTest {
         TelegramCloud.logout(context) { out = true }
         assertTrue(out)
         assertFalse(TelegramCloud.connected(context))
+    }
+
+    @Test
+    fun groupIsRememberedAndSentToTheEngine() {
+        login()
+        assertNull(TelegramCloud.settings(context)!!.chat)
+        var created: CloudChat? = null
+        TelegramCloud.createGroup(context) { created = it.getOrThrow() }
+        assertEquals(CloudChat("777", "-42", "Alexandria — biblioteca"), created)
+        assertEquals(created, TelegramCloud.settings(context)!!.chat)
+
+        // As próximas chamadas levam o grupo no "init".
+        TelegramCloud.books(context) {}
+        assertEquals("777", engine.chat!!.getString("id"))
+        assertEquals("-42", engine.chat!!.getString("accessHash"))
+
+        var link: String? = null
+        TelegramCloud.inviteLink(context) { link = it.getOrThrow() }
+        assertEquals("https://t.me/+abcDEF123", link)
+        var copied: Int? = null
+        TelegramCloud.copyFromSaved(context) { copied = it.getOrThrow() }
+        assertEquals(2, copied)
+
+        // Entrar por link troca o grupo; link ruim não troca nada.
+        var bad: Result<CloudChat>? = null
+        TelegramCloud.joinGroup(context, "oi") { bad = it }
+        assertEquals("O link de convite não vale mais.", bad!!.exceptionOrNull()!!.message)
+        assertEquals("777", TelegramCloud.settings(context)!!.chat!!.id)
+        TelegramCloud.joinGroup(context, "https://t.me/+xyz") {}
+        assertEquals("Livros da família", TelegramCloud.settings(context)!!.chat!!.title)
+
+        var groups: List<CloudChat>? = null
+        TelegramCloud.groups(context) { groups = it.getOrThrow() }
+        assertEquals(listOf("Leituras"), groups!!.map { it.title })
+
+        // De volta às Mensagens salvas: o "init" vai sem grupo.
+        TelegramCloud.useChat(context, null)
+        TelegramCloud.books(context) {}
+        assertNull(engine.chat)
+    }
+
+    @Test
+    fun handTaggedBooksAndSendersComeFromTheEngine() {
+        val book = CloudBook.from(JSONObject().put("key", "k").put("name", "Iracema.epub").put("size", 5).put("format", "epub").put("messageId", 3).put("date", 1).put("sender", "Ana").put("manual", true))
+        assertEquals("Ana", book.sender)
+        assertTrue(book.manual)
+        assertEquals(book, CloudBook.from(book.toJson()))
+    }
+
+    @Test
+    fun sponsoredMessagesOnlyInGroupsAndCachedForFiveMinutes() {
+        login()
+        var ads: List<SponsoredItem>? = null
+        TelegramCloud.sponsored(context) { ads = it }
+        assertEquals(emptyList<SponsoredItem>(), ads)
+        assertFalse(engine.calls.contains("sponsored"))
+
+        TelegramCloud.createGroup(context) {}
+        engine.ads.put(JSONObject().put("id", "cmFuZG9t").put("title", "Canal de livros").put("message", "Leia mais").put("url", "https://t.me/livros")
+            .put("buttonText", "Ver canal").put("recommended", false).put("sponsorInfo", "Anunciante X"))
+        TelegramCloud.sponsored(context) { ads = it }
+        assertEquals(listOf("Canal de livros"), ads!!.map { it.title })
+        assertEquals("Anunciante X", ads!![0].info)
+        TelegramCloud.sponsored(context) {}
+        assertEquals(1, engine.calls.count { it == "sponsored" })
+
+        assertTrue(SponsoredItem.isTelegramUrl("https://t.me/livros"))
+        assertTrue(SponsoredItem.isTelegramUrl("https://fragment.com/x"))
+        assertFalse(SponsoredItem.isTelegramUrl("https://exemplo.com/t.me"))
+        assertFalse(SponsoredItem.isTelegramUrl("https://faket.me"))
     }
 }

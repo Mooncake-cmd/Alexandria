@@ -1,8 +1,11 @@
 /**
- * Nuvem do Alexandria nas Mensagens salvas do Telegram (a mesma lógica no site e no app).
+ * Nuvem do Alexandria no Telegram (a mesma lógica no site e no app): nas Mensagens salvas ou num
+ * grupo privado da pessoa (escolhido em Ajustes; a lógica é a mesma, só muda a conversa).
  *
  * - Cada livro é uma mensagem com o arquivo e uma legenda marcada com #alexandria_livro e uma
  *   linha "alexandria:{...}" com o código do livro (nome + tamanho), o nome e o formato.
+ * - Um arquivo de livro enviado pelo próprio Telegram, com #alexandria_livro escrito na legenda,
+ *   também conta: o código sai do nome e do tamanho do arquivo, como no app.
  * - As posições de leitura ficam num arquivinho JSON (o mesmo formato do gist do GitHub), numa
  *   mensagem marcada com #alexandria_posicoes; ao gravar, vai uma nova e as antigas são apagadas.
  *
@@ -10,6 +13,7 @@
  * os testes usam uma falsa. Só mexe nas mensagens do Alexandria (com as marcas acima).
  */
 import { bookKey, mergeSync, parseSync, serializeSync, type SyncEntry } from '../storage/sync'
+import { detectFormat } from '../core/formats'
 
 export const BOOK_TAG = '#alexandria_livro'
 export const POSITIONS_TAG = '#alexandria_posicoes'
@@ -24,10 +28,12 @@ export interface TgMessage {
   size?: number
   /** Segundos desde 1970 (como no Telegram). */
   date: number
+  /** Quem enviou (num grupo). */
+  sender?: string
 }
 
 export interface TgApi {
-  /** Mensagens das Mensagens salvas que contêm o texto (a marca do Alexandria). */
+  /** Mensagens da conversa da nuvem que contêm o texto (a marca do Alexandria). */
   search(tag: string): Promise<TgMessage[]>
   upload(name: string, bytes: Uint8Array, caption: string, onProgress?: (fraction: number) => void): Promise<TgMessage>
   download(messageId: number, onProgress?: (fraction: number) => void): Promise<Uint8Array>
@@ -42,6 +48,10 @@ export interface CloudBook {
   messageId: number
   /** Milissegundos desde 1970. */
   date: number
+  /** Quem enviou (num grupo). */
+  sender?: string
+  /** Enviado pelo Telegram, com a marca escrita à mão na legenda. */
+  manual?: boolean
 }
 
 export function bookCaption(key: string, name: string, size: number, format: string): string {
@@ -55,17 +65,31 @@ export function parseBookCaption(message: TgMessage): CloudBook | null {
   try {
     const meta = JSON.parse(line.slice('alexandria:'.length)) as { k?: string; n?: string; s?: number; f?: string }
     if (!meta.k || !meta.n) return null
-    return { key: meta.k, name: meta.n, size: meta.s ?? message.size ?? 0, format: meta.f ?? '', messageId: message.id, date: message.date * 1000 }
+    return { key: meta.k, name: meta.n, size: meta.s ?? message.size ?? 0, format: meta.f ?? '', messageId: message.id, date: message.date * 1000, sender: message.sender }
   } catch {
     return null
   }
+}
+
+/**
+ * Livro de uma mensagem: a legenda do Alexandria ou, se a pessoa só escreveu #alexandria_livro na
+ * legenda de um arquivo de livro, o nome e o tamanho do arquivo (o mesmo código que o app calcula).
+ */
+export async function parseBookMessage(message: TgMessage): Promise<CloudBook | null> {
+  const book = parseBookCaption(message)
+  if (book || !message.caption.includes(BOOK_TAG)) return book
+  if (message.caption.split('\n').some((l) => l.startsWith('alexandria:'))) return null
+  const name = message.fileName?.trim()
+  const format = name ? detectFormat(name) : null
+  if (!name || !format || !message.size) return null
+  return { key: await bookKey(name, message.size), name, size: message.size, format, messageId: message.id, date: message.date * 1000, sender: message.sender, manual: true }
 }
 
 /** Livros da nuvem (o mais recente de cada um, se houver repetidos). */
 export async function listCloudBooks(api: TgApi): Promise<CloudBook[]> {
   const books = new Map<string, CloudBook>()
   for (const message of await api.search(BOOK_TAG)) {
-    const book = parseBookCaption(message)
+    const book = await parseBookMessage(message)
     if (!book) continue
     const old = books.get(book.key)
     if (!old || old.date < book.date) books.set(book.key, book)
@@ -89,7 +113,8 @@ export async function downloadBook(api: TgApi, book: CloudBook, onProgress?: (fr
 
 /** Apaga o livro da nuvem (só as mensagens dele). */
 export async function removeCloudBook(api: TgApi, key: string) {
-  const ids = (await api.search(BOOK_TAG)).filter((m) => parseBookCaption(m)?.key === key).map((m) => m.id)
+  const ids: number[] = []
+  for (const m of await api.search(BOOK_TAG)) if ((await parseBookMessage(m))?.key === key) ids.push(m.id)
   if (ids.length) await api.remove(ids)
 }
 
@@ -119,4 +144,54 @@ export async function pushPositionTo(api: TgApi, key: string, entry: SyncEntry):
 
 export async function pullPositionFrom(api: TgApi, key: string): Promise<SyncEntry | null> {
   return (await readPositions(api))[key] ?? null
+}
+
+/** Junta várias posições de uma vez (ao trazer a nuvem das Mensagens salvas para um grupo). */
+export async function mergePositionsInto(api: TgApi, incoming: Record<string, SyncEntry>): Promise<boolean> {
+  const old = await positionMessages(api)
+  const books = old[0] ? parseSync(new TextDecoder().decode(await api.download(old[0].id))) : {}
+  let changed = false
+  for (const [key, entry] of Object.entries(incoming)) changed = mergeSync(books, key, entry) || changed
+  if (!changed) return false
+  const caption = `${POSITIONS_TAG}\nPosições de leitura do Alexandria (não apague).`
+  await api.upload(POSITIONS_FILE, new TextEncoder().encode(serializeSync(books)), caption)
+  if (old.length) await api.remove(old.map((m) => m.id))
+  return true
+}
+
+/**
+ * Copia os livros de uma conversa da nuvem (as Mensagens salvas) para outra (o grupo): encaminha só
+ * os que ainda não estão lá, e junta as posições. As mensagens originais ficam onde estavam.
+ */
+export async function copyCloud(from: TgApi, to: TgApi, forward: (ids: number[]) => Promise<void>): Promise<{ books: number; positions: boolean }> {
+  const there = new Set((await listCloudBooks(to)).map((b) => b.key))
+  const missing = (await listCloudBooks(from)).filter((b) => !there.has(b.key))
+  // Em lotes de 50, um por vez (o Telegram não gosta de rajadas).
+  for (let i = 0; i < missing.length; i += 50) await forward(missing.slice(i, i + 50).map((b) => b.messageId))
+  const positions = await mergePositionsInto(to, await readPositions(from))
+  return { books: missing.length, positions }
+}
+
+// ---------- mensagens patrocinadas (regra 3.3 dos termos da API do Telegram) ----------
+
+/** Anúncio oficial do Telegram para a conversa (mostrado no fim da lista "Na nuvem"). */
+export interface SponsoredItem {
+  /** random_id em base64 (para registrar a visualização e o clique). */
+  id: string
+  title: string
+  message: string
+  url: string
+  buttonText: string
+  recommended: boolean
+  sponsorInfo?: string
+  additionalInfo?: string
+}
+
+/** Endereços do próprio Telegram abrem sem pedir confirmação (como manda a documentação). */
+export function isTelegramUrl(url: string): boolean {
+  try {
+    return /(^|\.)(telegram\.(org|me|dog)|t\.me|te\.?legra\.ph|graph\.org|fragment\.com|telesco\.pe)$/.test(new URL(url).hostname)
+  } catch {
+    return false
+  }
 }

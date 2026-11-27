@@ -419,3 +419,16 @@ kbd { font-family: inherit; font-size: 12px; background: var(--paper, #f5f2eb); 
 .cloud-list { list-style: none; padding: 0; margin: 0 0 16px; display: grid; gap: 8px; }
 .cloud-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; }
 .cloud-list .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Onde fica a nuvem (Mensagens salvas ou grupo) */
+.cloud-place { border-top: 1px solid var(--line); margin: 12px 0; padding-top: 10px; }
+.button-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 10px; }
+.join-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
+.join-form .field { flex: 1 1 260px; margin-bottom: 0; }
+.group-list { list-style: none; padding: 0; margin: 8px 0; display: grid; gap: 6px; }
+/* Anúncio oficial do Telegram no fim da nuvem de um grupo */
+.sponsored { background: var(--card); border: 1px dashed var(--line); border-radius: 10px; padding: 10px 14px; margin: 8px 0 16px; }
+.sponsored p { margin: 0 0 6px; }
+.sponsored-label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.sponsored-title { font-weight: 700; }
+.sponsored-text { white-space: pre-line; font-size: 14px; }

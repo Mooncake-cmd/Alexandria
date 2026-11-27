@@ -474,6 +474,7 @@ class MainActivity : Activity() {
 
     private fun refreshCloud() {
         if (cloudLoading || !TelegramCloud.connected(this)) return
+        if (TelegramCloud.settings(this)?.chat == null) cloudAds = emptyList()
         cloudLoading = true
         TelegramCloud.books(this) { result ->
             cloudLoading = false
@@ -483,7 +484,73 @@ class MainActivity : Activity() {
                 cloudError = null
             }.onFailure { cloudError = it.message ?: "Não foi possível falar com o Telegram agora." }
             if (section == SECTION_LIBRARY) showLibrary()
+            // Abrir a nuvem de um grupo equivale a abrir a conversa: pede os anúncios oficiais (regra 3.3).
+            if (result.isSuccess) TelegramCloud.sponsored(this) { ads ->
+                if (destroyed || ads == cloudAds) return@sponsored
+                cloudAds = ads
+                if (section == SECTION_LIBRARY) showLibrary()
+            }
         }
+    }
+
+    private var cloudAds: List<SponsoredItem> = emptyList()
+    private val seenAds = mutableSetOf<String>()
+
+    /** Lugar da nuvem, para os textos ("nas suas Mensagens salvas" ou "no grupo …"). */
+    private fun cloudPlace(): String = TelegramCloud.settings(this)?.chat?.let { "no grupo \"${it.title}\"" } ?: "nas suas Mensagens salvas"
+
+    /**
+     * Anúncio oficial do Telegram, depois de todos os livros da nuvem de um grupo
+     * (core.telegram.org/api/sponsored-messages): visualização registrada quando o texto inteiro
+     * aparece na tela, clique registrado, e confirmação antes de abrir endereços fora do Telegram.
+     */
+    private fun addSponsoredCard(ad: SponsoredItem) {
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            background = rounded(Color.WHITE, 12)
+            addView(label(if (ad.recommended) "RECOMENDADO" else "PATROCINADO", 10f, muted, true))
+            addView(label(ad.title, 14f, ink, true).apply { setPadding(0, dp(4), 0, dp(2)) })
+            addView(label(ad.message, 13f, ink))
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                addView(label(ad.buttonText.ifBlank { "Abrir" }, 14f, gold, true).apply {
+                    minHeight = dp(44)
+                    gravity = Gravity.CENTER_VERTICAL
+                    setOnClickListener { openSponsored(ad) }
+                })
+                if (ad.info.isNotBlank()) addView(label("   Sobre o anunciante", 12f, muted).apply {
+                    minHeight = dp(44)
+                    gravity = Gravity.CENTER_VERTICAL
+                    setOnClickListener {
+                        AlertDialog.Builder(this@MainActivity).setTitle("Sobre o anunciante").setMessage(ad.info).setPositiveButton("Fechar", null).show()
+                    }
+                })
+            })
+        }
+        content.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
+        val check = {
+            val rect = android.graphics.Rect()
+            if (ad.id !in seenAds && card.isShown && card.getGlobalVisibleRect(rect) && rect.height() >= card.height && card.height > 0) {
+                seenAds += ad.id
+                TelegramCloud.sponsoredSeen(this, ad)
+            }
+        }
+        card.post { check() }
+        scroller?.viewTreeObserver?.addOnScrollChangedListener { check() }
+    }
+
+    private fun openSponsored(ad: SponsoredItem) {
+        TelegramCloud.sponsoredClicked(this, ad)
+        val open = {
+            try {
+                startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(ad.url)))
+            } catch (e: Exception) {
+                Toast.makeText(this, "Nenhum app abre este endereço.", Toast.LENGTH_SHORT).show()
+            }
+        }
+        if (SponsoredItem.isTelegramUrl(ad.url)) open()
+        else AlertDialog.Builder(this).setTitle("Abrir o endereço?").setMessage(ad.url).setNegativeButton("Cancelar", null).setPositiveButton("Abrir") { _, _ -> open() }.show()
     }
 
     /** "☁ Na nuvem": livros das Mensagens salvas que ainda não estão neste aparelho. */
@@ -496,7 +563,7 @@ class MainActivity : Activity() {
         })
         val books = cloudBooks
         if (books == null && cloudError == null) {
-            content.addView(label("Procurando seus livros nas Mensagens salvas do Telegram…", 12f, muted))
+            content.addView(label("Procurando seus livros ${cloudPlace()} do Telegram…", 12f, muted))
             refreshCloud()
             return
         }
@@ -513,9 +580,10 @@ class MainActivity : Activity() {
         val missing = books!!.filter { it.key !in localCloudKeys }
         if (missing.isEmpty()) {
             content.addView(label(if (books.isEmpty()) "Nenhum livro na nuvem ainda. Toque e segure um livro e escolha \"Enviar para a nuvem\"." else "Os ${books.size} livro(s) da nuvem já estão neste aparelho.", 12f, muted))
+            cloudAds.forEach { addSponsoredCard(it) }
             return
         }
-        content.addView(label("Livros nas suas Mensagens salvas que ainda não estão neste aparelho. Toque para baixar e abrir.", 12f, muted).apply { setPadding(0, 0, 0, dp(8)) })
+        content.addView(label("Livros ${cloudPlace()} que ainda não estão neste aparelho. Toque para baixar e abrir.", 12f, muted).apply { setPadding(0, 0, 0, dp(8)) })
         for (book in missing) {
             content.addView(LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -531,9 +599,13 @@ class MainActivity : Activity() {
                     maxLines = 2
                     ellipsize = TextUtils.TruncateAt.END
                 }, LinearLayout.LayoutParams(0, -2, 1f))
-                addView(label("${book.format.uppercase()} · ${"%.1f".format(book.size / 1e6).replace('.', ',')} MB", 11f, muted).apply { setPadding(dp(8), 0, 0, 0) })
+                addView(label("${book.format.uppercase()} · ${"%.1f".format(book.size / 1e6).replace('.', ',')} MB" + if (book.sender.isNotBlank()) "\n${book.sender}" else "", 11f, muted).apply {
+                    setPadding(dp(8), 0, 0, 0)
+                    gravity = Gravity.END
+                })
             }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
         }
+        cloudAds.forEach { addSponsoredCard(it) }
     }
 
     /** Janela de progresso de uma transferência. */
@@ -572,7 +644,7 @@ class MainActivity : Activity() {
                     dialog.dismiss()
                     if (destroyed) return@upload
                     result.onSuccess { existed ->
-                        Toast.makeText(this, if (existed) "\"${displayTitle(entry.name)}\" já estava na nuvem." else "\"${displayTitle(entry.name)}\" foi para a nuvem (Mensagens salvas do Telegram).", Toast.LENGTH_LONG).show()
+                        Toast.makeText(this, if (existed) "\"${displayTitle(entry.name)}\" já estava na nuvem." else "\"${displayTitle(entry.name)}\" foi para a nuvem (${cloudPlace().removePrefix("nas suas ").removePrefix("no ")}).", Toast.LENGTH_LONG).show()
                         cloudBooks = null
                         if (section == SECTION_LIBRARY) showLibrary()
                     }.onFailure { Toast.makeText(this, it.message ?: "Não foi possível enviar para a nuvem.", Toast.LENGTH_LONG).show() }
@@ -620,7 +692,7 @@ class MainActivity : Activity() {
                 if (which == 0) downloadFromCloud(book)
                 else AlertDialog.Builder(this)
                     .setTitle("Apagar da nuvem?")
-                    .setMessage("\"${displayTitle(book.name)}\" sai das suas Mensagens salvas do Telegram. Os aparelhos que já baixaram continuam com o livro.")
+                    .setMessage("\"${displayTitle(book.name)}\" sai da nuvem (${cloudPlace().removePrefix("nas suas ").removePrefix("no ")}). Os aparelhos que já baixaram continuam com o livro.")
                     .setNegativeButton("Cancelar", null)
                     .setPositiveButton("Apagar") { _, _ ->
                         TelegramCloud.remove(this, book.key) {
@@ -646,7 +718,7 @@ class MainActivity : Activity() {
         if (TelegramCloud.connected(this) && !entry.archived) {
             val inCloud = cloudBooks?.any { it.key == keyOf(entry) } == true
             options += (if (inCloud) "☁ Já está na nuvem (Telegram)" else "☁ Enviar para a nuvem (Telegram)") to {
-                if (inCloud) Toast.makeText(this, "Este livro já está nas suas Mensagens salvas.", Toast.LENGTH_SHORT).show() else uploadToCloud(entry)
+                if (inCloud) Toast.makeText(this, "Este livro já está ${cloudPlace()}.", Toast.LENGTH_SHORT).show() else uploadToCloud(entry)
             }
         }
         if (entry.finished && !entry.archived) options += "Liberar espaço (manter na Estante)…" to { confirmFreeSpace(entry) }
@@ -1282,11 +1354,25 @@ class MainActivity : Activity() {
                     setOnClickListener { askTelegramApi() }
                 }, LinearLayout.LayoutParams(-1, dp(48)))
             } else {
-                addView(label("Conectado${if (tg.name.isNotBlank()) " como ${tg.name}" else ""}. Os livros enviados ficam nas suas Mensagens salvas, com a etiqueta #alexandria_livro.", 13f, ink))
+                val where = tg.chat?.let { "no grupo privado \"${it.title}\"" } ?: "nas suas Mensagens salvas"
+                addView(label("Conectado${if (tg.name.isNotBlank()) " como ${tg.name}" else ""}. Os livros enviados ficam $where, com a etiqueta #alexandria_livro.", 13f, ink))
                 if (tg.error != null) addView(label("⚠ ${tg.error}", 12f, Color.rgb(163, 57, 47)).apply { setPadding(0, dp(6), 0, 0) })
-                addView(label("Para enviar um livro, toque e segure nele na biblioteca e escolha \"Enviar para a nuvem\". Os livros da nuvem que não estão neste aparelho aparecem na biblioteca, em \"Na nuvem\". " + TELEGRAM_NOTICE, 12f, muted).apply {
+                addView(label("Para enviar um livro, toque e segure nele na biblioteca e escolha \"Enviar para a nuvem\". Um arquivo de livro mandado pelo próprio Telegram também entra se a legenda tiver #alexandria_livro. Os livros da nuvem que não estão neste aparelho aparecem na biblioteca, em \"Na nuvem\". " + TELEGRAM_NOTICE, 12f, muted).apply {
                     setPadding(0, dp(6), 0, dp(10))
                 })
+                addView(label("Onde ficam os livros", 13f, ink, true))
+                addView(label(
+                    if (tg.chat != null) "Grupo privado \"${tg.chat.title}\": todas as suas contas que estiverem nele veem e enviam livros, e a posição de leitura é a mesma para todas."
+                    else "Mensagens salvas. Num grupo privado, várias contas suas do Telegram (por exemplo, de números diferentes) usam os mesmos livros e a mesma posição de leitura.",
+                    12f, muted
+                ).apply { setPadding(0, dp(2), 0, dp(6)) })
+                addView(Button(this@MainActivity).apply {
+                    text = if (tg.chat != null) "Grupo da nuvem…" else "Usar um grupo privado…"
+                    setAllCaps(false)
+                    setTextColor(ink)
+                    background = rounded(Color.rgb(236, 233, 226), 10)
+                    setOnClickListener { cloudPlaceOptions(tg.chat) }
+                }, LinearLayout.LayoutParams(-1, dp(48)).apply { bottomMargin = dp(10) })
                 if (PositionSync.settings(this@MainActivity) != null) {
                     addView(label("A posição de leitura vai por:", 13f, ink, true))
                     val group = android.widget.RadioGroup(this@MainActivity).apply { orientation = android.widget.RadioGroup.VERTICAL }
@@ -1403,6 +1489,131 @@ class MainActivity : Activity() {
                     setOnClickListener { showLicense(title, file) }
                 })
             }
+        }
+    }
+
+    // ---------- grupo privado da nuvem ----------
+
+    private fun cloudPlaceOptions(chat: CloudChat?) {
+        val options = if (chat == null) {
+            listOf<Pair<String, () -> Unit>>(
+                "Criar grupo privado" to { cloudGroupChosen("Criando o grupo…") { done -> TelegramCloud.createGroup(this, done) } },
+                "Entrar com link de convite" to { askInviteLink() },
+                "Usar um grupo que já tenho" to { pickExistingGroup() }
+            )
+        } else {
+            listOf<Pair<String, () -> Unit>>(
+                "Copiar link de convite (para as outras contas)" to { shareInviteLink() },
+                "Trazer livros das Mensagens salvas" to { copySavedBooks() },
+                "Voltar para as Mensagens salvas" to {
+                    AlertDialog.Builder(this)
+                        .setTitle("Voltar para as Mensagens salvas?")
+                        .setMessage("Os livros do grupo continuam lá; o Alexandria deste aparelho passa a usar só as suas Mensagens salvas.")
+                        .setNegativeButton("Cancelar", null)
+                        .setPositiveButton("Voltar") { _, _ ->
+                            TelegramCloud.useChat(this, null)
+                            cloudBooks = null
+                            showSettings()
+                        }
+                        .show()
+                }
+            )
+        }
+        AlertDialog.Builder(this)
+            .setTitle(chat?.title ?: "Usar um grupo privado")
+            .setItems(options.map { it.first }.toTypedArray()) { _, which -> options[which].second() }
+            .setNegativeButton("Fechar", null)
+            .show()
+    }
+
+    /** Depois de escolher o grupo: avisa e oferece trazer os livros das Mensagens salvas. */
+    private fun cloudGroupChosen(waiting: String, start: ((Result<CloudChat>) -> Unit) -> Unit) {
+        Toast.makeText(this, waiting, Toast.LENGTH_SHORT).show()
+        start { result ->
+            if (destroyed) return@start
+            result.onSuccess { chat ->
+                cloudBooks = null
+                if (section == SECTION_SETTINGS) showSettings()
+                AlertDialog.Builder(this)
+                    .setTitle("Nuvem no grupo \"${chat.title}\"")
+                    .setMessage("Quer trazer para o grupo os livros e posições que estão nas suas Mensagens salvas? Só vão os que ainda não estão lá, e nada é apagado das Mensagens salvas.")
+                    .setNegativeButton("Agora não", null)
+                    .setPositiveButton("Trazer") { _, _ -> copySavedBooks() }
+                    .show()
+            }.onFailure { Toast.makeText(this, it.message ?: "Não foi possível usar o grupo.", Toast.LENGTH_LONG).show() }
+        }
+    }
+
+    private fun askInviteLink() {
+        val input = EditText(this).apply {
+            hint = "https://t.me/+…"
+            maxLines = 1
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
+        }
+        (getSystemService(CLIPBOARD_SERVICE) as? android.content.ClipboardManager)?.primaryClip?.getItemAt(0)?.text?.toString()
+            ?.takeIf { it.contains("t.me/") }?.let { input.setText(it.trim()) }
+        AlertDialog.Builder(this)
+            .setTitle("Entrar com link de convite")
+            .setMessage("Cole o link de convite do grupo da nuvem (gerado no aparelho da conta que criou o grupo).")
+            .setView(LinearLayout(this).apply {
+                setPadding(dp(22), 0, dp(22), 0)
+                addView(input, LinearLayout.LayoutParams(-1, -2))
+            })
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Entrar") { _, _ ->
+                val link = input.text.toString().trim()
+                if (link.isNotEmpty()) cloudGroupChosen("Entrando no grupo…") { done -> TelegramCloud.joinGroup(this, link, done) }
+            }
+            .show()
+    }
+
+    private fun pickExistingGroup() {
+        Toast.makeText(this, "Procurando seus grupos…", Toast.LENGTH_SHORT).show()
+        TelegramCloud.groups(this) { result ->
+            if (destroyed) return@groups
+            result.onSuccess { groups ->
+                if (groups.isEmpty()) {
+                    Toast.makeText(this, "Esta conta não está em nenhum grupo.", Toast.LENGTH_LONG).show()
+                    return@onSuccess
+                }
+                AlertDialog.Builder(this)
+                    .setTitle("Escolha o grupo da nuvem")
+                    .setItems(groups.map { it.title }.toTypedArray()) { _, which ->
+                        val chat = groups[which]
+                        cloudGroupChosen("Usando \"${chat.title}\"…") { done ->
+                            TelegramCloud.useChat(this, chat)
+                            done(Result.success(chat))
+                        }
+                    }
+                    .setNegativeButton("Cancelar", null)
+                    .show()
+            }.onFailure { Toast.makeText(this, it.message ?: "Não foi possível listar os grupos.", Toast.LENGTH_LONG).show() }
+        }
+    }
+
+    private fun shareInviteLink() {
+        TelegramCloud.inviteLink(this) { result ->
+            if (destroyed) return@inviteLink
+            result.onSuccess { link ->
+                (getSystemService(CLIPBOARD_SERVICE) as? android.content.ClipboardManager)
+                    ?.setPrimaryClip(android.content.ClipData.newPlainText("Convite do grupo", link))
+                AlertDialog.Builder(this)
+                    .setTitle("Link de convite")
+                    .setMessage("$link\n\nCopiado. Abra o link na outra conta (no Telegram) ou cole em Ajustes do Alexandria com ela conectada. Não compartilhe: quem entrar vê todos os livros.")
+                    .setPositiveButton("OK", null)
+                    .show()
+            }.onFailure { Toast.makeText(this, it.message ?: "Não foi possível gerar o link.", Toast.LENGTH_LONG).show() }
+        }
+    }
+
+    private fun copySavedBooks() {
+        Toast.makeText(this, "Trazendo os livros das Mensagens salvas…", Toast.LENGTH_SHORT).show()
+        TelegramCloud.copyFromSaved(this) { result ->
+            if (destroyed) return@copyFromSaved
+            result.onSuccess { n ->
+                cloudBooks = null
+                Toast.makeText(this, if (n > 0) "$n livro(s) copiado(s) para o grupo." else "Os livros das Mensagens salvas já estavam no grupo.", Toast.LENGTH_LONG).show()
+            }.onFailure { Toast.makeText(this, it.message ?: "Não foi possível copiar os livros.", Toast.LENGTH_LONG).show() }
         }
     }
 
