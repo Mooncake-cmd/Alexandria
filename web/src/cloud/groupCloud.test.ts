@@ -3,12 +3,16 @@ import { bookKey, type SyncEntry } from '../storage/sync'
 import { BOOK_TAG, copyCloud, isTelegramUrl, listCloudBooks, parseBookMessage, pullPositionFrom, pushPositionTo, removeCloudBook, uploadBook, type TgApi, type TgMessage } from './telegramCloud'
 import { inviteHash } from './gramApi'
 
-/** Uma conversa de mentira (Mensagens salvas ou o grupo). */
-function fakeChat(sender?: string) {
+/** Uma conversa de mentira (Mensagens salvas ou, com [group], o grupo). */
+function fakeChat(sender?: string, group = false) {
   const messages: (TgMessage & { bytes: Uint8Array })[] = []
   let id = 0
   let clock = 1_700_000_000
   const api: TgApi = {
+    anyBook: group,
+    async files() {
+      return messages.filter((m) => m.fileName).map(({ bytes: _b, ...m }) => m)
+    },
     async search(tag) {
       return messages.filter((m) => m.caption.includes(tag)).map(({ bytes: _b, ...m }) => m)
     },
@@ -66,9 +70,31 @@ describe('arquivos com #alexandria_livro escrito à mão', () => {
 })
 
 describe('nuvem num grupo privado', () => {
+  it('no grupo, qualquer arquivo de livro conta, mesmo sem a marca (encaminhado ou de conta sem o Alexandria)', async () => {
+    const group = fakeChat('Bia', true)
+    group.manual('Iracema.epub', '', 77)
+    group.manual('Os Sertões.pdf', 'olha esse', 88)
+    group.manual('foto.jpg', '', 5)
+    await uploadBook(group.api, 'Moby Dick.epub', 'epub', new Uint8Array(9))
+    await pushPositionTo(group.api, 'k', entry(1))
+    const books = await listCloudBooks(group.api)
+    expect(books.map((b) => b.name)).toEqual(['Iracema.epub', 'Moby Dick.epub', 'Os Sertões.pdf'])
+    expect(books.find((b) => b.name === 'Iracema.epub')).toMatchObject({ manual: true, sender: 'Bia', key: await bookKey('Iracema.epub', 77) })
+    // O mesmo livro mandado pelo app não duplica; apagar tira o arquivo sem marca.
+    expect((await uploadBook(group.api, 'Iracema.epub', 'epub', new Uint8Array(77))).existed).toBe(true)
+    await removeCloudBook(group.api, await bookKey('Iracema.epub', 77))
+    expect((await listCloudBooks(group.api)).map((b) => b.name)).toEqual(['Moby Dick.epub', 'Os Sertões.pdf'])
+  })
+
+  it('nas Mensagens salvas a marca continua obrigatória', async () => {
+    const saved = fakeChat()
+    saved.manual('Iracema.epub', '', 77)
+    expect(await listCloudBooks(saved.api)).toEqual([])
+  })
+
   it('copia das Mensagens salvas só o que falta e junta as posições', async () => {
     const saved = fakeChat()
-    const group = fakeChat()
+    const group = fakeChat(undefined, true)
     await uploadBook(saved.api, 'A.epub', 'epub', new Uint8Array([1]))
     await uploadBook(saved.api, 'B.pdf', 'pdf', new Uint8Array([1, 2]))
     await uploadBook(group.api, 'A.epub', 'epub', new Uint8Array([1]))

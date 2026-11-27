@@ -1,6 +1,6 @@
 # Alexandria — projeto Android
 
-**Versão:** 0.22.0  
+**Versão:** 0.22.1  
 **Pacote:** `com.alexandria.reader`  
 **Plataforma:** Android 6.0 ou superior (API 23+)  
 **Idioma da interface:** Português (Brasil)
@@ -107,7 +107,9 @@ Em todos os formatos:
     grupo pelo app, entrar com o link de convite (t.me/+…) ou escolher um grupo que já existe; "Trazer livros das
     Mensagens salvas" encaminha para o grupo só o que falta e junta as posições, sem apagar nada. Grupo, e não canal,
     porque num grupo todo membro pode enviar arquivos. A lista "Na nuvem" mostra quem enviou cada livro.
-  - **Marca escrita à mão**: um arquivo de livro (PDF, EPUB, MOBI/AZW3, DJVU, CBZ, CBR, DOCX, TXT) mandado pelo próprio
+    No grupo (0.22.1), **qualquer arquivo de livro** conta, mesmo sem a marca: entram os livros mandados por contas que
+    não usam o Alexandria e os encaminhados de outras conversas (encaminhar não deixa pôr legenda no arquivo).
+  - **Marca escrita à mão** (nas Mensagens salvas): um arquivo de livro (PDF, EPUB, MOBI/AZW3, DJVU, CBZ, CBR, DOCX, TXT) mandado pelo próprio
     Telegram, com `#alexandria_livro` na legenda, também entra na nuvem; o código sai do nome e do tamanho do arquivo.
   - **Mensagens patrocinadas** (item 3.3 das regras: quem acessa conversas de canais deve mostrar os anúncios oficiais):
     na nuvem de um grupo, o app pede os anúncios ao abrir a lista (guardados por 5 minutos) e, se vier algum, mostra

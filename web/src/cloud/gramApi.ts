@@ -156,8 +156,14 @@ function toMessage(m: Api.Message): TgMessage {
 export function gramApi(client: TelegramClient, target: CloudTarget = 'me'): TgApi {
   const peer = peerOf(target)
   return {
+    // Num grupo, qualquer arquivo de livro conta (mesmo sem a marca).
+    anyBook: target !== 'me',
     async search(tag) {
       const messages = await client.getMessages(peer, { search: tag, limit: 1000 })
+      return messages.filter((m) => m instanceof Api.Message).map(toMessage)
+    },
+    async files() {
+      const messages = await client.getMessages(peer, { filter: new Api.InputMessagesFilterDocument(), limit: 3000 })
       return messages.filter((m) => m instanceof Api.Message).map(toMessage)
     },
     async upload(name, bytes, caption, onProgress) {

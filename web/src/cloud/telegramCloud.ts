@@ -6,6 +6,8 @@
  *   linha "alexandria:{...}" com o código do livro (nome + tamanho), o nome e o formato.
  * - Um arquivo de livro enviado pelo próprio Telegram, com #alexandria_livro escrito na legenda,
  *   também conta: o código sai do nome e do tamanho do arquivo, como no app.
+ * - Num grupo (só de livros), qualquer arquivo de livro conta, mesmo sem a marca: assim entram os
+ *   livros mandados por contas sem o Alexandria e os encaminhados (que não levam legenda).
  * - As posições de leitura ficam num arquivinho JSON (o mesmo formato do gist do GitHub), numa
  *   mensagem marcada com #alexandria_posicoes; ao gravar, vai uma nova e as antigas são apagadas.
  *
@@ -35,6 +37,12 @@ export interface TgMessage {
 export interface TgApi {
   /** Mensagens da conversa da nuvem que contêm o texto (a marca do Alexandria). */
   search(tag: string): Promise<TgMessage[]>
+  /**
+   * Num grupo: todo arquivo de livro conta, com ou sem a marca. [files] lista as mensagens com
+   * arquivo da conversa.
+   */
+  anyBook?: boolean
+  files?(): Promise<TgMessage[]>
   upload(name: string, bytes: Uint8Array, caption: string, onProgress?: (fraction: number) => void): Promise<TgMessage>
   download(messageId: number, onProgress?: (fraction: number) => void): Promise<Uint8Array>
   remove(ids: number[]): Promise<void>
@@ -75,9 +83,9 @@ export function parseBookCaption(message: TgMessage): CloudBook | null {
  * Livro de uma mensagem: a legenda do Alexandria ou, se a pessoa só escreveu #alexandria_livro na
  * legenda de um arquivo de livro, o nome e o tamanho do arquivo (o mesmo código que o app calcula).
  */
-export async function parseBookMessage(message: TgMessage): Promise<CloudBook | null> {
+export async function parseBookMessage(message: TgMessage, anyBook = false): Promise<CloudBook | null> {
   const book = parseBookCaption(message)
-  if (book || !message.caption.includes(BOOK_TAG)) return book
+  if (book || (!anyBook && !message.caption.includes(BOOK_TAG))) return book
   if (message.caption.split('\n').some((l) => l.startsWith('alexandria:'))) return null
   const name = message.fileName?.trim()
   const format = name ? detectFormat(name) : null
@@ -85,11 +93,19 @@ export async function parseBookMessage(message: TgMessage): Promise<CloudBook | 
   return { key: await bookKey(name, message.size), name, size: message.size, format, messageId: message.id, date: message.date * 1000, sender: message.sender, manual: true }
 }
 
+/** Mensagens que podem ser livros: as marcadas ou, num grupo, todas com arquivo. */
+async function bookMessages(api: TgApi): Promise<TgMessage[]> {
+  if (!api.anyBook || !api.files) return api.search(BOOK_TAG)
+  const seen = new Set<number>()
+  // As marcadas entram também (uma legenda antiga do Alexandria pode estar num arquivo sem nome).
+  return [...(await api.files()), ...(await api.search(BOOK_TAG))].filter((m) => !seen.has(m.id) && !!seen.add(m.id))
+}
+
 /** Livros da nuvem (o mais recente de cada um, se houver repetidos). */
 export async function listCloudBooks(api: TgApi): Promise<CloudBook[]> {
   const books = new Map<string, CloudBook>()
-  for (const message of await api.search(BOOK_TAG)) {
-    const book = await parseBookMessage(message)
+  for (const message of await bookMessages(api)) {
+    const book = await parseBookMessage(message, api.anyBook)
     if (!book) continue
     const old = books.get(book.key)
     if (!old || old.date < book.date) books.set(book.key, book)
@@ -114,7 +130,7 @@ export async function downloadBook(api: TgApi, book: CloudBook, onProgress?: (fr
 /** Apaga o livro da nuvem (só as mensagens dele). */
 export async function removeCloudBook(api: TgApi, key: string) {
   const ids: number[] = []
-  for (const m of await api.search(BOOK_TAG)) if ((await parseBookMessage(m))?.key === key) ids.push(m.id)
+  for (const m of await bookMessages(api)) if ((await parseBookMessage(m, api.anyBook))?.key === key) ids.push(m.id)
   if (ids.length) await api.remove(ids)
 }
 
