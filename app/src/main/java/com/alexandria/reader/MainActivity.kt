@@ -165,13 +165,46 @@ class MainActivity : Activity() {
     }
 
     private fun showSection(name: String) {
-        when (name) {
-            SECTION_LIBRARY -> showLibrary()
-            SECTION_NOTES -> showNotes()
-            SECTION_STATS -> showStats()
-            SECTION_SETTINGS -> showSettings()
-            else -> showLibrary()
+        try {
+            when (name) {
+                SECTION_LIBRARY -> showLibrary()
+                SECTION_NOTES -> showNotes()
+                SECTION_STATS -> showStats()
+                SECTION_SETTINGS -> showSettings()
+                else -> showLibrary()
+            }
+        } catch (e: Exception) {
+            // Um erro numa tela não pode impedir de abrir o app (e de buscar a atualização que o corrige).
+            showRecovery(name, e)
         }
+    }
+
+    private fun showRecovery(name: String, error: Exception) {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(48), dp(24), dp(24))
+            setBackgroundColor(paper)
+        }
+        box.addView(label("Algo deu errado ao abrir esta tela", 20f, ink, true))
+        box.addView(label("Seus livros e anotações continuam guardados. Procure a atualização que corrige o problema, ou envie este erro para quem cuida do app:\n\n${error.javaClass.simpleName}: ${error.message?.take(300)}", 13f, muted).apply {
+            setPadding(0, dp(10), 0, dp(18))
+            setTextIsSelectable(true)
+        })
+        box.addView(Button(this).apply {
+            text = "Procurar atualização"
+            setAllCaps(false)
+            setTextColor(Color.WHITE)
+            background = rounded(ink, 10)
+            setOnClickListener { checkUpdateNow() }
+        }, LinearLayout.LayoutParams(-1, dp(48)))
+        if (name != SECTION_SETTINGS) box.addView(Button(this).apply {
+            text = "Abrir Ajustes"
+            setAllCaps(false)
+            setTextColor(ink)
+            background = rounded(Color.rgb(236, 233, 226), 10)
+            setOnClickListener { showSection(SECTION_SETTINGS) }
+        }, LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(10) })
+        setContentView(ScrollView(this).apply { addView(box) })
     }
 
     private fun baseScreen(selected: String): LinearLayout {

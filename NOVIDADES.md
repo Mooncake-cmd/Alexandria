@@ -3,6 +3,10 @@
 Cada seção vira o texto da Release no GitHub e aparece no aviso de atualização do app.
 A versão mais nova fica em cima.
 
+## 0.24.1
+- Corrige o app fechando ao abrir para quem já tinha livros antes das abas (o banco de dados não recebia a coluna nova das abas).
+- Se uma tela der erro, o app mostra o problema e o botão "Procurar atualização" em vez de fechar.
+
 ## 0.24.0
 - Assistir nas abas de Filmes e Cursos: toque num vídeo e ele toca enquanto baixa do grupo (streaming), sem esperar o arquivo inteiro. Dá para pular para qualquer ponto.
 - Continuar assistindo: o ponto onde você parou fica salvo no grupo da aba; ao abrir de novo (no celular ou no computador), o vídeo continua de lá, com a opção de voltar ao início. A lista mostra "Parou em…" e "✓ Assistido".

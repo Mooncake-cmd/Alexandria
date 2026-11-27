@@ -70,7 +70,7 @@ data class Note(
  */
 data class Bookmark(val id: Long, val itemId: Long, val name: String, val position: Long, val createdAt: Long)
 
-class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.db", null, 9) {
+class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.db", null, VERSION) {
     override fun onConfigure(db: SQLiteDatabase) {
         db.setForeignKeyConstraintsEnabled(true)
     }
@@ -152,6 +152,17 @@ class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.
         }
         // Abas (0.23): os livros que já existem ficam na aba principal.
         if (oldVersion < 10 && !hasColumn(db, "library_items", "tab")) {
+            db.execSQL("ALTER TABLE library_items ADD COLUMN tab TEXT NOT NULL DEFAULT 'livros'")
+        }
+    }
+
+    /**
+     * Rede de segurança: as versões 0.23 e 0.24 usavam a coluna das abas sem subir a versão do banco,
+     * e o app quebrava ao abrir para quem já tinha livros. Ao abrir, a coluna é conferida e criada.
+     */
+    override fun onOpen(db: SQLiteDatabase) {
+        super.onOpen(db)
+        if (!db.isReadOnly && !hasColumn(db, "library_items", "tab")) {
             db.execSQL("ALTER TABLE library_items ADD COLUMN tab TEXT NOT NULL DEFAULT 'livros'")
         }
     }
@@ -512,8 +523,10 @@ class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.
     fun moveTab(from: String, to: String = AppTabs.MAIN): Int =
         writableDatabase.update("library_items", ContentValues().apply { put("tab", to) }, "tab = ?", arrayOf(from))
 
-    private companion object {
-        const val SELECT = "SELECT id, name, uri, format, added_at, last_position, page_count, opened_at, " +
+    companion object {
+        /** Versão do banco: suba sempre que mudar as tabelas (e trate a migração em onUpgrade). */
+        const val VERSION = 10
+        private const val SELECT = "SELECT id, name, uri, format, added_at, last_position, page_count, opened_at, " +
             "finished_at, shelf, reading_seconds, file_size, archived_at, exact_position, tab FROM library_items"
     }
 }
