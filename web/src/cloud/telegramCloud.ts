@@ -42,7 +42,8 @@ export interface TgApi {
    * arquivo da conversa.
    */
   anyBook?: boolean
-  files?(): Promise<TgMessage[]>
+  /** Mensagens com arquivo da conversa, das mais novas para as mais antigas (até [limit]). */
+  files?(limit?: number): Promise<TgMessage[]>
   upload(name: string, bytes: Uint8Array, caption: string, onProgress?: (fraction: number) => void): Promise<TgMessage>
   download(messageId: number, onProgress?: (fraction: number) => void): Promise<Uint8Array>
   remove(ids: number[]): Promise<void>
@@ -134,8 +135,17 @@ export async function removeCloudBook(api: TgApi, key: string) {
   if (ids.length) await api.remove(ids)
 }
 
+/**
+ * Arquivos de posições na conversa, do mais novo para o mais antigo. A busca por texto do Telegram
+ * pode demorar a enxergar uma mensagem recém-enviada; por isso as mensagens com arquivo mais recentes
+ * também são olhadas (assim a posição gravada há pouco é encontrada, e as dos outros livros não somem).
+ */
 async function positionMessages(api: TgApi): Promise<TgMessage[]> {
-  return (await api.search(POSITIONS_TAG)).filter((m) => m.caption.includes(POSITIONS_TAG)).sort((a, b) => b.date - a.date || b.id - a.id)
+  const [found, recent] = await Promise.all([api.search(POSITIONS_TAG), api.files ? api.files(100) : Promise.resolve([])])
+  const seen = new Set<number>()
+  return [...found, ...recent]
+    .filter((m) => m.caption.includes(POSITIONS_TAG) && (!m.fileName || m.fileName === POSITIONS_FILE) && !seen.has(m.id) && !!seen.add(m.id))
+    .sort((a, b) => b.date - a.date || b.id - a.id)
 }
 
 export async function readPositions(api: TgApi): Promise<Record<string, SyncEntry>> {

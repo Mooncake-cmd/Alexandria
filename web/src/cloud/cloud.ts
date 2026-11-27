@@ -144,13 +144,27 @@ async function rememberTelegramError(e: unknown) {
 
 // ---------- posição de leitura ----------
 
+/** Pedidos de posição não podem ficar presos: sem resposta em 60 s, a conexão é refeita na próxima vez. */
+function limited<T>(work: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>
+  return Promise.race([
+    work,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        import('./gramApi').then((g) => g.dropConnection()).catch(() => {})
+        reject(new Error('O Telegram não respondeu a tempo.'))
+      }, 60_000)
+    })
+  ]).finally(() => clearTimeout(timer))
+}
+
 export async function pullPosition(name: string, size: number): Promise<SyncEntry | null> {
   const provider = await syncProvider()
   if (provider === 'github') return pullFromGitHub(name, size)
   if (provider !== 'telegram' || size <= 0) return null
   try {
     const api = await telegramApi()
-    return api ? await pullPositionFrom(api, await bookKey(name, size)) : null
+    return api ? await limited(pullPositionFrom(api, await bookKey(name, size))) : null
   } catch (e) {
     await rememberTelegramError(e)
     return null
@@ -167,7 +181,7 @@ export function pushPosition(name: string, size: number, entry: SyncEntry, keepa
     if (provider !== 'telegram' || size <= 0) return
     try {
       const api = await telegramApi()
-      if (api) await pushPositionTo(api, await bookKey(name, size), entry)
+      if (api) await limited(pushPositionTo(api, await bookKey(name, size), entry))
     } catch (e) {
       await rememberTelegramError(e)
     }

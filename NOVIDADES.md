@@ -3,6 +3,10 @@
 Cada seção vira o texto da Release no GitHub e aparece no aviso de atualização do app.
 A versão mais nova fica em cima.
 
+## 0.22.2
+- Posição de leitura na nuvem do Telegram mais confiável: é gravada ao sair do livro mesmo quando a conexão demorou a responder na abertura; a posição recém-gravada é encontrada logo (sem esperar a busca do Telegram) e as dos outros livros não se perdem; um pedido sem resposta não trava mais a nuvem.
+- Ajustes → Nuvem pelo Telegram mostra quando a posição foi gravada pela última vez, ou o erro, se não foi.
+
 ## 0.22.1
 - No grupo da nuvem, qualquer arquivo de livro aparece em "Na nuvem", mesmo sem #alexandria_livro na legenda: livros mandados por contas que não usam o Alexandria e livros encaminhados de outras conversas também entram. Nas Mensagens salvas, a marca continua sendo necessária.
 

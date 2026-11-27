@@ -1357,6 +1357,16 @@ class MainActivity : Activity() {
                 val where = tg.chat?.let { "no grupo privado \"${it.title}\"" } ?: "nas suas Mensagens salvas"
                 addView(label("Conectado${if (tg.name.isNotBlank()) " como ${tg.name}" else ""}. Os livros enviados ficam $where, com a etiqueta #alexandria_livro.", 13f, ink))
                 if (tg.error != null) addView(label("⚠ ${tg.error}", 12f, Color.rgb(163, 57, 47)).apply { setPadding(0, dp(6), 0, 0) })
+                val status = TelegramCloud.positionStatus(this@MainActivity)
+                val clock = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT)
+                if (status.pushAt > 0 || status.pullAt > 0) {
+                    val lines = mutableListOf<String>()
+                    if (status.pushAt > 0) lines += if (status.pushError == null) "Posição de leitura gravada na nuvem em ${clock.format(java.util.Date(status.pushAt))}."
+                    else "⚠ Não foi possível gravar a posição de leitura (${clock.format(java.util.Date(status.pushAt))}): ${status.pushError}"
+                    if (status.pullError != null) lines += "⚠ Não foi possível ler a posição da nuvem (${clock.format(java.util.Date(status.pullAt))}): ${status.pullError}"
+                    val bad = status.pushError != null || status.pullError != null
+                    addView(label(lines.joinToString("\n"), 12f, if (bad) Color.rgb(163, 57, 47) else muted).apply { setPadding(0, dp(6), 0, 0) })
+                }
                 addView(label("Para enviar um livro, toque e segure nele na biblioteca e escolha \"Enviar para a nuvem\". Um arquivo de livro mandado pelo próprio Telegram também entra se a legenda tiver #alexandria_livro. Os livros da nuvem que não estão neste aparelho aparecem na biblioteca, em \"Na nuvem\". " + TELEGRAM_NOTICE, 12f, muted).apply {
                     setPadding(0, dp(6), 0, dp(10))
                 })

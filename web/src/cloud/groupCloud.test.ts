@@ -143,3 +143,40 @@ describe('nuvem num grupo privado', () => {
     expect(isTelegramUrl('não é url')).toBe(false)
   })
 })
+
+describe('posição de leitura com a busca do Telegram atrasada', () => {
+  /** A busca por texto só enxerga mensagens "indexadas"; as recém-enviadas ainda não. */
+  function laggingChat() {
+    const chat = fakeChat()
+    const indexed = new Set<number>()
+    const search = chat.api.search.bind(chat.api)
+    chat.api.search = async (tag) => (await search(tag)).filter((m) => indexed.has(m.id))
+    return { ...chat, index: () => chat.messages.forEach((m) => indexed.add(m.id)) }
+  }
+
+  it('acha a posição recém-gravada e não perde a dos outros livros', async () => {
+    const chat = laggingChat()
+    await pushPositionTo(chat.api, 'livroA', entry(1000, 21))
+    // Logo depois (antes de a busca enxergar), outro aparelho abre o livro: acha a página 21.
+    expect((await pullPositionFrom(chat.api, 'livroA'))?.position).toBe(21)
+    // Gravar outro livro logo em seguida mantém o primeiro.
+    await pushPositionTo(chat.api, 'livroB', entry(2000, 5))
+    expect((await pullPositionFrom(chat.api, 'livroA'))?.position).toBe(21)
+    expect((await pullPositionFrom(chat.api, 'livroB'))?.position).toBe(5)
+    // Fica só um arquivo de posições.
+    expect(chat.messages.filter((m) => m.fileName === 'alexandria-posicoes.json')).toHaveLength(1)
+    chat.index()
+    expect((await pullPositionFrom(chat.api, 'livroA'))?.position).toBe(21)
+  })
+
+  it('apagar o livro e baixar de novo: a posição continua na nuvem', async () => {
+    const chat = fakeChat()
+    await uploadBook(chat.api, 'Moby Dick.epub', 'epub', new Uint8Array(30))
+    const key = await bookKey('Moby Dick.epub', 30)
+    await pushPositionTo(chat.api, key, entry(5000, 21))
+    // O livro sai do aparelho (a nuvem não muda) e volta com o mesmo nome e tamanho.
+    const [book] = await listCloudBooks(chat.api)
+    expect(await bookKey(book.name, book.size)).toBe(key)
+    expect((await pullPositionFrom(chat.api, key))?.position).toBe(21)
+  })
+})

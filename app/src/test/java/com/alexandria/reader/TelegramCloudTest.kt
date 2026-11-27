@@ -338,4 +338,23 @@ class TelegramCloudTest {
         assertFalse(SponsoredItem.isTelegramUrl("https://exemplo.com/t.me"))
         assertFalse(SponsoredItem.isTelegramUrl("https://faket.me"))
     }
+
+    @Test
+    fun positionStatusShowsWhetherTheCloudAnswered() {
+        login()
+        val entry = SyncEntry("epub", 21, 2100, 30, 1_700_000_000_000, "celular")
+        TelegramCloud.pushPosition(context, "k", entry)
+        val ok = TelegramCloud.positionStatus(context)
+        assertTrue(ok.pushAt > 0)
+        assertNull(ok.pushError)
+
+        // Sessão recusada: o erro aparece em Ajustes.
+        context.getSharedPreferences("telegram", Context.MODE_PRIVATE).edit().putString("session", "VENCIDA").commit()
+        TelegramCloud.pushPosition(context, "k", entry)
+        assertEquals("Sem sessão.", TelegramCloud.positionStatus(context).pushError)
+        var pulled: SyncEntry? = entry
+        TelegramCloud.pullPosition(context, "k") { pulled = it }
+        assertNull(pulled)
+        assertEquals("Sem sessão.", TelegramCloud.positionStatus(context).pullError)
+    }
 }

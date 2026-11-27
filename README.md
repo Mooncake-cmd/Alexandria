@@ -1,6 +1,6 @@
 # Alexandria — projeto Android
 
-**Versão:** 0.22.1  
+**Versão:** 0.22.2  
 **Pacote:** `com.alexandria.reader`  
 **Plataforma:** Android 6.0 ou superior (API 23+)  
 **Idioma da interface:** Português (Brasil)

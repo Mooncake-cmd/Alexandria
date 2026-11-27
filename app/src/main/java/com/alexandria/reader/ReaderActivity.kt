@@ -221,6 +221,8 @@ class ReaderActivity : Activity(), ReaderHost {
     private var remote: SyncEntry? = null
     private var remoteApplied = false
     private var lastPushed: Long? = null
+    /** Onde o livro abriu: se a pessoa saiu de lá, a posição é gravada mesmo sem a resposta da nuvem. */
+    private var openedExact: Long? = null
 
     /** Livro pronto e posição do outro aparelho em mãos: continua de onde parou lá, se for mais recente. */
     private fun applyRemote() {
@@ -243,8 +245,11 @@ class ReaderActivity : Activity(), ReaderHost {
     private fun pushPosition() {
         val item = current ?: return
         val view = viewer ?: return
-        if (!pullDone || syncSize <= 0 || !view.loaded) return
+        if (syncSize <= 0 || !view.loaded) return
         val exact = view.exactPosition()
+        // Sem a resposta da nuvem ainda (conexão lenta), só grava se a pessoa leu aqui: assim uma posição
+        // mais nova de outro aparelho não é trocada pela de abertura, e a leitura daqui não se perde.
+        if (!pullDone && (openedExact == null || exact == openedExact)) return
         if (exact == lastPushed) return
         lastPushed = exact
         PositionSync.push(this, item.name, syncSize, SyncEntry(item.format, view.position(), exact, view.pageCount(), System.currentTimeMillis(), PositionSync.device()))
@@ -673,6 +678,7 @@ class ReaderActivity : Activity(), ReaderHost {
     }
 
     override fun onPositionChanged() {
+        viewer?.let { v -> if (openedExact == null && v.loaded) openedExact = v.exactPosition() }
         viewer?.let { noteMovement(it) } ?: clock.interaction(System.currentTimeMillis())
         if (!remoteApplied && remote != null) applyRemote()
         val view = viewer ?: return

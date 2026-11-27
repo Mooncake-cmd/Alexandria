@@ -353,17 +353,37 @@ object TelegramCloud {
 
     // ---------- posição ----------
 
-    fun pullPosition(context: Context, key: String, done: (SyncEntry?) -> Unit) =
+    fun pullPosition(context: Context, key: String, done: (SyncEntry?) -> Unit) {
+        val app = context.applicationContext
         call(context, "pullPosition", JSONObject().put("key", key)) { r ->
+            remember(app, "pull", r.exceptionOrNull())
             done(r.getOrNull()?.takeIf { it != "null" }?.let { json ->
                 SyncData.parse("{\"books\":{\"k\":$json}}")["k"]
             })
         }
+    }
 
     fun pushPosition(context: Context, key: String, entry: SyncEntry) {
+        val app = context.applicationContext
         val o = JSONObject().put("format", entry.format).put("position", entry.position).put("exact", entry.exact)
             .put("pageCount", entry.pageCount).put("updated", entry.updated).put("device", entry.device)
-        call(context, "pushPosition", JSONObject().put("key", key).put("entry", o)) {}
+        call(context, "pushPosition", JSONObject().put("key", key).put("entry", o)) { r -> remember(app, "push", r.exceptionOrNull()) }
+    }
+
+    /** Última gravação/leitura da posição, para Ajustes mostrar se a nuvem está respondendo. */
+    data class PositionStatus(val pushAt: Long, val pushError: String?, val pullAt: Long, val pullError: String?)
+
+    fun positionStatus(context: Context): PositionStatus {
+        val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        return PositionStatus(p.getLong("push_at", 0), p.getString("push_error", null), p.getLong("pull_at", 0), p.getString("pull_error", null))
+    }
+
+    private fun remember(context: Context, what: String, error: Throwable?) {
+        val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        if (p.getString("session", null) == null) return
+        p.edit().putLong("${what}_at", System.currentTimeMillis()).apply {
+            if (error == null) remove("${what}_error") else putString("${what}_error", error.message ?: "erro desconhecido")
+        }.apply()
     }
 
     // ---------- grupo privado ----------

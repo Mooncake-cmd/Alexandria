@@ -128,6 +128,16 @@ export async function connectedClient(credentials: TelegramCredentials, session:
   return shared.client
 }
 
+/**
+ * Esquece a conexão atual (a próxima chamada conecta de novo). Usado quando um pedido fica sem
+ * resposta: depois de uma queda de rede a GramJS às vezes espera para sempre numa conexão morta.
+ */
+export async function dropConnection() {
+  const old = shared
+  shared = null
+  await old?.client.disconnect().catch(() => {})
+}
+
 export async function logOut(credentials: TelegramCredentials, session: string) {
   const client = await connectedClient(credentials, session)
   try {
@@ -162,8 +172,8 @@ export function gramApi(client: TelegramClient, target: CloudTarget = 'me'): TgA
       const messages = await client.getMessages(peer, { search: tag, limit: 1000 })
       return messages.filter((m) => m instanceof Api.Message).map(toMessage)
     },
-    async files() {
-      const messages = await client.getMessages(peer, { filter: new Api.InputMessagesFilterDocument(), limit: 3000 })
+    async files(limit = 3000) {
+      const messages = await client.getMessages(peer, { filter: new Api.InputMessagesFilterDocument(), limit })
       return messages.filter((m) => m instanceof Api.Message).map(toMessage)
     },
     async upload(name, bytes, caption, onProgress) {

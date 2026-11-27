@@ -1,6 +1,6 @@
 ALEXANDRIA — STATUS DA ENTREGA
 
-Versão do projeto: 0.22.1
+Versão do projeto: 0.22.2
 
 Build: compilado com sucesso (AGP 8.7.3, Gradle 8.14.3, SDK 35, NDK 27.0.12077973). Lint sem avisos.
 173 testes automatizados passando, incluindo integração com os motores do OpenReadEra compilados para Linux.

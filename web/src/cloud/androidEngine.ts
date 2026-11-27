@@ -196,6 +196,23 @@ const methods: Record<string, (args: Args, id: string, bridge: Bridge) => Promis
 /** Uma chamada por vez: o Telegram não gosta de rajadas, e as transferências usam muita memória. */
 let queue: Promise<unknown> = Promise.resolve()
 
+/** Transferências podem demorar; o resto, se passar disto sem resposta, falha e libera a fila. */
+const SLOW = new Set(['upload', 'download', 'copyFromSaved', 'books'])
+const TIMEOUT_MS = 60_000
+const SLOW_TIMEOUT_MS = 30 * 60_000
+
+function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      // A conexão provavelmente morreu: a próxima chamada conecta de novo.
+      import('./gramApi').then((g) => g.dropConnection()).catch(() => {})
+      reject(Object.assign(new Error('O Telegram não respondeu a tempo. Tente de novo.'), { errorMessage: 'TIMEOUT' }))
+    }, ms)
+  })
+  return Promise.race([work, timeout]).finally(() => clearTimeout(timer))
+}
+
 window.alxCloud = {
   call(id, method, argsJson) {
     const bridge = window.AndroidCloud
@@ -204,12 +221,12 @@ window.alxCloud = {
       try {
         const handler = methods[method]
         if (!handler) throw new Error(`Método desconhecido: ${method}`)
-        const result = await handler(JSON.parse(argsJson || '{}') as Args, id, bridge)
+        const result = await withTimeout(handler(JSON.parse(argsJson || '{}') as Args, id, bridge), SLOW.has(method) ? SLOW_TIMEOUT_MS : TIMEOUT_MS)
         bridge.reply(id, JSON.stringify(result ?? null))
       } catch (e) {
         const code = (e as { errorMessage?: string })?.errorMessage ?? ''
         let message = e instanceof Error ? e.message : String(e)
-        if (code) {
+        if (code && code !== 'TIMEOUT') {
           try {
             message = (await import('./gramApi')).telegramError(e)
           } catch {
