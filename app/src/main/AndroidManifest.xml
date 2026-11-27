@@ -1,9 +1,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!--
-        Internet: usada só pela sincronização da posição de leitura (opcional, desligada até a pessoa
-        colocar um token do GitHub em Ajustes). Os livros abertos no WebView continuam sem rede.
+        Internet: usada pela nuvem do Telegram e pela sincronização pelo GitHub (opcionais, desligadas
+        até a pessoa entrar em Ajustes) e para procurar atualizações do app. Os livros abertos no
+        WebView continuam sem rede.
     -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!--
+        Atualização pelo próprio app (Ajustes → Atualizações): o APK novo vem das Releases do GitHub do
+        projeto e é entregue ao instalador do Android, que sempre pede a confirmação da pessoa.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!--
         allowBackup desligado de propósito: a biblioteca guarda URIs com permissão persistida,
         e essa permissão não é restaurada em outro aparelho. Um backup traria itens quebrados.
@@ -68,6 +74,9 @@
         </activity>
         <activity
             android:name=".ReaderActivity"
+            android:exported="false" />
+        <receiver
+            android:name=".UpdateInstallReceiver"
             android:exported="false" />
     </application>
 </manifest>

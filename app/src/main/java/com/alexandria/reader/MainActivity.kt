@@ -78,6 +78,81 @@ class MainActivity : Activity() {
             refreshOnResume = false
             showSection(section)
         }
+        // Voltou da tela do Android que permite instalar atualizações.
+        pendingUpdate?.let { apk ->
+            if (AppUpdates.canInstall(this)) {
+                pendingUpdate = null
+                installUpdate(apk)
+            }
+        }
+        if (pendingUpdate == null && AppUpdates.due(this)) {
+            AppUpdates.check(this) { result ->
+                result.getOrNull()?.let { if (!destroyed) offerUpdate(it) }
+            }
+        }
+    }
+
+    // ---------- atualização do app ----------
+
+    /** APK baixado esperando a permissão de instalar (Android 8+). */
+    private var pendingUpdate: File? = null
+
+    private fun offerUpdate(release: AppRelease) {
+        val size = if (release.apkSize > 0) " (${"%.1f".format(release.apkSize / 1e6).replace('.', ',')} MB)" else ""
+        val notes = release.notes.ifBlank { "Correções e melhorias." }.take(1500)
+        AlertDialog.Builder(this)
+            .setTitle("Atualização disponível: ${release.version}")
+            .setMessage("Você está na versão ${AppUpdates.installedVersion(this)}.\n\nNovidades:\n$notes\n\nBiblioteca, notas e marcadores continuam como estão.")
+            .setNegativeButton("Depois", null)
+            .setPositiveButton("Atualizar$size") { _, _ -> downloadUpdate(release) }
+            .show()
+    }
+
+    private fun downloadUpdate(release: AppRelease) {
+        val (dialog, progress) = progressDialog("Baixando a versão ${release.version}…")
+        AppUpdates.download(this, release, progress) { result ->
+            dialog.dismiss()
+            if (destroyed) return@download
+            result.onSuccess { installUpdate(it) }
+                .onFailure { Toast.makeText(this, it.message ?: "Não foi possível baixar a atualização. Confira a internet.", Toast.LENGTH_LONG).show() }
+        }
+    }
+
+    private fun installUpdate(apk: File) {
+        if (!AppUpdates.canInstall(this)) {
+            pendingUpdate = apk
+            AlertDialog.Builder(this)
+                .setTitle("Permitir atualizações")
+                .setMessage("Na primeira vez, o Android pede que você permita que o Alexandria instale atualizações. Na próxima tela, ative \"Permitir desta fonte\" e volte para o app.")
+                .setNegativeButton("Cancelar") { _, _ -> pendingUpdate = null }
+                .setPositiveButton("Abrir permissão") { _, _ ->
+                    try {
+                        startActivity(AppUpdates.permissionIntent(this))
+                    } catch (e: Exception) {
+                        pendingUpdate = null
+                        Toast.makeText(this, "Não foi possível abrir a permissão. Procure \"Instalar apps desconhecidos\" nas configurações do Android.", Toast.LENGTH_LONG).show()
+                    }
+                }
+                .show()
+            return
+        }
+        try {
+            AppUpdates.install(this, apk)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Não foi possível abrir o instalador: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun checkUpdateNow() {
+        Toast.makeText(this, "Procurando atualização…", Toast.LENGTH_SHORT).show()
+        AppUpdates.check(this) { result ->
+            if (destroyed) return@check
+            result.onSuccess { release ->
+                if (release != null) offerUpdate(release)
+                else Toast.makeText(this, "Você já tem a versão mais recente (${AppUpdates.installedVersion(this)}).", Toast.LENGTH_LONG).show()
+            }.onFailure { Toast.makeText(this, "Sem conexão com o GitHub. Tente de novo com internet.", Toast.LENGTH_LONG).show() }
+            if (section == SECTION_SETTINGS) showSettings()
+        }
     }
 
     override fun onDestroy() {
@@ -1164,9 +1239,32 @@ class MainActivity : Activity() {
                 "?"
             }
             addView(label("Versão $version", 13f, ink))
-            addView(label("Leitor de PDF, EPUB, MOBI, AZW3, DJVU, CBZ, CBR, DOCX e TXT. Sem anúncios e sem conta: seus livros e anotações ficam só neste aparelho. A internet só é usada se você ligar a nuvem pelo Telegram ou a sincronização pelo GitHub.", 12f, muted).apply {
+            addView(label("Leitor de PDF, EPUB, MOBI, AZW3, DJVU, CBZ, CBR, DOCX e TXT. Sem anúncios e sem conta: seus livros e anotações ficam só neste aparelho. A internet só é usada para procurar atualizações do app e, se você ligar, pela nuvem do Telegram e pela sincronização pelo GitHub.", 12f, muted).apply {
                 setPadding(0, dp(6), 0, 0)
             })
+        }
+
+        settingsPanel("Atualizações") {
+            val last = AppUpdates.lastCheck(this@MainActivity)
+            val lastText = if (last > 0) java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT).format(java.util.Date(last)) else "ainda não"
+            addView(label("Versão instalada: ${AppUpdates.installedVersion(this@MainActivity)}. Última verificação: $lastText.", 13f, ink))
+            addView(label("As versões novas são publicadas no GitHub do projeto. O app baixa, confere que é o Alexandria assinado com a mesma chave e abre o instalador do Android, que pede a sua confirmação. Biblioteca, notas e marcadores continuam como estão.", 12f, muted).apply {
+                setPadding(0, dp(6), 0, dp(4))
+            })
+            addView(android.widget.CheckBox(this@MainActivity).apply {
+                text = "Procurar atualização uma vez por dia"
+                setTextColor(ink)
+                minHeight = dp(44)
+                isChecked = AppUpdates.enabled(this@MainActivity)
+                setOnCheckedChangeListener { _, on -> AppUpdates.setEnabled(this@MainActivity, on) }
+            })
+            addView(Button(this@MainActivity).apply {
+                text = "Procurar atualização agora"
+                setAllCaps(false)
+                setTextColor(Color.WHITE)
+                background = rounded(ink, 10)
+                setOnClickListener { checkUpdateNow() }
+            }, LinearLayout.LayoutParams(-1, dp(48)))
         }
 
         settingsPanel("Nuvem pelo Telegram") {

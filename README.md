@@ -1,6 +1,6 @@
 # Alexandria — projeto Android
 
-**Versão:** 0.20.1  
+**Versão:** 0.21.0  
 **Pacote:** `com.alexandria.reader`  
 **Plataforma:** Android 6.0 ou superior (API 23+)  
 **Idioma da interface:** Português (Brasil)
@@ -146,6 +146,21 @@ Em todos os formatos:
 - **Busca no livro** (🔍) que ignora maiúsculas e acentos ("acao" encontra "Ação"), com lista de resultados.
 - Ao chegar no fim, aparece **🏁 Concluir livro**, que move o livro para a Estante.
 
+### Atualização pelo próprio app (0.21)
+
+- Uma vez por dia (ao abrir o app) o Alexandria consulta a última Release do GitHub do projeto. Havendo versão
+  nova, mostra as novidades e o botão **Atualizar**: baixa o APK, confere que é o Alexandria, de versão mais nova e
+  assinado com a mesma chave, e entrega ao instalador do Android, que pede a confirmação. Na primeira vez, o Android
+  pede para permitir que o Alexandria instale apps ("Permitir desta fonte"). Biblioteca, notas e marcadores ficam.
+- Ajustes → **Atualizações**: versão instalada, última verificação, ligar/desligar a verificação diária e
+  "Procurar atualização agora".
+- **Publicação**: `.github/workflows/release.yml` roda quando a versão em `app/build.gradle.kts` muda. Monta o APK com
+  a chave oficial (segredo `ALEXANDRIA_KEYSTORE` do repositório, o `.keystore` em base64), confere a impressão digital
+  da assinatura (SHA-256 `d382a64b…22ca41`) e publica a Release `vX.Y.Z` com o texto da seção da versão em
+  [`NOVIDADES.md`](NOVIDADES.md). Sem o segredo, nada é publicado.
+- **A chave de assinatura** não fica no repositório (`.chave/` e `*.keystore` estão no `.gitignore`). Perdê-la
+  significa que versões novas não instalam por cima das antigas (seria preciso desinstalar e perder os dados).
+
 ### Notas, Estatísticas e Ajustes
 
 - **Notas**: todas as anotações, agrupadas por livro; tocar abre o livro no trecho anotado.
@@ -255,7 +270,7 @@ Gerado por `art/gerar_icones.py` a partir de `art/icone-original.jpg` (requer Py
 
 ## Privacidade
 
-A aplicação não contém analytics nem anúncios. Os documentos são selecionados pelo usuário e seus identificadores são armazenados localmente no banco SQLite do aplicativo. A permissão de internet existe só para as funções opcionais (nuvem pelo Telegram e posição pelo GitHub); sem elas configuradas, nada sai do aparelho. O leitor de EPUB e os motores continuam sem acesso à rede. O backup automático e a transferência entre aparelhos estão desligados (`allowBackup`, `fullBackupContent` e `dataExtractionRules`), porque as permissões de acesso aos arquivos não são restauradas em outro aparelho.
+A aplicação não contém analytics nem anúncios. Os documentos são selecionados pelo usuário e seus identificadores são armazenados localmente no banco SQLite do aplicativo. A internet é usada para procurar atualizações (uma consulta por dia às Releases públicas do GitHub, que dá para desligar em Ajustes) e pelas funções opcionais (nuvem pelo Telegram e posição pelo GitHub); nenhum dado dos livros sai do aparelho sem elas. O leitor de EPUB e os motores continuam sem acesso à rede. O backup automático e a transferência entre aparelhos estão desligados (`allowBackup`, `fullBackupContent` e `dataExtractionRules`), porque as permissões de acesso aos arquivos não são restauradas em outro aparelho.
 
 ## Alternativa de compilação na nuvem (GitHub Actions)
 

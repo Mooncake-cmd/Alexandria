@@ -1,0 +1,90 @@
+name: Publicar versão do app
+
+# Quando a versão do app (versionName em app/build.gradle.kts) muda e ainda não tem Release, monta o APK
+# assinado com a chave oficial e publica uma Release "vX.Y.Z" com as novidades de NOVIDADES.md.
+# O app procura essas Releases para se atualizar sozinho (Ajustes → Atualizações).
+#
+# A chave fica no segredo ALEXANDRIA_KEYSTORE (o arquivo .keystore em base64). Sem o segredo, nada é publicado.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ ccr-e603d834-7whfoo ]
+    paths: [ 'app/**', 'NOVIDADES.md', '.github/workflows/release.yml' ]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      ORE_REQUIRE_HOST_ENGINES: "1"
+      GH_TOKEN: ${{ github.token }}
+      # Impressão digital (SHA-256) da chave oficial: um APK com outra chave não é publicado.
+      EXPECTED_CERT: d382a64b6ce4700ddddcabbdcd9b94d524ad6562288aeb77b44fdc2bc622ca41
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Versão e segredo
+        id: plan
+        env:
+          KEYSTORE: ${{ secrets.ALEXANDRIA_KEYSTORE }}
+        run: |
+          version=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ -z "$KEYSTORE" ]; then
+            echo "::notice::Segredo ALEXANDRIA_KEYSTORE não configurado: nenhuma Release publicada."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          elif gh release view "v$version" > /dev/null 2>&1; then
+            echo "::notice::A versão $version já foi publicada."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Set up Java 17
+        if: steps.plan.outputs.go == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install NDK and native test tools
+        if: steps.plan.outputs.go == 'true'
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.0.12077973"
+          sudo apt-get update
+          sudo apt-get install -y nasm zlib1g-dev
+      - name: Chave oficial
+        if: steps.plan.outputs.go == 'true'
+        env:
+          KEYSTORE: ${{ secrets.ALEXANDRIA_KEYSTORE }}
+        run: |
+          mkdir -p ~/.android
+          echo "$KEYSTORE" | base64 -d > ~/.android/debug.keystore
+      - name: Set up Gradle
+        if: steps.plan.outputs.go == 'true'
+        uses: gradle/actions/setup-gradle@v4
+      - name: Testes, lint e APK
+        if: steps.plan.outputs.go == 'true'
+        run: ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug
+      - name: Confere a assinatura
+        if: steps.plan.outputs.go == 'true'
+        run: |
+          signer=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          cert=$("$signer" verify --print-certs app/build/outputs/apk/debug/app-debug.apk | sed -n 's/.*certificate SHA-256 digest: //p' | head -1)
+          echo "Assinatura: $cert"
+          test "$cert" = "$EXPECTED_CERT"
+      - name: Publica a Release
+        if: steps.plan.outputs.go == 'true'
+        run: |
+          version='${{ steps.plan.outputs.version }}'
+          cp app/build/outputs/apk/debug/app-debug.apk "Alexandria-$version.apk"
+          awk -v v="## $version" '$0==v{f=1;next} /^## /{f=0} f' NOVIDADES.md > notas.txt
+          [ -s notas.txt ] || echo "Correções e melhorias." > notas.txt
+          gh release create "v$version" "Alexandria-$version.apk" --title "Alexandria $version" --notes-file notas.txt --target "$GITHUB_SHA"

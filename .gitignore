@@ -13,3 +13,6 @@ app/build/
 *.keystore
 *.jks
 .kotlin/
+
+# Chave de assinatura e o texto do segredo do GitHub: nunca no repositório.
+.chave/

@@ -1,6 +1,6 @@
 ALEXANDRIA — STATUS DA ENTREGA
 
-Versão do projeto: 0.20.1
+Versão do projeto: 0.21.0
 
 Build: compilado com sucesso (AGP 8.7.3, Gradle 8.14.3, SDK 35, NDK 27.0.12077973). Lint sem avisos.
 165 testes automatizados passando, incluindo integração com os motores do OpenReadEra compilados para Linux.
@@ -16,6 +16,8 @@ DOCX mais fiel: figuras no tamanho e lado do documento, tabelas com bordas e mes
 Conforto visual: temas (também em PDF/DJVU/quadrinhos), brilho, luz quente, sobreposição colorida e tipografia; DOCX com imagens.
 Nuvem opcional pelo Telegram (Mensagens salvas da própria conta, api_id próprio): livros e posição viajam entre app e site;
 alternativa só para a posição: gist secreto do GitHub (token em Ajustes).
+Atualização pelo próprio app: verificação diária das Releases do GitHub, download, conferência da assinatura e instalador
+do Android. Releases publicadas por .github/workflows/release.yml com a chave oficial (segredo ALEXANDRIA_KEYSTORE).
 Glossário por livro (definir termo pela seleção, sublinhado e toque para ver), tempo de leitura (pausa pelo ritmo de leitura,
 sem contar a espera longe do livro, pausa manual no ⏱) e sequência de dias.
 PDF pelo EraPDF (MuPDF): texto selecionável, glossário sublinhado, busca e anotação de trechos; fontes Liberation
