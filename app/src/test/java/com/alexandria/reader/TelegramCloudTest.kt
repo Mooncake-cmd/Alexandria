@@ -109,6 +109,7 @@ class TelegramCloudTest {
                             "copyFromSaved" -> JSONObject().put("books", 2).put("positions", true).toString()
                             "sponsored" -> ads.toString()
                             "videos" -> videoList.toString()
+                            "positions" -> JSONObject().apply { positions.forEach { (k, v) -> put(k, v) } }.toString()
                             "viewSponsored", "clickSponsored" -> "true"
                             else -> throw CloudException("", "Método desconhecido: $method")
                         }

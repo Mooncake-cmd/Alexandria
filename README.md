@@ -1,6 +1,6 @@
 # Alexandria — projeto Android
 
-**Versão:** 0.23.0  
+**Versão:** 0.24.0  
 **Pacote:** `com.alexandria.reader`  
 **Plataforma:** Android 6.0 ou superior (API 23+)  
 **Idioma da interface:** Português (Brasil)
@@ -185,9 +185,18 @@ Em todos os formatos:
 - **Livros por aba**: o que for importado (ou chegar por "Abrir com") entra na aba de livros aberta; "Mover para outra
   aba…" troca o livro de aba; apagar uma aba devolve os livros dela para a principal. A posição de leitura vai para o
   grupo da aba do livro. Notas e Estatísticas continuam juntando todas as abas.
-- **Filmes e Cursos** (etapa 1 de 4): a aba lista os vídeos do grupo (enviados como vídeo ou como arquivo), com
-  duração, tamanho e quem enviou. Próximas etapas: player com streaming (celular e computador) e "continuar
-  assistindo"; playlists pelos tópicos do grupo (cursos com aulas em ordem); assistir offline, legendas `.srt` e busca.
+- **Filmes e Cursos**: a aba lista os vídeos do grupo (enviados como vídeo ou como arquivo), com duração, tamanho e
+  quem enviou. Próximas etapas: playlists pelos tópicos do grupo (cursos com aulas em ordem); assistir offline,
+  legendas `.srt` e busca.
+- **Streaming** (0.24): o vídeo toca enquanto baixa. O arquivo é lido em blocos de 512 KB (o que o Telegram entrega
+  por pedido), com memória limitada e os próximos blocos pedidos antes. No celular, o player é o do próprio Android
+  (MediaPlayer com uma fonte de dados que lê pelo motor da nuvem; nada é instalado a mais). No site, um service worker
+  (`web/public/stream-sw.js`) atende os pedidos de trechos do `<video>` e a página busca os pedaços no Telegram.
+  Formatos: o celular toca o que o Android do aparelho toca (MP4 e, em geral, MKV); o navegador toca bem MP4 H.264/AAC,
+  e MKV com áudio AC3/DTS ou vídeo HEVC costuma falhar no computador.
+- **Continuar assistindo**: a posição de cada vídeo vai para o arquivo de posições do grupo da aba (o mesmo dos
+  livros), a cada 15 s tocando, ao pausar, ao sair e no fim. A lista mostra "Continuar assistindo", "Parou em…" e
+  "✓ Assistido" (perto do fim, sem contar os créditos).
 
 ### Notas, Estatísticas e Ajustes
 

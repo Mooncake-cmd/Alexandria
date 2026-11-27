@@ -95,6 +95,10 @@ export default defineConfig({
         globIgnores: ['vendor/**', 'licenses/**'],
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         navigateFallback: 'index.html',
+        // O streaming de vídeo não é página: não cai no index.html.
+        navigateFallbackDenylist: [/__stream\//],
+        // Streaming de vídeo das abas de filmes e cursos (responde aos pedidos de trechos do <video>).
+        importScripts: ['stream-sw.js'],
         // Arquivos das bibliotecas de leitura: guardados na primeira vez que um livro precisa deles.
         runtimeCaching: [
           { urlPattern: ({ url }) => url.pathname.includes('/vendor/'), handler: 'CacheFirst', options: { cacheName: 'alexandria-vendor' } }

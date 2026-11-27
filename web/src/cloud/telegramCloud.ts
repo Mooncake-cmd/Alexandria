@@ -233,6 +233,8 @@ export function isTelegramUrl(url: string): boolean {
 export interface CloudVideo {
   messageId: number
   name: string
+  /** Nome que identifica o vídeo no arquivo de posições (o do arquivo, ou o número da mensagem). */
+  keyName: string
   size: number
   /** Segundos (0 se o Telegram não informou). */
   duration: number
@@ -244,6 +246,8 @@ export interface CloudVideo {
 
 const VIDEO_EXTENSIONS = /\.(mp4|m4v|mkv|webm|mov|avi|wmv|flv|mpe?g|ts|3gp)$/i
 
+export const videoKeyName = (fileName: string | undefined, messageId: number) => fileName || `mensagem-${messageId}`
+
 export function isVideoMessage(m: TgMessage): boolean {
   return !!m.size && ((m.mime ?? '').startsWith('video/') || VIDEO_EXTENSIONS.test(m.fileName ?? ''))
 }
@@ -254,6 +258,7 @@ export async function listVideos(api: TgApi): Promise<CloudVideo[]> {
   return messages.filter(isVideoMessage).map((m) => ({
     messageId: m.id,
     name: m.fileName || m.caption.split('\n')[0]?.trim() || `Vídeo ${m.id}`,
+    keyName: videoKeyName(m.fileName, m.id),
     size: m.size ?? 0,
     duration: m.duration ?? 0,
     mime: m.mime ?? '',

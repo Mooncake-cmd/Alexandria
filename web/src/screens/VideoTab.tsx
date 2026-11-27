@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'preact/hooks'
 import type { AppTab } from '../core/tabs'
 import { typeLabel } from '../core/tabs'
-import { cloudVideos, telegramSettings } from '../cloud/cloud'
+import { cloudVideos, telegramSettings, videoPositions } from '../cloud/cloud'
 import { formatDuration, type CloudVideo } from '../cloud/telegramCloud'
 import { groupOptions, tabOptions } from './tabActions'
+import { bookKey, type SyncEntry } from '../storage/sync'
+import { clock, resumeAt, watched } from '../core/videoProgress'
 
 const size = (bytes: number) => (bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1).replace('.', ',')} GB` : `${Math.max(1, Math.round(bytes / 1e6))} MB`)
 
@@ -15,13 +17,23 @@ export function VideoTab({ tab }: { tab: AppTab }) {
   const [state, setState] = useState<'loading' | 'login' | 'nogroup' | 'error' | 'ok'>('loading')
   const [videos, setVideos] = useState<CloudVideo[]>([])
   const [error, setError] = useState('')
+  /** Onde cada vídeo parou (pela chave nome+tamanho). */
+  const [progress, setProgress] = useState<Map<number, SyncEntry>>(new Map())
   const load = async () => {
     if (!(await telegramSettings())?.session) return setState('login')
     if (!tab.chat) return setState('nogroup')
     setState('loading')
     try {
-      setVideos(await cloudVideos(tab.id))
+      const list = await cloudVideos(tab.id)
+      setVideos(list)
       setState('ok')
+      const positions = await videoPositions(tab.id)
+      const map = new Map<number, SyncEntry>()
+      for (const v of list) {
+        const entry = positions[await bookKey(v.keyName, v.size)]
+        if (entry) map.set(v.messageId, entry)
+      }
+      setProgress(map)
     } catch (e) {
       const { telegramError } = await import('../cloud/gramApi')
       setError(telegramError(e))
@@ -50,19 +62,41 @@ export function VideoTab({ tab }: { tab: AppTab }) {
         </div>
       )}
       {state === 'error' && <p class="muted small">{error} <button type="button" class="link" onClick={load}>Tentar de novo</button></p>}
-      {state === 'ok' && (
-        <>
-          <p class="muted small">{videos.length ? `${videos.length} vídeo(s) no grupo. Assistir por aqui, com streaming, chega na próxima atualização.` : 'Nenhum vídeo no grupo ainda. Envie pelo Telegram (como vídeo ou como arquivo).'}</p>
-          <ul class="cloud-list video-list">
-            {videos.map((v) => (
-              <li key={v.messageId}>
+      {state === 'ok' && (() => {
+        const status = (v: CloudVideo) => {
+          const p = progress.get(v.messageId)
+          const duration = p?.pageCount || v.duration
+          if (!p) return { label: '', fraction: 0, resume: false }
+          if (watched(p.position, duration)) return { label: '✓ Assistido', fraction: 1, resume: false }
+          const at = resumeAt(p.position, duration)
+          return { label: at ? `Parou em ${clock(at)}` : '', fraction: duration ? p.position / duration : 0, resume: at > 0 }
+        }
+        const going = videos.filter((v) => status(v).resume).sort((a, b) => (progress.get(b.messageId)?.updated ?? 0) - (progress.get(a.messageId)?.updated ?? 0))
+        const row = (v: CloudVideo) => {
+          const s = status(v)
+          return (
+            <li key={v.messageId}>
+              <a class="video-row" href={`#/video/${tab.id}/${v.messageId}`}>
                 <span class="name">▶ {v.name.replace(/\.[^.]+$/, '')}</span>
-                <span class="muted small">{[formatDuration(v.duration), size(v.size), v.sender].filter(Boolean).join(' · ')}</span>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
+                <span class="muted small">{[s.label, formatDuration(v.duration), size(v.size), v.sender].filter(Boolean).join(' · ')}</span>
+                {s.fraction > 0 && s.fraction < 1 && <span class="video-bar"><span style={{ width: `${Math.round(s.fraction * 100)}%` }} /></span>}
+              </a>
+            </li>
+          )
+        }
+        return (
+          <>
+            {going.length > 0 && (
+              <>
+                <h3>Continuar assistindo</h3>
+                <ul class="cloud-list video-list">{going.map(row)}</ul>
+              </>
+            )}
+            <p class="muted small">{videos.length ? `${videos.length} vídeo(s) no grupo. Toque para assistir.` : 'Nenhum vídeo no grupo ainda. Envie pelo Telegram (como vídeo ou como arquivo).'}</p>
+            <ul class="cloud-list video-list">{videos.map(row)}</ul>
+          </>
+        )
+      })()}
     </>
   )
 }

@@ -9,7 +9,8 @@ import { StringSession } from 'telegram/sessions'
 import { CustomFile } from 'telegram/client/uploads'
 import { Buffer } from 'buffer'
 import bigInt from 'big-integer'
-import type { SponsoredItem, TgApi, TgMessage } from './telegramCloud'
+import { videoKeyName, type SponsoredItem, type TgApi, type TgMessage } from './telegramCloud'
+import { BLOCK, BlockReader } from './blockReader'
 
 /** Grupo privado da nuvem (o access_hash é preciso para falar com ele sem procurar de novo). */
 export interface CloudChat {
@@ -298,4 +299,49 @@ export async function viewSponsored(client: TelegramClient, target: CloudTarget,
 
 export async function clickSponsored(client: TelegramClient, target: CloudTarget, id: string) {
   if (target !== 'me') await client.invoke(new Api.messages.ClickSponsoredMessage({ peer: peerOf(target), randomId: Buffer.from(id, 'base64') }))
+}
+
+// ---------- vídeo por partes (streaming) ----------
+
+export interface VideoSource {
+  messageId: number
+  name: string
+  keyName: string
+  size: number
+  mime: string
+  reader: BlockReader
+}
+
+function documentOf(m: Api.Message | undefined): Api.Document {
+  const doc = m?.media instanceof Api.MessageMediaDocument && m.media.document instanceof Api.Document ? m.media.document : null
+  if (!doc) throw new Error('O vídeo não foi encontrado no grupo (pode ter sido apagado).')
+  return doc
+}
+
+/**
+ * Abre um vídeo do grupo para tocar enquanto baixa: cada bloco de 512 KB é pedido ao Telegram só quando
+ * o player precisa (ou um pouco antes). A referência do arquivo vence depois de um tempo; aí a mensagem
+ * é lida de novo e o pedido, repetido.
+ */
+export async function videoSource(client: TelegramClient, target: CloudTarget, messageId: number): Promise<VideoSource> {
+  const peer = peerOf(target)
+  let doc = documentOf((await client.getMessages(peer, { ids: messageId }))[0])
+  const location = () => new Api.InputDocumentFileLocation({ id: doc.id, accessHash: doc.accessHash, fileReference: doc.fileReference, thumbSize: '' })
+  const size = toNumber(doc.size)
+  const fetchBlock = async (index: number, retry = true): Promise<Uint8Array> => {
+    try {
+      for await (const chunk of client.iterDownload({ file: location(), offset: bigInt(index * BLOCK), limit: 1, requestSize: BLOCK, chunkSize: BLOCK, dcId: doc.dcId, fileSize: bigInt(size) })) {
+        return new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength)
+      }
+      return new Uint8Array(0)
+    } catch (e) {
+      if (retry && /FILE_REFERENCE/.test((e as { errorMessage?: string }).errorMessage ?? '')) {
+        doc = documentOf((await client.getMessages(peer, { ids: messageId }))[0])
+        return fetchBlock(index, false)
+      }
+      throw e
+    }
+  }
+  const fileName = doc.attributes.find((a): a is Api.DocumentAttributeFilename => a instanceof Api.DocumentAttributeFilename)?.fileName
+  return { messageId, name: fileName ?? `Vídeo ${messageId}`, keyName: videoKeyName(fileName, messageId), size, mime: doc.mimeType || 'video/mp4', reader: new BlockReader(size, (i) => fetchBlock(i)) }
 }

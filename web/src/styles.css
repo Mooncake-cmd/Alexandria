@@ -451,3 +451,20 @@ kbd { font-family: inherit; font-size: 12px; background: var(--paper, #f5f2eb); 
   .nav { overflow: visible; }
   .tab-strip { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0 12px; margin-bottom: 4px; scrollbar-width: none; }
 }
+
+/* ---------- vídeos ---------- */
+.video-list li { padding: 0; }
+.video-row { display: flex; flex-direction: column; gap: 3px; width: 100%; padding: 10px 14px; color: var(--text); text-decoration: none; position: relative; }
+.video-row:hover { background: rgba(183, 137, 66, 0.07); }
+.video-row .name { font-weight: 700; }
+.video-bar { display: block; height: 3px; background: var(--line); border-radius: 2px; margin-top: 4px; overflow: hidden; }
+.video-bar span { display: block; height: 100%; background: var(--gold); }
+.video-page { min-height: 100vh; background: #0b0f14; color: #e8eaed; padding: 14px 18px; box-sizing: border-box; }
+.video-top { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }
+.video-top h2 { margin: 0; font-size: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.video-page .secondary { background: transparent; color: #e8eaed; border-color: rgba(255, 255, 255, 0.25); }
+.video-frame { position: relative; }
+.video-frame video { width: 100%; max-height: calc(100vh - 110px); background: #000; border-radius: 8px; display: block; }
+.video-page .sync-error { color: #ffb4a8; max-width: 760px; line-height: 1.5; }
+.video-page .snack { position: absolute; left: 12px; bottom: 60px; background: rgba(20, 24, 30, 0.92); color: #fff; padding: 8px 14px; border-radius: 10px; font-size: 14px; }
+.video-page .snack .link { color: #d9ad66; }

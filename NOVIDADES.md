@@ -3,6 +3,11 @@
 Cada seção vira o texto da Release no GitHub e aparece no aviso de atualização do app.
 A versão mais nova fica em cima.
 
+## 0.24.0
+- Assistir nas abas de Filmes e Cursos: toque num vídeo e ele toca enquanto baixa do grupo (streaming), sem esperar o arquivo inteiro. Dá para pular para qualquer ponto.
+- Continuar assistindo: o ponto onde você parou fica salvo no grupo da aba; ao abrir de novo (no celular ou no computador), o vídeo continua de lá, com a opção de voltar ao início. A lista mostra "Parou em…" e "✓ Assistido".
+- No celular, o player gira com o aparelho e toca em tela cheia.
+
 ## 0.23.0
 - Abas na tela inicial: além de Livros, crie abas de Livros, Filmes ou Cursos (o "＋" na fileira de abas). Cada aba pode ter o seu grupo privado do Telegram: toque em ⋯ ao lado do nome da aba → Grupo da nuvem.
 - Abas de livros separam os livros (por exemplo, HQs à parte): o que você importa entra na aba aberta, e "Mover para outra aba" troca de lugar. A posição de leitura vai para o grupo da aba do livro.

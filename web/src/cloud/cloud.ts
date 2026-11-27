@@ -5,8 +5,9 @@
  */
 import { getPref, setPref, addBook, bookFile, type LibraryItem } from '../storage/library'
 import { bookKey, DEVICE, pullPosition as pullFromGitHub, pushPosition as pushToGitHub, syncSettings, type SyncEntry } from '../storage/sync'
-import { copyCloud, downloadBook, listCloudBooks, listVideos, pullPositionFrom, pushPositionTo, uploadBook, removeCloudBook, type CloudBook, type CloudVideo, type SponsoredItem, type TgApi } from './telegramCloud'
-import type { CloudChat, CloudTarget } from './gramApi'
+import { copyCloud, downloadBook, listCloudBooks, listVideos, pullPositionFrom, pushPositionTo, readPositions, uploadBook, removeCloudBook, type CloudBook, type CloudVideo, type SponsoredItem, type TgApi } from './telegramCloud'
+import type { CloudChat, CloudTarget, VideoSource } from './gramApi'
+import { BlockReader } from './blockReader'
 import { MAIN_TAB, tabOf } from '../core/tabs'
 import { tabById } from '../storage/tabs'
 
@@ -277,4 +278,61 @@ export async function cloudVideos(tab: string): Promise<CloudVideo[]> {
     await rememberTelegramError(e)
     throw e
   }
+}
+
+/** Vídeos abertos (um por aba e mensagem), para o player pedir os pedaços. */
+const sources = new Map<string, Promise<VideoSource>>()
+/** Só nos testes: troca a fonte do vídeo por uma falsa. */
+let sourceFactory: ((tab: string, messageId: number) => Promise<VideoSource>) | null = null
+export function setVideoSourceFactory(factory: typeof sourceFactory) {
+  sourceFactory = factory
+  sources.clear()
+}
+
+export function openVideo(tab: string, messageId: number): Promise<VideoSource> {
+  const key = `${tab}/${messageId}`
+  let source = sources.get(key)
+  if (!source) {
+    source = (async () => {
+      if (sourceFactory) return sourceFactory(tab, messageId)
+      const target = await targetOfTab(tab)
+      if (!target || target === 'me') throw new Error('Esta aba não tem grupo.')
+      const { gram, client: c } = await client()
+      return gram.videoSource(c, target, messageId)
+    })()
+    source.catch(() => sources.delete(key))
+    sources.set(key, source)
+  }
+  return source
+}
+
+/** Posições salvas dos vídeos da aba (o mesmo arquivo de posições do grupo, com os livros). */
+export async function videoPositions(tab: string): Promise<Record<string, SyncEntry>> {
+  try {
+    const api = await apiOfTab(tab)
+    return api ? await limited(readPositions(api)) : {}
+  } catch (e) {
+    await rememberTelegramError(e)
+    return {}
+  }
+}
+
+/** Grava onde o vídeo parou (fila: uma gravação por vez). */
+export function pushVideoPosition(tab: string, name: string, size: number, entry: SyncEntry): Promise<void> {
+  const run = async () => {
+    try {
+      const api = await apiOfTab(tab)
+      if (api) await limited(pushPositionTo(api, await bookKey(name, size), entry))
+    } catch (e) {
+      await rememberTelegramError(e)
+    }
+  }
+  const next = positionQueue.then(run, run)
+  positionQueue = next.catch(() => {})
+  return next
+}
+
+// Só nos testes de navegador: troca as ligações com o Telegram por falsas.
+if (typeof window !== 'undefined') {
+  ;(window as unknown as { __alxTest?: unknown }).__alxTest = { setVideoSourceFactory, setTelegramApiFactory, BlockReader }
 }

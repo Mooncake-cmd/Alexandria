@@ -7,7 +7,8 @@
  * `AndroidCloud.progress(id, fração)`. Arquivos passam em pedaços (base64): `read(token, início,
  * tamanho)` para enviar e `write(token, base64)` para baixar.
  */
-import { copyCloud, downloadBook, listCloudBooks, listVideos, pullPositionFrom, pushPositionTo, removeCloudBook, uploadBook, type TgApi } from './telegramCloud'
+import { copyCloud, downloadBook, listCloudBooks, listVideos, pullPositionFrom, pushPositionTo, readPositions, removeCloudBook, uploadBook, type TgApi } from './telegramCloud'
+import type { VideoSource } from './gramApi'
 import type { CloudChat, CloudTarget } from './gramApi'
 import type { SyncEntry } from '../storage/sync'
 
@@ -27,6 +28,7 @@ declare global {
     /** Só nos testes: troca a ligação com o Telegram por uma falsa (uma por conversa: 'me' ou o id do grupo). */
     __alxTestApi?: TgApi
     __alxTestApis?: Record<string, TgApi>
+    __alxTestSource?: (messageId: number) => Promise<VideoSource>
   }
 }
 
@@ -146,6 +148,18 @@ const methods: Record<string, (args: Args, id: string, bridge: Bridge) => Promis
   async videos() {
     return listVideos(await api())
   },
+  async positions() {
+    return readPositions(await api())
+  },
+  // ---------- vídeo por partes (o player do Android lê daqui) ----------
+  async videoOpen(args) {
+    const s = await source(args)
+    return { name: s.name, keyName: s.keyName, size: s.size, mime: s.mime }
+  },
+  async range(args) {
+    const s = await source(args)
+    return toBase64(await s.reader.read(Number(args.offset), Number(args.length)))
+  },
   async joinGroup(args) {
     const { gram, client: c } = await client()
     return gram.joinGroup(c, String(args.link ?? ''))
@@ -196,11 +210,38 @@ const methods: Record<string, (args: Args, id: string, bridge: Bridge) => Promis
   }
 }
 
+/** Vídeos abertos pelo player (por grupo e mensagem). */
+const sources = new Map<string, Promise<VideoSource>>()
+
+/** O vídeo da mensagem; o grupo vem nos argumentos (o player não depende do "init" da fila). */
+function source(args: Args): Promise<VideoSource> {
+  const chat = chatArg(args.chat)
+  const id = Number(args.messageId)
+  const key = `${chat.id}/${id}`
+  let s = sources.get(key)
+  if (!s) {
+    s = (async () => {
+      if (window.__alxTestSource) return window.__alxTestSource(id)
+      if (!settings?.session && args.session) settings = { apiId: Number(args.apiId), apiHash: String(args.apiHash), session: String(args.session), chat: null }
+      const { gram, client: c } = await client()
+      return gram.videoSource(c, chat, id)
+    })()
+    s.catch(() => sources.delete(key))
+    sources.set(key, s)
+    // Poucos vídeos abertos de cada vez (cada um guarda blocos na memória).
+    while (sources.size > 3) sources.delete(sources.keys().next().value as string)
+  }
+  return s
+}
+
+/** Pedidos que não entram na fila: o player precisa dos pedaços na hora. */
+const DIRECT = new Set(['range', 'videoOpen'])
+
 /** Uma chamada por vez: o Telegram não gosta de rajadas, e as transferências usam muita memória. */
 let queue: Promise<unknown> = Promise.resolve()
 
 /** Transferências podem demorar; o resto, se passar disto sem resposta, falha e libera a fila. */
-const SLOW = new Set(['upload', 'download', 'copyFromSaved', 'books', 'videos'])
+const SLOW = new Set(['upload', 'download', 'copyFromSaved', 'books', 'videos', 'positions'])
 const TIMEOUT_MS = 60_000
 const SLOW_TIMEOUT_MS = 30 * 60_000
 
@@ -238,6 +279,10 @@ window.alxCloud = {
         }
         bridge.fail(id, code, message)
       }
+    }
+    if (DIRECT.has(method)) {
+      run()
+      return
     }
     const next = queue.then(run, run)
     queue = next.catch(() => {})

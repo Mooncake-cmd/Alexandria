@@ -78,6 +78,8 @@ class MainActivity : Activity() {
             refreshOnResume = false
             showSection(section)
         }
+        // Voltou do player: onde os vídeos pararam pode ter mudado.
+        if (section == SECTION_LIBRARY && videos != null) AppTabs.current(this).takeIf { it.isVideo }?.let { refreshVideoPositions(it) }
         // Voltou da tela do Android que permite instalar atualizações.
         pendingUpdate?.let { apk ->
             if (AppUpdates.canInstall(this)) {
@@ -1804,6 +1806,8 @@ class MainActivity : Activity() {
     private var videos: List<CloudVideo>? = null
     private var videosError: String? = null
     private var videosLoading = false
+    /** Onde cada vídeo parou (pela chave nome+tamanho), do arquivo de posições do grupo. */
+    private var videoPositions: Map<String, SyncEntry> = emptyMap()
 
     /** Nesta etapa só a lista dos vídeos do grupo; o player e as playlists por tópicos vêm depois. */
     private fun showVideoTab(tab: AppTab) {
@@ -1839,6 +1843,7 @@ class MainActivity : Activity() {
                     if (destroyed) return@videos
                     result.onSuccess { videos = it; videosError = null }.onFailure { videosError = it.message ?: "Não foi possível falar com o Telegram agora." }
                     if (section == SECTION_LIBRARY && AppTabs.current(this).id == tab.id) showLibrary()
+                    if (result.isSuccess) refreshVideoPositions(tab)
                 }
             }
             return
@@ -1853,28 +1858,71 @@ class MainActivity : Activity() {
             })
             return
         }
+        val going = list!!.filter { videoStatus(it).third }
+            .sortedByDescending { videoPositions[SyncData.key(it.keyName, it.size)]?.updated ?: 0L }
+        if (going.isNotEmpty()) {
+            content.addView(label("Continuar assistindo", 16f, ink, true).apply { setPadding(0, 0, 0, dp(8)) })
+            going.forEach { addVideoRow(tab, it) }
+            spacer(10)
+        }
         content.addView(label(
-            if (list!!.isEmpty()) "Nenhum vídeo no grupo ainda. Envie pelo Telegram (como vídeo ou como arquivo)."
-            else "${list.size} vídeo(s) no grupo. Assistir por aqui, com streaming, chega na próxima atualização.",
+            if (list.isEmpty()) "Nenhum vídeo no grupo ainda. Envie pelo Telegram (como vídeo ou como arquivo)."
+            else "${list.size} vídeo(s) no grupo. Toque para assistir.",
             12f, muted
         ).apply { setPadding(0, 0, 0, dp(8)) })
-        for (v in list) {
-            content.addView(LinearLayout(this).apply {
+        list.forEach { addVideoRow(tab, it) }
+    }
+
+    private fun refreshVideoPositions(tab: AppTab) {
+        val chat = tab.chat ?: return
+        TelegramCloud.positions(this, chat) { result ->
+            if (destroyed) return@positions
+            result.onSuccess { found ->
+                if (found == videoPositions) return@onSuccess
+                videoPositions = found
+                if (section == SECTION_LIBRARY && AppTabs.current(this).id == tab.id) showLibrary()
+            }
+        }
+    }
+
+    /** Texto do progresso, fração assistida e se entra em "Continuar assistindo". */
+    private fun videoStatus(v: CloudVideo): Triple<String, Float, Boolean> {
+        val p = videoPositions[SyncData.key(v.keyName, v.size)] ?: return Triple("", 0f, false)
+        val duration = (if (p.pageCount > 0) p.pageCount else v.duration).toLong()
+        if (VideoProgress.watched(p.position.toLong(), duration)) return Triple("✓ Assistido", 1f, false)
+        val at = VideoProgress.resumeAt(p.position.toLong(), duration)
+        return Triple(if (at > 0) "Parou em ${VideoProgress.clock(at)}" else "", if (duration > 0) p.position.toFloat() / duration else 0f, at > 0)
+    }
+
+    private fun addVideoRow(tab: AppTab, v: CloudVideo) {
+        val (status, fraction, _) = videoStatus(v)
+        content.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(10), dp(12), dp(10))
+            background = rounded(Color.WHITE, 12)
+            setOnClickListener {
+                // Ao voltar do player, as posições são lidas de novo (para "Continuar assistindo").
+                refreshOnResume = true
+                VideoActivity.open(this@MainActivity, tab.id, v)
+            }
+            addView(LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(14), dp(10), dp(12), dp(10))
-                background = rounded(Color.WHITE, 12)
                 addView(label("▶  ${v.name.substringBeforeLast('.')}", 14f, ink, true).apply {
                     maxLines = 2
                     ellipsize = TextUtils.TruncateAt.END
                 }, LinearLayout.LayoutParams(0, -2, 1f))
                 val size = if (v.size >= 1_000_000_000) "%.1f GB".format(v.size / 1e9) else "${maxOf(1, v.size / 1_000_000)} MB"
-                addView(label(listOf(CloudVideo.duration(v.duration), size.replace('.', ','), v.sender).filter { it.isNotBlank() }.joinToString("\n"), 11f, muted).apply {
+                addView(label(listOf(status, CloudVideo.duration(v.duration), size.replace('.', ','), v.sender).filter { it.isNotBlank() }.joinToString("\n"), 11f, muted).apply {
                     gravity = Gravity.END
                     setPadding(dp(8), 0, 0, 0)
                 })
-            }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
-        }
+            })
+            if (fraction > 0f && fraction < 1f) addView(android.widget.ProgressBar(this@MainActivity, null, android.R.attr.progressBarStyleHorizontal).apply {
+                max = 1000
+                progress = (fraction * 1000).toInt()
+            }, LinearLayout.LayoutParams(-1, dp(6)).apply { topMargin = dp(6) })
+        }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
     }
 
     /** Passo 1 do login no Telegram: api_id, api_hash e telefone. */

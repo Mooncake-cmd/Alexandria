@@ -75,6 +75,13 @@
         <activity
             android:name=".ReaderActivity"
             android:exported="false" />
+        <!-- Player das abas de filmes e cursos: gira com o aparelho sem recomeçar o vídeo. -->
+        <activity
+            android:name=".VideoActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
+            android:screenOrientation="fullSensor"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
+            android:exported="false" />
         <receiver
             android:name=".UpdateInstallReceiver"
             android:exported="false" />

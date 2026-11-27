@@ -204,6 +204,8 @@ class ShelfPreviewTest {
             AppTab("cursos", "Cursos", AppTabs.COURSES, null)
         ))
         engine.videoList.put(org.json.JSONObject().put("messageId", 1).put("name", "O Auto da Compadecida.mp4").put("size", 1_400_000_000L).put("duration", 6240).put("date", 2).put("sender", "Isac (número 2)"))
+        engine.positions[SyncData.key("O Auto da Compadecida.mp4", 1_400_000_000L)] = org.json.JSONObject().put("format", "video").put("position", 2050).put("exact", 2_050_000).put("pageCount", 6240).put("updated", 5).put("device", "computador")
+        engine.positions[SyncData.key("Central do Brasil.mkv", 2_900_000_000L)] = org.json.JSONObject().put("format", "video").put("position", 6700).put("exact", 6_700_000).put("pageCount", 6780).put("updated", 4).put("device", "celular")
         engine.videoList.put(org.json.JSONObject().put("messageId", 2).put("name", "Central do Brasil.mkv").put("size", 2_900_000_000L).put("duration", 6780).put("date", 1).put("sender", "Leitora"))
         engine.ads.put(org.json.JSONObject().put("id", "eA==").put("title", "Canal Clássicos").put("message", "Um clássico da literatura por dia, comentado.").put("url", "https://t.me/classicos").put("buttonText", "Ver canal").put("sponsorInfo", "Anunciante: Clássicos"))
         val local = File(context.cacheDir, "Dom Casmurro.txt").apply { writeText("Uma noite destas, vindo da cidade para o Engenho Novo…") }

@@ -10,6 +10,7 @@ import { Settings } from './screens/Settings'
 import { Reader } from './screens/Reader'
 import { importFiles } from './library/importBooks'
 import { VideoTab } from './screens/VideoTab'
+import { VideoPlayer } from './screens/VideoPlayer'
 import { MAIN_TAB, isVideoTab, type AppTab } from './core/tabs'
 import { getTabs, onTabsChange } from './storage/tabs'
 import { newTab } from './screens/tabActions'
@@ -33,6 +34,9 @@ function currentRoute(): { section: string; bookId: number | null; position: num
   const path = location.hash.replace(/^#\/?/, '')
   const tab = /^aba\/([\w-]+)$/.exec(path)
   if (tab) return { section: 'aba', bookId: null, position: null, tabId: tab[1] }
+  // #/video/filmes/123: o vídeo 123 do grupo da aba "filmes".
+  const video = /^video\/([\w-]+)\/(\d+)$/.exec(path)
+  if (video) return { section: 'video', bookId: null, position: Number(video[2]), tabId: video[1] }
   // #/ler/12 abre no ponto salvo; #/ler/12/4200 abre numa posição (uma anotação, por exemplo).
   const reading = /^ler\/(\d+)(?:\/(\d+))?$/.exec(path)
   if (reading) return { section: 'ler', bookId: Number(reading[1]), position: reading[2] !== undefined ? Number(reading[2]) : null, tabId: MAIN_TAB }
@@ -122,6 +126,15 @@ export function App() {
       window.removeEventListener('drop', drop)
     }
   }, [])
+
+  if (route.section === 'video' && route.position !== null) {
+    return (
+      <>
+        <VideoPlayer key={`${route.tabId}/${route.position}`} tabId={route.tabId} messageId={route.position} />
+        <DialogHost />
+      </>
+    )
+  }
 
   if (route.section === 'ler' && route.bookId !== null) {
     return (

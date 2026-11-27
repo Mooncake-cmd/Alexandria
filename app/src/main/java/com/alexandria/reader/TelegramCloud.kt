@@ -47,11 +47,22 @@ data class CloudBook(
 }
 
 /** Vídeo do grupo de uma aba de filmes ou cursos. */
-data class CloudVideo(val messageId: Int, val name: String, val size: Long, val duration: Int, val mime: String, val date: Long, val sender: String, val topic: Int) {
+data class CloudVideo(
+    val messageId: Int,
+    val name: String,
+    val size: Long,
+    val duration: Int,
+    val mime: String,
+    val date: Long,
+    val sender: String,
+    val topic: Int,
+    /** Nome que identifica o vídeo no arquivo de posições (o do arquivo, ou o número da mensagem). */
+    val keyName: String = name
+) {
     companion object {
         fun from(o: JSONObject) = CloudVideo(
             o.getInt("messageId"), o.optString("name"), o.optLong("size"), o.optDouble("duration", 0.0).toInt(), o.optString("mime"),
-            o.optLong("date"), o.optString("sender"), o.optInt("topic")
+            o.optLong("date"), o.optString("sender"), o.optInt("topic"), o.optString("keyName").ifEmpty { o.optString("name") }
         )
 
         fun duration(seconds: Int): String {
@@ -451,6 +462,31 @@ object TelegramCloud {
     fun sponsoredClicked(context: Context, chat: CloudChat, item: SponsoredItem) = call(context, "clickSponsored", JSONObject().put("id", item.id), chat = chat) {}
 
     // ---------- vídeos (abas de filmes e cursos) ----------
+
+    /** Posições salvas no grupo (livros e vídeos), pela chave nome+tamanho. */
+    fun positions(context: Context, chat: CloudChat?, done: (Result<Map<String, SyncEntry>>) -> Unit) =
+        call(context, "positions", chat = chat) { r -> done(r.map { SyncData.parse("{\"books\":$it}") }) }
+
+    /** Tamanho, tipo e nome de um vídeo do grupo, para o player. */
+    data class VideoInfo(val name: String, val keyName: String, val size: Long, val mime: String)
+
+    fun videoOpen(context: Context, chat: CloudChat, messageId: Int, done: (Result<VideoInfo>) -> Unit) =
+        direct(context, "videoOpen", chat, JSONObject().put("messageId", messageId)) { r ->
+            done(r.mapCatching { JSONObject(it).let { o -> VideoInfo(o.optString("name"), o.optString("keyName"), o.getLong("size"), o.optString("mime")) } })
+        }
+
+    /** Um pedaço do vídeo (o player lê enquanto baixa). Fora da fila do motor. */
+    fun videoRange(context: Context, chat: CloudChat, messageId: Int, offset: Long, length: Int, done: (Result<ByteArray>) -> Unit) =
+        direct(context, "range", chat, JSONObject().put("messageId", messageId).put("offset", offset).put("length", length)) { r ->
+            done(r.mapCatching { Base64.decode(JSONObject("{\"v\":$it}").getString("v"), Base64.NO_WRAP) })
+        }
+
+    /** Chamada que não passa pela fila nem pelo "init": leva a sessão e o grupo nos argumentos. */
+    private fun direct(context: Context, method: String, chat: CloudChat, args: JSONObject, done: (Result<String>) -> Unit) {
+        val s = settings(context) ?: return done(Result.failure(CloudException("NO_SESSION", "Entre no Telegram em Ajustes.")))
+        args.put("chat", chat.toJson()).put("apiId", s.apiId).put("apiHash", s.apiHash).put("session", s.session)
+        engine(context).call(method, args, null, done)
+    }
 
     fun videos(context: Context, chat: CloudChat, done: (Result<List<CloudVideo>>) -> Unit) =
         call(context, "videos", chat = chat) { r -> done(r.map { json -> JSONArray(json).let { a -> (0 until a.length()).map { CloudVideo.from(a.getJSONObject(it)) } } }) }
