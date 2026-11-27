@@ -65,8 +65,18 @@ jobs:
         env:
           KEYSTORE: ${{ secrets.ALEXANDRIA_KEYSTORE }}
         run: |
-          mkdir -p ~/.android
-          echo "$KEYSTORE" | base64 -d > ~/.android/debug.keystore
+          key="$RUNNER_TEMP/alexandria.keystore"
+          # Tolera espaços e quebras de linha coladas junto com o texto do segredo.
+          printf '%s' "$KEYSTORE" | tr -d ' \r\n\t' | base64 -d > "$key"
+          echo "Tamanho da chave: $(stat -c %s "$key") bytes"
+          # A impressão digital é pública (vai em todo APK); conferir antes de montar evita publicar com outra chave.
+          cert=$(keytool -list -v -keystore "$key" -storepass android -alias androiddebugkey | sed -n 's/^[[:space:]]*SHA256: //p' | tr -d ':' | tr 'A-F' 'a-f')
+          echo "Chave do segredo: $cert"
+          if [ "$cert" != "$EXPECTED_CERT" ]; then
+            echo "::error::O segredo ALEXANDRIA_KEYSTORE não é a chave oficial (esperada $EXPECTED_CERT)."
+            exit 1
+          fi
+          echo "ALEXANDRIA_KEYSTORE_FILE=$key" >> "$GITHUB_ENV"
       - name: Set up Gradle
         if: steps.plan.outputs.go == 'true'
         uses: gradle/actions/setup-gradle@v4

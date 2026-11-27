@@ -17,6 +17,19 @@ android {
 
     ndkVersion = "27.0.12077973"
 
+    // Chave oficial dos APKs publicados: o workflow de Release aponta ALEXANDRIA_KEYSTORE_FILE para ela.
+    // Sem a variável, vale a chave de testes padrão do Android (~/.android/debug.keystore).
+    signingConfigs {
+        getByName("debug") {
+            System.getenv("ALEXANDRIA_KEYSTORE_FILE")?.takeIf { it.isNotBlank() }?.let {
+                storeFile = file(it)
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
+    }
+
     sourceSets["main"].jniLibs.srcDir(layout.buildDirectory.dir("generated/ore-jni"))
 
     packaging {
