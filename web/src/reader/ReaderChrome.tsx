@@ -57,7 +57,7 @@ interface Props {
   /** Atalhos próprios do formato (tecla minúscula → ação): S sumário, G ir para a página. */
   keys?: Record<string, () => void>
   /** Livro para a sincronização da posição entre aparelhos (nome e tamanho do arquivo). */
-  sync?: { name: string; size: number; format: string; openedAt: number; pageCount: number }
+  sync?: { name: string; size: number; format: string; openedAt: number; pageCount: number; tab?: string }
   children: (api: ChromeApi) => ComponentChildren
 }
 
@@ -118,7 +118,7 @@ export function ReaderChrome({ title, prefs, onPrefs, typography, menu, headerEx
     const exact = t.exact()
     if (exact === st.lastPushed) return
     st.lastPushed = exact
-    pushPosition(sync.name, sync.size, { format: sync.format, position: Math.round(t.current()), exact, pageCount: sync.pageCount, updated: Date.now(), device: DEVICE }, keepalive)
+    pushPosition(sync.name, sync.size, { format: sync.format, position: Math.round(t.current()), exact, pageCount: sync.pageCount, updated: Date.now(), device: DEVICE }, keepalive, sync.tab)
   }
   useEffect(() => {
     if (!sync || sync.size <= 0) {
@@ -126,7 +126,7 @@ export function ReaderChrome({ title, prefs, onPrefs, typography, menu, headerEx
       return
     }
     let alive = true
-    pullPosition(sync.name, sync.size).then((entry) => {
+    pullPosition(sync.name, sync.size, sync.tab).then((entry) => {
       if (!alive) return
       syncState.current.pulled = true
       syncState.current.remote = entry

@@ -195,7 +195,16 @@ class ShelfPreviewTest {
         TelegramCloud.engineFactory = { engine }
         context.getSharedPreferences("telegram", Context.MODE_PRIVATE).edit()
             .putInt("api_id", 1).putString("api_hash", "x").putString("session", "SESSAO").putString("name", "Leitora")
-            .putString("chat", CloudChat("777", "1", "Alexandria — biblioteca").toJson().toString()).commit()
+            .commit()
+        context.getSharedPreferences("tabs", Context.MODE_PRIVATE).edit().clear().commit()
+        AppTabs.save(context, listOf(
+            AppTab(AppTabs.MAIN, "Livros", AppTabs.BOOKS, CloudChat("777", "1", "Alexandria — biblioteca")),
+            AppTab("hqs", "HQs", AppTabs.BOOKS, null),
+            AppTab("filmes", "Filmes", AppTabs.MOVIES, CloudChat("888", "1", "Filmes da família")),
+            AppTab("cursos", "Cursos", AppTabs.COURSES, null)
+        ))
+        engine.videoList.put(org.json.JSONObject().put("messageId", 1).put("name", "O Auto da Compadecida.mp4").put("size", 1_400_000_000L).put("duration", 6240).put("date", 2).put("sender", "Isac (número 2)"))
+        engine.videoList.put(org.json.JSONObject().put("messageId", 2).put("name", "Central do Brasil.mkv").put("size", 2_900_000_000L).put("duration", 6780).put("date", 1).put("sender", "Leitora"))
         engine.ads.put(org.json.JSONObject().put("id", "eA==").put("title", "Canal Clássicos").put("message", "Um clássico da literatura por dia, comentado.").put("url", "https://t.me/classicos").put("buttonText", "Ver canal").put("sponsorInfo", "Anunciante: Clássicos"))
         val local = File(context.cacheDir, "Dom Casmurro.txt").apply { writeText("Uma noite destas, vindo da cidade para o Engenho Novo…") }
         LibraryDatabase(context).use { db ->
@@ -222,6 +231,11 @@ class ShelfPreviewTest {
             scroll.scrollTo(0, (panel.parent as View).top - 20)
             shadowOf(Looper.getMainLooper()).idle()
             save(root, File(dir, "nuvem-ajustes.png"))
+            AppTabs.setCurrent(context, "filmes")
+            val movies = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+            shadowOf(Looper.getMainLooper()).idle()
+            save(movies.window.decorView, File(dir, "aba-filmes.png"))
+            AppTabs.setCurrent(context, AppTabs.MAIN)
         } finally {
             TelegramCloud.reset()
             TelegramCloud.engineFactory = { WebViewCloudEngine(it) }

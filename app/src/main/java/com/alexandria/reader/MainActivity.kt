@@ -260,7 +260,16 @@ class MainActivity : Activity() {
 
     private fun showLibrary() {
         setContentView(baseScreen(SECTION_LIBRARY))
-        sectionTitle("Minha biblioteca", "Seus documentos ficam organizados neste dispositivo.")
+        val tab = AppTabs.current(this)
+        if (cloudTab != tab.id) {
+            cloudTab = tab.id
+            cloudBooks = null
+            cloudError = null
+            cloudAds = emptyList()
+        }
+        addTabStrip(tab)
+        if (tab.isVideo) return showVideoTab(tab)
+        tabTitle(tab, "Seus documentos ficam organizados neste dispositivo." + (tab.chat?.let { " A nuvem desta aba é o grupo \"${it.title}\"." } ?: ""))
         val streak = Streak.summary(database.readingDays(), Days.today())
         if (streak.current > 0 || streak.todaySeconds > 0) {
             val days = if (streak.current == 1) "1 dia seguido" else "${streak.current} dias seguidos"
@@ -285,8 +294,10 @@ class MainActivity : Activity() {
         content.addView(label("PDF  ·  EPUB  ·  MOBI  ·  AZW3  ·  DJVU  ·  CBZ  ·  CBR  ·  DOCX  ·  TXT", 12f, ink))
         spacer(22)
 
-        val items = database.all()
-        localCloudKeys = items.filter { it.fileSize > 0 && !it.archived }.associateBy { SyncData.key(it.name, it.fileSize) }
+        val everything = database.all()
+        // Livros de todas as abas contam como "já está aqui" (o mesmo arquivo não é baixado duas vezes).
+        localCloudKeys = everything.filter { it.fileSize > 0 && !it.archived }.associateBy { SyncData.key(it.name, it.fileSize) }
+        val items = everything.filter { it.tab == tab.id }
         prepareMissing(items)
         val reading = items.filter { !it.finished }
         val finished = items.filter { it.finished }
@@ -301,6 +312,7 @@ class MainActivity : Activity() {
                 ),
                 LinearLayout.LayoutParams(-1, -2)
             )
+            addCloudSection(items)
             return
         }
         if (reading.isEmpty()) {
@@ -473,19 +485,21 @@ class MainActivity : Activity() {
     private fun keyOf(entry: LibraryItem): String? = if (entry.fileSize > 0) SyncData.key(entry.name, entry.fileSize) else null
 
     private fun refreshCloud() {
-        if (cloudLoading || !TelegramCloud.connected(this)) return
-        if (TelegramCloud.settings(this)?.chat == null) cloudAds = emptyList()
+        val tab = AppTabs.current(this)
+        val (on, chat) = AppTabs.cloudOf(this, tab.id)
+        if (cloudLoading || !TelegramCloud.connected(this) || !on) return
+        if (chat == null) cloudAds = emptyList()
         cloudLoading = true
-        TelegramCloud.books(this) { result ->
+        TelegramCloud.books(this, chat) { result ->
             cloudLoading = false
-            if (destroyed) return@books
+            if (destroyed || cloudTab != tab.id) return@books
             result.onSuccess {
                 cloudBooks = it
                 cloudError = null
             }.onFailure { cloudError = it.message ?: "Não foi possível falar com o Telegram agora." }
             if (section == SECTION_LIBRARY) showLibrary()
             // Abrir a nuvem de um grupo equivale a abrir a conversa: pede os anúncios oficiais (regra 3.3).
-            if (result.isSuccess) TelegramCloud.sponsored(this) { ads ->
+            if (result.isSuccess) TelegramCloud.sponsored(this, chat) { ads ->
                 if (destroyed || ads == cloudAds) return@sponsored
                 cloudAds = ads
                 if (section == SECTION_LIBRARY) showLibrary()
@@ -497,7 +511,10 @@ class MainActivity : Activity() {
     private val seenAds = mutableSetOf<String>()
 
     /** Lugar da nuvem, para os textos ("nas suas Mensagens salvas" ou "no grupo …"). */
-    private fun cloudPlace(): String = TelegramCloud.settings(this)?.chat?.let { "no grupo \"${it.title}\"" } ?: "nas suas Mensagens salvas"
+    private fun cloudPlace(): String = AppTabs.current(this).chat?.let { "no grupo \"${it.title}\"" } ?: "nas suas Mensagens salvas"
+
+    /** Aba cujos livros da nuvem estão em [cloudBooks]. */
+    private var cloudTab = ""
 
     /**
      * Anúncio oficial do Telegram, depois de todos os livros da nuvem de um grupo
@@ -533,7 +550,7 @@ class MainActivity : Activity() {
             val rect = android.graphics.Rect()
             if (ad.id !in seenAds && card.isShown && card.getGlobalVisibleRect(rect) && rect.height() >= card.height && card.height > 0) {
                 seenAds += ad.id
-                TelegramCloud.sponsoredSeen(this, ad)
+                AppTabs.current(this).chat?.let { TelegramCloud.sponsoredSeen(this, it, ad) }
             }
         }
         card.post { check() }
@@ -541,7 +558,7 @@ class MainActivity : Activity() {
     }
 
     private fun openSponsored(ad: SponsoredItem) {
-        TelegramCloud.sponsoredClicked(this, ad)
+        AppTabs.current(this).chat?.let { TelegramCloud.sponsoredClicked(this, it, ad) }
         val open = {
             try {
                 startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(ad.url)))
@@ -555,7 +572,7 @@ class MainActivity : Activity() {
 
     /** "☁ Na nuvem": livros das Mensagens salvas que ainda não estão neste aparelho. */
     private fun addCloudSection(items: List<LibraryItem>) {
-        if (!TelegramCloud.connected(this)) return
+        if (!TelegramCloud.connected(this) || !AppTabs.cloudOf(this, AppTabs.current(this).id).first) return
         spacer(18)
         content.addView(label("☁  Na nuvem", 17f, ink, true).apply {
             minHeight = dp(44)
@@ -640,7 +657,7 @@ class MainActivity : Activity() {
                     Toast.makeText(this, "Não foi possível ler o arquivo deste livro.", Toast.LENGTH_LONG).show()
                     return@runOnUiThread
                 }
-                TelegramCloud.upload(this, entry.name, entry.format, file, progress) { result ->
+                TelegramCloud.upload(this, AppTabs.cloudOf(this, entry.tab).second, entry.name, entry.format, file, progress) { result ->
                     dialog.dismiss()
                     if (destroyed) return@upload
                     result.onSuccess { existed ->
@@ -657,14 +674,15 @@ class MainActivity : Activity() {
         val (dialog, progress) = progressDialog("Baixando da nuvem…")
         val safe = book.name.replace(Regex("[/\\\\:*?\"<>|]"), "_")
         val target = File(File(cacheDir, "cloud"), safe)
-        TelegramCloud.download(this, book, target, progress) { result ->
+        val tab = AppTabs.current(this)
+        TelegramCloud.download(this, tab.chat, book, target, progress) { result ->
             result.onFailure {
                 dialog.dismiss()
                 if (!destroyed) Toast.makeText(this, it.message ?: "Não foi possível baixar da nuvem.", Toast.LENGTH_LONG).show()
             }.onSuccess { file ->
                 background.execute {
                     val received = try {
-                        IncomingBooks.receive(this, database, android.net.Uri.fromFile(file), null)
+                        IncomingBooks.receive(this, database, android.net.Uri.fromFile(file), null, tab.id)
                     } catch (e: Exception) {
                         null
                     } finally {
@@ -695,7 +713,7 @@ class MainActivity : Activity() {
                     .setMessage("\"${displayTitle(book.name)}\" sai da nuvem (${cloudPlace().removePrefix("nas suas ").removePrefix("no ")}). Os aparelhos que já baixaram continuam com o livro.")
                     .setNegativeButton("Cancelar", null)
                     .setPositiveButton("Apagar") { _, _ ->
-                        TelegramCloud.remove(this, book.key) {
+                        TelegramCloud.remove(this, AppTabs.current(this).chat, book.key) {
                             cloudBooks = null
                             if (!destroyed && section == SECTION_LIBRARY) showLibrary()
                         }
@@ -715,7 +733,19 @@ class MainActivity : Activity() {
                 showLibrary()
             }
         }
-        if (TelegramCloud.connected(this) && !entry.archived) {
+        val others = AppTabs.all(this).filter { !it.isVideo && it.id != entry.tab }
+        if (others.isNotEmpty()) options += "Mover para outra aba…" to {
+            AlertDialog.Builder(this)
+                .setTitle("Mover para a aba")
+                .setItems(others.map { it.name }.toTypedArray()) { _, which ->
+                    database.setTab(entry.id, others[which].id)
+                    Toast.makeText(this, "\"${displayTitle(entry.name)}\" foi para a aba \"${others[which].name}\".", Toast.LENGTH_SHORT).show()
+                    showLibrary()
+                }
+                .setNegativeButton("Cancelar", null)
+                .show()
+        }
+        if (TelegramCloud.connected(this) && !entry.archived && AppTabs.cloudOf(this, entry.tab).first) {
             val inCloud = cloudBooks?.any { it.key == keyOf(entry) } == true
             options += (if (inCloud) "☁ Já está na nuvem (Telegram)" else "☁ Enviar para a nuvem (Telegram)") to {
                 if (inCloud) Toast.makeText(this, "Este livro já está ${cloudPlace()}.", Toast.LENGTH_SHORT).show() else uploadToCloud(entry)
@@ -961,7 +991,7 @@ class MainActivity : Activity() {
                     }
                 }
                 same != null -> Unit
-                database.add(name, uri.toString(), format, size) != null -> added++
+                database.add(name, uri.toString(), format, size, AppTabs.importTab(this)) != null -> added++
             }
         }
         if (restored > 0) {
@@ -1354,8 +1384,7 @@ class MainActivity : Activity() {
                     setOnClickListener { askTelegramApi() }
                 }, LinearLayout.LayoutParams(-1, dp(48)))
             } else {
-                val where = tg.chat?.let { "no grupo privado \"${it.title}\"" } ?: "nas suas Mensagens salvas"
-                addView(label("Conectado${if (tg.name.isNotBlank()) " como ${tg.name}" else ""}. Os livros enviados ficam $where, com a etiqueta #alexandria_livro.", 13f, ink))
+                addView(label("Conectado${if (tg.name.isNotBlank()) " como ${tg.name}" else ""}. Os livros enviados para a nuvem levam a etiqueta #alexandria_livro.", 13f, ink))
                 if (tg.error != null) addView(label("⚠ ${tg.error}", 12f, Color.rgb(163, 57, 47)).apply { setPadding(0, dp(6), 0, 0) })
                 val status = TelegramCloud.positionStatus(this@MainActivity)
                 val clock = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT)
@@ -1370,19 +1399,9 @@ class MainActivity : Activity() {
                 addView(label("Para enviar um livro, toque e segure nele na biblioteca e escolha \"Enviar para a nuvem\". Um arquivo de livro mandado pelo próprio Telegram também entra se a legenda tiver #alexandria_livro. Os livros da nuvem que não estão neste aparelho aparecem na biblioteca, em \"Na nuvem\". " + TELEGRAM_NOTICE, 12f, muted).apply {
                     setPadding(0, dp(6), 0, dp(10))
                 })
-                addView(label("Onde ficam os livros", 13f, ink, true))
-                addView(label(
-                    if (tg.chat != null) "Grupo privado \"${tg.chat.title}\": todas as suas contas que estiverem nele veem e enviam livros, e a posição de leitura é a mesma para todas."
-                    else "Mensagens salvas. Num grupo privado, várias contas suas do Telegram (por exemplo, de números diferentes) usam os mesmos livros e a mesma posição de leitura.",
-                    12f, muted
-                ).apply { setPadding(0, dp(2), 0, dp(6)) })
-                addView(Button(this@MainActivity).apply {
-                    text = if (tg.chat != null) "Grupo da nuvem…" else "Usar um grupo privado…"
-                    setAllCaps(false)
-                    setTextColor(ink)
-                    background = rounded(Color.rgb(236, 233, 226), 10)
-                    setOnClickListener { cloudPlaceOptions(tg.chat) }
-                }, LinearLayout.LayoutParams(-1, dp(48)).apply { bottomMargin = dp(10) })
+                addView(label("Cada aba (livros, filmes, cursos) pode ter o seu grupo privado do Telegram: na Biblioteca, toque em ⋯ ao lado do nome da aba → Grupo da nuvem. A aba principal de livros, sem grupo, usa as suas Mensagens salvas.", 12f, muted).apply {
+                    setPadding(0, 0, 0, dp(10))
+                })
                 if (PositionSync.settings(this@MainActivity) != null) {
                     addView(label("A posição de leitura vai por:", 13f, ink, true))
                     val group = android.widget.RadioGroup(this@MainActivity).apply { orientation = android.widget.RadioGroup.VERTICAL }
@@ -1502,59 +1521,215 @@ class MainActivity : Activity() {
         }
     }
 
-    // ---------- grupo privado da nuvem ----------
+    // ---------- abas ----------
 
-    private fun cloudPlaceOptions(chat: CloudChat?) {
-        val options = if (chat == null) {
-            listOf<Pair<String, () -> Unit>>(
-                "Criar grupo privado" to { cloudGroupChosen("Criando o grupo…") { done -> TelegramCloud.createGroup(this, done) } },
-                "Entrar com link de convite" to { askInviteLink() },
-                "Usar um grupo que já tenho" to { pickExistingGroup() }
-            )
-        } else {
-            listOf<Pair<String, () -> Unit>>(
-                "Copiar link de convite (para as outras contas)" to { shareInviteLink() },
-                "Trazer livros das Mensagens salvas" to { copySavedBooks() },
-                "Voltar para as Mensagens salvas" to {
-                    AlertDialog.Builder(this)
-                        .setTitle("Voltar para as Mensagens salvas?")
-                        .setMessage("Os livros do grupo continuam lá; o Alexandria deste aparelho passa a usar só as suas Mensagens salvas.")
-                        .setNegativeButton("Cancelar", null)
-                        .setPositiveButton("Voltar") { _, _ ->
-                            TelegramCloud.useChat(this, null)
-                            cloudBooks = null
-                            showSettings()
-                        }
-                        .show()
-                }
-            )
+    /** Fileira de abas no topo da Biblioteca: tocar abre, segurar mostra as opções, "＋" cria. */
+    private fun addTabStrip(current: AppTab) {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 0, 0, dp(12))
         }
+        fun chip(text: String, active: Boolean, onClick: () -> Unit, onLong: (() -> Unit)? = null) = label(text, 14f, if (active) Color.WHITE else ink, active).apply {
+            gravity = Gravity.CENTER
+            minHeight = dp(40)
+            setPadding(dp(16), 0, dp(16), 0)
+            background = rounded(if (active) ink else Color.WHITE, 20)
+            setOnClickListener { onClick() }
+            onLong?.let { long -> setOnLongClickListener { long(); true } }
+        }
+        for (tab in AppTabs.all(this)) {
+            row.addView(chip(tab.name, tab.id == current.id, {
+                if (tab.id != current.id) {
+                    AppTabs.setCurrent(this, tab.id)
+                    cloudBooks = null
+                    cloudError = null
+                    cloudAds = emptyList()
+                    videos = null
+                    showLibrary()
+                }
+            }, { tabOptions(tab) }), LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(8) })
+        }
+        row.addView(chip("＋", false, { newTab() }).apply { contentDescription = "Nova aba" })
+        content.addView(android.widget.HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(row)
+        }, LinearLayout.LayoutParams(-1, -2))
+    }
+
+    /** Título da aba com o "⋯" das opções. */
+    private fun tabTitle(tab: AppTab, subtitle: String) {
+        content.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(label(if (tab.isMain && tab.name == "Livros") "Minha biblioteca" else tab.name, 21f, ink, true), LinearLayout.LayoutParams(0, -2, 1f))
+            addView(label("⋯", 24f, ink, true).apply {
+                gravity = Gravity.CENTER
+                minWidth = dp(48)
+                minHeight = dp(48)
+                contentDescription = "Opções da aba ${tab.name}"
+                setOnClickListener { tabOptions(tab) }
+            })
+        })
+        content.addView(label(subtitle, 13f, muted).apply { setPadding(0, dp(4), 0, dp(14)) })
+    }
+
+    private fun newTab() {
+        val types = AppTabs.TYPES
         AlertDialog.Builder(this)
-            .setTitle(chat?.title ?: "Usar um grupo privado")
+            .setTitle("Nova aba: o que ela guarda?")
+            .setItems(types.map { "${it.second} — ${it.third}" }.toTypedArray()) { _, which ->
+                val type = types[which].first
+                val input = EditText(this).apply {
+                    setText(types[which].second)
+                    selectAll()
+                    maxLines = 1
+                    hint = "Por exemplo: Filmes da família, Cursos, HQs"
+                }
+                AlertDialog.Builder(this)
+                    .setTitle("Nome da aba")
+                    .setView(LinearLayout(this).apply {
+                        setPadding(dp(22), 0, dp(22), 0)
+                        addView(input, LinearLayout.LayoutParams(-1, -2))
+                    })
+                    .setNegativeButton("Cancelar", null)
+                    .setPositiveButton("Criar") { _, _ ->
+                        val name = input.text.toString().trim()
+                        if (name.isEmpty()) return@setPositiveButton
+                        val tabs = AppTabs.all(this)
+                        val tab = AppTab(AppTabs.newId(name, tabs.map { it.id }), name, type, null)
+                        AppTabs.save(this, tabs + tab)
+                        AppTabs.setCurrent(this, tab.id)
+                        videos = null
+                        showLibrary()
+                        if (tab.isVideo) {
+                            if (TelegramCloud.connected(this)) chooseGroup(tab)
+                            else Toast.makeText(this, "Para ver os vídeos, entre no Telegram em Ajustes e depois escolha o grupo da aba.", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                    .show()
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+
+    private fun tabOptions(tab: AppTab) {
+        val where = tab.chat?.let { "grupo \"${it.title}\"" } ?: if (tab.isMain) "nuvem nas Mensagens salvas" else "sem grupo"
+        val options = mutableListOf<Pair<String, () -> Unit>>(
+            "Renomear" to { renameTab(tab) },
+            "Grupo da nuvem…" to { groupOptions(tab) }
+        )
+        if (!tab.isMain) options += "Apagar aba" to { deleteTab(tab) }
+        AlertDialog.Builder(this)
+            .setTitle("${tab.name} · ${AppTabs.typeLabel(tab.type)} · $where")
             .setItems(options.map { it.first }.toTypedArray()) { _, which -> options[which].second() }
             .setNegativeButton("Fechar", null)
             .show()
     }
 
-    /** Depois de escolher o grupo: avisa e oferece trazer os livros das Mensagens salvas. */
-    private fun cloudGroupChosen(waiting: String, start: ((Result<CloudChat>) -> Unit) -> Unit) {
+    private fun renameTab(tab: AppTab) {
+        val input = EditText(this).apply {
+            setText(tab.name)
+            selectAll()
+            maxLines = 1
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Renomear aba")
+            .setView(LinearLayout(this).apply {
+                setPadding(dp(22), 0, dp(22), 0)
+                addView(input, LinearLayout.LayoutParams(-1, -2))
+            })
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Salvar") { _, _ ->
+                val name = input.text.toString().trim()
+                if (name.isNotEmpty()) {
+                    AppTabs.update(this, tab.id) { it.copy(name = name) }
+                    showLibrary()
+                }
+            }
+            .show()
+    }
+
+    private fun deleteTab(tab: AppTab) {
+        AlertDialog.Builder(this)
+            .setTitle("Apagar a aba \"${tab.name}\"?")
+            .setMessage(if (tab.isVideo) "Os vídeos continuam no grupo do Telegram." else "Os livros dela voltam para a aba principal; nada é apagado.")
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Apagar") { _, _ ->
+                if (!tab.isVideo) database.moveTab(tab.id)
+                AppTabs.save(this, AppTabs.all(this).filter { it.id != tab.id })
+                AppTabs.setCurrent(this, AppTabs.MAIN)
+                cloudBooks = null
+                showLibrary()
+            }
+            .show()
+    }
+
+    /** Grupo da nuvem da aba: convidar, trazer das Mensagens salvas, trocar ou largar. */
+    private fun groupOptions(tab: AppTab) {
+        if (!TelegramCloud.connected(this)) {
+            Toast.makeText(this, "Entre no Telegram em Ajustes (Nuvem pelo Telegram) para usar um grupo.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val chat = tab.chat ?: return chooseGroup(tab)
+        val options = mutableListOf<Pair<String, () -> Unit>>("Copiar link de convite (para outras contas)" to { shareInviteLink(chat) })
+        if (tab.isMain) options += "Trazer livros das Mensagens salvas" to { copySavedBooks(chat) }
+        options += "Trocar de grupo" to { chooseGroup(tab) }
+        val leave = if (tab.isMain) "Voltar para as Mensagens salvas" else "Deixar a aba sem grupo"
+        options += leave to {
+            AlertDialog.Builder(this)
+                .setTitle("$leave?")
+                .setMessage("Os arquivos continuam no grupo do Telegram.")
+                .setNegativeButton("Cancelar", null)
+                .setPositiveButton("OK") { _, _ ->
+                    AppTabs.update(this, tab.id) { it.copy(chat = null) }
+                    cloudBooks = null
+                    videos = null
+                    showSection(section)
+                }
+                .show()
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Grupo \"${chat.title}\"")
+            .setItems(options.map { it.first }.toTypedArray()) { _, which -> options[which].second() }
+            .setNegativeButton("Fechar", null)
+            .show()
+    }
+
+    /** Escolhe o grupo da aba: criar, entrar pelo link ou um que a conta já tem. */
+    private fun chooseGroup(tab: AppTab) {
+        val options = listOf<Pair<String, () -> Unit>>(
+            "Criar grupo privado" to { groupChosen(tab, "Criando o grupo…") { done -> TelegramCloud.createGroup(this, "Alexandria — ${tab.name}", done) } },
+            "Entrar com link de convite" to { askInviteLink(tab) },
+            "Usar um grupo que já tenho" to { pickExistingGroup(tab) }
+        )
+        AlertDialog.Builder(this)
+            .setTitle("Grupo da aba \"${tab.name}\"")
+            .setItems(options.map { it.first }.toTypedArray()) { _, which -> options[which].second() }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+
+    private fun groupChosen(tab: AppTab, waiting: String, start: ((Result<CloudChat>) -> Unit) -> Unit) {
         Toast.makeText(this, waiting, Toast.LENGTH_SHORT).show()
         start { result ->
             if (destroyed) return@start
             result.onSuccess { chat ->
+                AppTabs.update(this, tab.id) { it.copy(chat = chat) }
                 cloudBooks = null
-                if (section == SECTION_SETTINGS) showSettings()
-                AlertDialog.Builder(this)
-                    .setTitle("Nuvem no grupo \"${chat.title}\"")
-                    .setMessage("Quer trazer para o grupo os livros e posições que estão nas suas Mensagens salvas? Só vão os que ainda não estão lá, e nada é apagado das Mensagens salvas.")
+                videos = null
+                Toast.makeText(this, "A aba \"${tab.name}\" agora usa o grupo \"${chat.title}\".", Toast.LENGTH_LONG).show()
+                showSection(section)
+                if (tab.isMain) AlertDialog.Builder(this)
+                    .setTitle("Trazer os livros para o grupo?")
+                    .setMessage("Os livros e posições que estão nas suas Mensagens salvas são copiados para o grupo (só os que ainda não estão lá). Nada é apagado das Mensagens salvas.")
                     .setNegativeButton("Agora não", null)
-                    .setPositiveButton("Trazer") { _, _ -> copySavedBooks() }
+                    .setPositiveButton("Trazer") { _, _ -> copySavedBooks(chat) }
                     .show()
             }.onFailure { Toast.makeText(this, it.message ?: "Não foi possível usar o grupo.", Toast.LENGTH_LONG).show() }
         }
     }
 
-    private fun askInviteLink() {
+    private fun askInviteLink(tab: AppTab) {
         val input = EditText(this).apply {
             hint = "https://t.me/+…"
             maxLines = 1
@@ -1564,7 +1739,7 @@ class MainActivity : Activity() {
             ?.takeIf { it.contains("t.me/") }?.let { input.setText(it.trim()) }
         AlertDialog.Builder(this)
             .setTitle("Entrar com link de convite")
-            .setMessage("Cole o link de convite do grupo da nuvem (gerado no aparelho da conta que criou o grupo).")
+            .setMessage("Cole o link de convite do grupo (gerado nas opções da aba, na conta que criou o grupo).")
             .setView(LinearLayout(this).apply {
                 setPadding(dp(22), 0, dp(22), 0)
                 addView(input, LinearLayout.LayoutParams(-1, -2))
@@ -1572,12 +1747,12 @@ class MainActivity : Activity() {
             .setNegativeButton("Cancelar", null)
             .setPositiveButton("Entrar") { _, _ ->
                 val link = input.text.toString().trim()
-                if (link.isNotEmpty()) cloudGroupChosen("Entrando no grupo…") { done -> TelegramCloud.joinGroup(this, link, done) }
+                if (link.isNotEmpty()) groupChosen(tab, "Entrando no grupo…") { done -> TelegramCloud.joinGroup(this, link, done) }
             }
             .show()
     }
 
-    private fun pickExistingGroup() {
+    private fun pickExistingGroup(tab: AppTab) {
         Toast.makeText(this, "Procurando seus grupos…", Toast.LENGTH_SHORT).show()
         TelegramCloud.groups(this) { result ->
             if (destroyed) return@groups
@@ -1587,13 +1762,10 @@ class MainActivity : Activity() {
                     return@onSuccess
                 }
                 AlertDialog.Builder(this)
-                    .setTitle("Escolha o grupo da nuvem")
+                    .setTitle("Escolha o grupo da aba")
                     .setItems(groups.map { it.title }.toTypedArray()) { _, which ->
                         val chat = groups[which]
-                        cloudGroupChosen("Usando \"${chat.title}\"…") { done ->
-                            TelegramCloud.useChat(this, chat)
-                            done(Result.success(chat))
-                        }
+                        groupChosen(tab, "Usando \"${chat.title}\"…") { done -> done(Result.success(chat)) }
                     }
                     .setNegativeButton("Cancelar", null)
                     .show()
@@ -1601,29 +1773,107 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun shareInviteLink() {
-        TelegramCloud.inviteLink(this) { result ->
+    private fun shareInviteLink(chat: CloudChat) {
+        TelegramCloud.inviteLink(this, chat) { result ->
             if (destroyed) return@inviteLink
             result.onSuccess { link ->
                 (getSystemService(CLIPBOARD_SERVICE) as? android.content.ClipboardManager)
                     ?.setPrimaryClip(android.content.ClipData.newPlainText("Convite do grupo", link))
                 AlertDialog.Builder(this)
                     .setTitle("Link de convite")
-                    .setMessage("$link\n\nCopiado. Abra o link na outra conta (no Telegram) ou cole em Ajustes do Alexandria com ela conectada. Não compartilhe: quem entrar vê todos os livros.")
+                    .setMessage("$link\n\nCopiado. Abra o link na outra conta (no Telegram) ou cole nas opções da aba do Alexandria com ela conectada. Não compartilhe: quem entrar vê tudo.")
                     .setPositiveButton("OK", null)
                     .show()
             }.onFailure { Toast.makeText(this, it.message ?: "Não foi possível gerar o link.", Toast.LENGTH_LONG).show() }
         }
     }
 
-    private fun copySavedBooks() {
+    private fun copySavedBooks(chat: CloudChat) {
         Toast.makeText(this, "Trazendo os livros das Mensagens salvas…", Toast.LENGTH_SHORT).show()
-        TelegramCloud.copyFromSaved(this) { result ->
+        TelegramCloud.copyFromSaved(this, chat) { result ->
             if (destroyed) return@copyFromSaved
             result.onSuccess { n ->
                 cloudBooks = null
                 Toast.makeText(this, if (n > 0) "$n livro(s) copiado(s) para o grupo." else "Os livros das Mensagens salvas já estavam no grupo.", Toast.LENGTH_LONG).show()
             }.onFailure { Toast.makeText(this, it.message ?: "Não foi possível copiar os livros.", Toast.LENGTH_LONG).show() }
+        }
+    }
+
+    // ---------- abas de vídeos (filmes e cursos) ----------
+
+    private var videos: List<CloudVideo>? = null
+    private var videosError: String? = null
+    private var videosLoading = false
+
+    /** Nesta etapa só a lista dos vídeos do grupo; o player e as playlists por tópicos vêm depois. */
+    private fun showVideoTab(tab: AppTab) {
+        tabTitle(tab, "Aba de ${AppTabs.typeLabel(tab.type).lowercase()}${tab.chat?.let { " · grupo \"${it.title}\"" } ?: ""}. " +
+            if (tab.type == AppTabs.COURSES) "Cada tópico do grupo será um curso, com as aulas em ordem." else "Os tópicos do grupo serão coleções.")
+        if (!TelegramCloud.connected(this)) {
+            content.addView(label("Entre no Telegram em Ajustes (Nuvem pelo Telegram) e depois escolha o grupo desta aba.", 13f, muted).apply {
+                setOnClickListener { showSection(SECTION_SETTINGS) }
+            })
+            return
+        }
+        val chat = tab.chat
+        if (chat == null) {
+            content.addView(label("Esta aba ainda não tem grupo. Crie um grupo privado ou entre num que já existe: tudo o que for enviado lá (por você ou por quem estiver no grupo, mesmo sem o Alexandria) aparece aqui.", 13f, muted).apply {
+                setPadding(0, 0, 0, dp(10))
+            })
+            content.addView(Button(this).apply {
+                text = "Escolher o grupo da aba"
+                setAllCaps(false)
+                setTextColor(Color.WHITE)
+                background = rounded(ink, 10)
+                setOnClickListener { chooseGroup(tab) }
+            }, LinearLayout.LayoutParams(-1, dp(48)))
+            return
+        }
+        val list = videos
+        if (list == null && videosError == null) {
+            content.addView(label("Procurando os vídeos do grupo…", 12f, muted))
+            if (!videosLoading) {
+                videosLoading = true
+                TelegramCloud.videos(this, chat) { result ->
+                    videosLoading = false
+                    if (destroyed) return@videos
+                    result.onSuccess { videos = it; videosError = null }.onFailure { videosError = it.message ?: "Não foi possível falar com o Telegram agora." }
+                    if (section == SECTION_LIBRARY && AppTabs.current(this).id == tab.id) showLibrary()
+                }
+            }
+            return
+        }
+        videosError?.let { error ->
+            content.addView(label("$error  Toque para tentar de novo.", 12f, muted).apply {
+                setOnClickListener {
+                    videosError = null
+                    videos = null
+                    showLibrary()
+                }
+            })
+            return
+        }
+        content.addView(label(
+            if (list!!.isEmpty()) "Nenhum vídeo no grupo ainda. Envie pelo Telegram (como vídeo ou como arquivo)."
+            else "${list.size} vídeo(s) no grupo. Assistir por aqui, com streaming, chega na próxima atualização.",
+            12f, muted
+        ).apply { setPadding(0, 0, 0, dp(8)) })
+        for (v in list) {
+            content.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(14), dp(10), dp(12), dp(10))
+                background = rounded(Color.WHITE, 12)
+                addView(label("▶  ${v.name.substringBeforeLast('.')}", 14f, ink, true).apply {
+                    maxLines = 2
+                    ellipsize = TextUtils.TruncateAt.END
+                }, LinearLayout.LayoutParams(0, -2, 1f))
+                val size = if (v.size >= 1_000_000_000) "%.1f GB".format(v.size / 1e9) else "${maxOf(1, v.size / 1_000_000)} MB"
+                addView(label(listOf(CloudVideo.duration(v.duration), size.replace('.', ','), v.sender).filter { it.isNotBlank() }.joinToString("\n"), 11f, muted).apply {
+                    gravity = Gravity.END
+                    setPadding(dp(8), 0, 0, 0)
+                })
+            }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
         }
     }
 

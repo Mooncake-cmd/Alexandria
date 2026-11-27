@@ -236,8 +236,12 @@ object PositionSync {
     }
 
     /** Posição deste livro no gist ou no Telegram (null sem sincronização, sem internet ou sem registro). */
-    fun pull(context: Activity, name: String, size: Long, done: (SyncEntry?) -> Unit) {
-        if (provider(context) == "telegram") return TelegramCloud.pullPosition(context, SyncData.key(name, size), done)
+    /** [tab]: aba do livro (a posição vai para o grupo dela, ou para as Mensagens salvas na principal). */
+    fun pull(context: Activity, name: String, size: Long, tab: String = AppTabs.MAIN, done: (SyncEntry?) -> Unit) {
+        if (provider(context) == "telegram") {
+            val (on, chat) = AppTabs.cloudOf(context, tab)
+            return if (on) TelegramCloud.pullPosition(context, chat, SyncData.key(name, size), done) else done(null)
+        }
         val s = settings(context) ?: return done(null)
         val app = context.applicationContext
         executor.execute {
@@ -254,8 +258,12 @@ object PositionSync {
     }
 
     /** Grava a posição deste livro (em segundo plano; erros de rede são ignorados). */
-    fun push(context: Context, name: String, size: Long, entry: SyncEntry) {
-        if (provider(context) == "telegram") return TelegramCloud.pushPosition(context, SyncData.key(name, size), entry)
+    fun push(context: Context, name: String, size: Long, entry: SyncEntry, tab: String = AppTabs.MAIN) {
+        if (provider(context) == "telegram") {
+            val (on, chat) = AppTabs.cloudOf(context, tab)
+            if (on) TelegramCloud.pushPosition(context, chat, SyncData.key(name, size), entry)
+            return
+        }
         val s = settings(context) ?: return
         val app = context.applicationContext
         executor.execute {

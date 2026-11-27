@@ -5,7 +5,7 @@ import { useLibrary } from '../storage/useLibrary'
 import { ACCEPT, importFiles } from '../library/importBooks'
 import { BookCard } from '../library/BookCard'
 import { WoodenShelf } from '../library/WoodenShelf'
-import { renameShelf } from '../storage/library'
+import { renameShelf, setItemTab } from '../storage/library'
 import { promptDialog } from '../ui/dialogs'
 import { itemOptions } from '../library/itemOptions'
 import { ensureCovers } from '../library/covers'
@@ -18,6 +18,10 @@ import { formatReadingTime } from '../core/readingTime'
 import { displayTitle } from '../core/library'
 import { cloudBooks, cloudSponsored, deleteFromCloud, fetchFromCloud, localKeys, onCloudActivity, sendToCloud, sponsoredClicked, sponsoredSeen, telegramSettings, type CloudActivity } from '../cloud/cloud'
 import { isTelegramUrl, type CloudBook, type SponsoredItem } from '../cloud/telegramCloud'
+import type { CloudChat } from '../cloud/gramApi'
+import { MAIN_TAB, isVideoTab, tabOf, type AppTab } from '../core/tabs'
+import { getTabs, onTabsChange } from '../storage/tabs'
+import { tabOptions } from './tabActions'
 import { confirmDialog, menuDialog } from '../ui/dialogs'
 
 /** Prateleiras abertas (como no app, começam fechadas); lembradas enquanto o site está aberto. */
@@ -34,8 +38,16 @@ export function openBook(item: LibraryItem) {
   location.hash = `#/ler/${item.id}`
 }
 
-export function Library() {
-  const { items, loaded } = useLibrary()
+export function Library({ tab }: { tab: AppTab }) {
+  const { items: everything, loaded } = useLibrary()
+  // Só os livros desta aba (os de antes das abas ficam na principal).
+  const items = everything.filter((i) => tabOf(i) === tab.id)
+  const [bookTabs, setBookTabs] = useState<AppTab[]>([])
+  useEffect(() => {
+    const load = () => getTabs().then((t) => setBookTabs(t.filter((x) => !isVideoTab(x))))
+    load()
+    return onTabsChange(load)
+  }, [])
   const [, redraw] = useState(0)
   const input = useRef<HTMLInputElement>(null)
   useEffect(() => {
@@ -65,31 +77,34 @@ export function Library() {
   useEffect(() => onCloudActivity(setActivity), [])
   const refreshCloud = async () => {
     const s = await telegramSettings()
-    setCloudOn(!!s?.session)
-    if (!s?.session) return setCloud(null)
-    setPlace(s.chat ? `no grupo "${s.chat.title}"` : 'nas suas Mensagens salvas')
+    // Aba sem grupo (fora a principal, que usa as Mensagens salvas) não tem nuvem.
+    const on = !!s?.session && (!!tab.chat || tab.id === MAIN_TAB)
+    setCloudOn(on)
+    if (!on) return setCloud(null)
+    setPlace(tab.chat ? `no grupo "${tab.chat.title}"` : 'nas suas Mensagens salvas')
     try {
-      setCloud(await cloudBooks())
+      setCloud(await cloudBooks(tab.id))
       setCloudError(null)
       // Abrir a nuvem de um grupo equivale a abrir a conversa: pede os anúncios oficiais (regra 3.3).
-      setAds(await cloudSponsored())
+      setAds(await cloudSponsored(tab.chat))
     } catch {
       setCloudError('Não foi possível falar com o Telegram agora (sem internet?).')
     }
   }
   useEffect(() => {
     refreshCloud()
-  }, [])
+  }, [tab.chat?.id])
   useEffect(() => {
-    localKeys(items).then(setKeys)
-  }, [items])
+    // Livros de todas as abas contam como "já está aqui" (o mesmo arquivo não é baixado duas vezes).
+    localKeys(everything).then(setKeys)
+  }, [everything])
   const inCloud = new Set((cloud ?? []).map((b) => b.key))
   const keyOf = (item: LibraryItem) => [...keys.entries()].find(([, i]) => i.id === item.id)?.[0]
   const missing = (cloud ?? []).filter((b) => !keys.has(b.key))
   const upload = async (item: LibraryItem) => {
     try {
       const { existed } = await sendToCloud(item, displayTitle(item.name))
-      toast(existed ? `"${displayTitle(item.name)}" já estava na nuvem.` : `"${displayTitle(item.name)}" foi para a nuvem (Mensagens salvas do Telegram).`)
+      toast(existed ? `"${displayTitle(item.name)}" já estava na nuvem.` : `"${displayTitle(item.name)}" foi para a nuvem (${place.replace(/^n[ao]s? (suas )?/, '')}).`)
       refreshCloud()
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Não foi possível enviar para a nuvem.')
@@ -97,7 +112,7 @@ export function Library() {
   }
   const download = async (book: CloudBook) => {
     try {
-      const item = await fetchFromCloud(book, displayTitle(book.name))
+      const item = await fetchFromCloud(book, displayTitle(book.name), tab.id)
       toast(`"${displayTitle(book.name)}" baixado da nuvem.`)
       openBook(item)
     } catch (e) {
@@ -108,7 +123,7 @@ export function Library() {
     const choice = await menuDialog(displayTitle(book.name), ['Baixar e abrir', 'Apagar da nuvem…'], `${book.format.toUpperCase()} · ${(book.size / 1e6).toFixed(1).replace('.', ',')} MB · na nuvem`)
     if (choice === 0) download(book)
     if (choice === 1 && (await confirmDialog('Apagar da nuvem?', `"${displayTitle(book.name)}" sai da nuvem (${place.replace(/^n[ao]s? (suas )?/, "")}). Os aparelhos que já baixaram continuam com o livro.`, 'Apagar', true))) {
-      await deleteFromCloud(book)
+      await deleteFromCloud(book, tab.id)
       refreshCloud()
     }
   }
@@ -145,10 +160,19 @@ export function Library() {
   }
 
   const cloudExtra = (item: LibraryItem) => {
-    if (!cloudOn || isArchived(item)) return []
+    const others = bookTabs.filter((t) => t.id !== tab.id)
+    const move = others.length
+      ? [{ label: 'Mover para outra aba…', run: async () => {
+          const pick = await menuDialog('Mover para a aba', others.map((t) => t.name), displayTitle(item.name))
+          if (pick === null) return
+          await setItemTab(item.id, others[pick].id)
+          toast(`"${displayTitle(item.name)}" foi para a aba "${others[pick].name}".`)
+        } }]
+      : []
+    if (!cloudOn || isArchived(item)) return move
     const key = keyOf(item)
-    if (key && inCloud.has(key)) return [{ label: '☁ Já está na nuvem (Telegram)', run: () => toast(`Este livro já está ${place}.`) }]
-    return [{ label: '☁ Enviar para a nuvem (Telegram)', run: () => upload(item) }]
+    if (key && inCloud.has(key)) return [{ label: '☁ Já está na nuvem (Telegram)', run: () => toast(`Este livro já está ${place}.`) }, ...move]
+    return [{ label: '☁ Enviar para a nuvem (Telegram)', run: () => upload(item) }, ...move]
   }
   const card = (item: LibraryItem) => {
     const key = keyOf(item)
@@ -165,8 +189,11 @@ export function Library() {
           <div class="bar"><div style={{ width: `${Math.round(activity.fraction * 100)}%` }} /></div>
         </div>
       )}
-      <h2>Minha biblioteca</h2>
-      <p class="muted">Seus documentos ficam guardados só neste navegador, no seu computador.</p>
+      <div class="tab-head">
+        <h2>{tab.id === MAIN_TAB && tab.name === 'Livros' ? 'Minha biblioteca' : tab.name}</h2>
+        <button type="button" class="secondary" onClick={() => tabOptions(tab)} aria-label={`Opções da aba ${tab.name}`}>⋯ Opções da aba</button>
+      </div>
+      <p class="muted">Seus documentos ficam guardados só neste navegador, no seu computador.{tab.chat ? ` A nuvem desta aba é o grupo "${tab.chat.title}".` : ''}</p>
       {(streak.current > 0 || streak.todaySeconds > 0) && (
         <a class="streak" href="#/estatisticas">
           🔥 {streak.current === 1 ? '1 dia seguido' : `${streak.current} dias seguidos`} · {streak.readToday ? 'hoje ✓' : `leia ${formatReadingTime(STREAK_MIN_SECONDS)} hoje para manter`}
@@ -184,7 +211,7 @@ export function Library() {
         hidden
         onChange={async (e) => {
           const target = e.target as HTMLInputElement
-          await importFiles(Array.from(target.files ?? []))
+          await importFiles(Array.from(target.files ?? []), tab.id)
           target.value = ''
         }}
       />
@@ -226,7 +253,7 @@ export function Library() {
               </ul>
             </>
           )}
-          {ads.map((ad) => <SponsoredCard key={ad.id} ad={ad} />)}
+          {tab.chat && ads.map((ad) => <SponsoredCard key={ad.id} ad={ad} chat={tab.chat!} />)}
         </section>
       )}
 
@@ -283,7 +310,7 @@ export function Library() {
  * termos da API e core.telegram.org/api/sponsored-messages): visualização registrada quando o texto
  * inteiro aparece na tela, clique registrado, e confirmação antes de abrir endereços fora do Telegram.
  */
-function SponsoredCard({ ad }: { ad: SponsoredItem }) {
+function SponsoredCard({ ad, chat }: { ad: SponsoredItem; chat: CloudChat }) {
   const box = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const el = box.current
@@ -293,14 +320,14 @@ function SponsoredCard({ ad }: { ad: SponsoredItem }) {
       if (!seen && entries.some((e) => e.intersectionRatio >= 0.99)) {
         seen = true
         observer.disconnect()
-        sponsoredSeen(ad)
+        sponsoredSeen(ad, chat)
       }
     }, { threshold: [0.99] })
     observer.observe(el)
     return () => observer.disconnect()
   }, [ad.id])
   const open = async () => {
-    await sponsoredClicked(ad)
+    await sponsoredClicked(ad, chat)
     if (!isTelegramUrl(ad.url) && !(await confirmDialog('Abrir o endereço?', ad.url, 'Abrir'))) return
     window.open(ad.url, '_blank', 'noopener')
   }

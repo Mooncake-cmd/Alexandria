@@ -7,7 +7,7 @@
  * `AndroidCloud.progress(id, fração)`. Arquivos passam em pedaços (base64): `read(token, início,
  * tamanho)` para enviar e `write(token, base64)` para baixar.
  */
-import { copyCloud, downloadBook, listCloudBooks, pullPositionFrom, pushPositionTo, removeCloudBook, uploadBook, type TgApi } from './telegramCloud'
+import { copyCloud, downloadBook, listCloudBooks, listVideos, pullPositionFrom, pushPositionTo, removeCloudBook, uploadBook, type TgApi } from './telegramCloud'
 import type { CloudChat, CloudTarget } from './gramApi'
 import type { SyncEntry } from '../storage/sync'
 
@@ -139,9 +139,12 @@ const methods: Record<string, (args: Args, id: string, bridge: Bridge) => Promis
     return pushPositionTo(await api(), String(args.key), args.entry as SyncEntry)
   },
   // ---------- grupo privado ----------
-  async createGroup() {
+  async createGroup(args) {
     const { gram, client: c } = await client()
-    return gram.createGroup(c, 'Alexandria — biblioteca')
+    return gram.createGroup(c, String(args.title || 'Alexandria — biblioteca'))
+  },
+  async videos() {
+    return listVideos(await api())
   },
   async joinGroup(args) {
     const { gram, client: c } = await client()
@@ -197,7 +200,7 @@ const methods: Record<string, (args: Args, id: string, bridge: Bridge) => Promis
 let queue: Promise<unknown> = Promise.resolve()
 
 /** Transferências podem demorar; o resto, se passar disto sem resposta, falha e libera a fila. */
-const SLOW = new Set(['upload', 'download', 'copyFromSaved', 'books'])
+const SLOW = new Set(['upload', 'download', 'copyFromSaved', 'books', 'videos'])
 const TIMEOUT_MS = 60_000
 const SLOW_TIMEOUT_MS = 30 * 60_000
 

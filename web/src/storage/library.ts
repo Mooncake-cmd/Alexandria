@@ -25,6 +25,8 @@ export interface LibraryItem {
    * de centenas de capítulos, `position` arredonda para o capítulo vizinho no começo ou fim de um capítulo.
    */
   exactPosition?: number
+  /** Aba da tela inicial onde o livro fica (sem: a aba principal, "livros"). */
+  tab?: string
 }
 
 export interface Note {
@@ -76,7 +78,7 @@ export interface AddResult {
  * Guarda um arquivo na biblioteca. O mesmo livro (mesmo nome e tamanho) não é duplicado: volta o
  * que já existe e, se estava sem arquivo (espaço liberado), o arquivo volta para ele.
  */
-export async function addBook(name: string, format: string, file: Blob, now = Date.now()): Promise<AddResult> {
+export async function addBook(name: string, format: string, file: Blob, now = Date.now(), tab?: string): Promise<AddResult> {
   const result = await transaction(['items', 'files'], 'readwrite', async (tx) => {
     const items = await getAll<LibraryItem>(tx, 'items')
     const same = file.size > 0 ? items.filter((i) => i.name === name && i.fileSize === file.size).sort((a, b) => a.id - b.id)[0] : undefined
@@ -88,7 +90,8 @@ export async function addBook(name: string, format: string, file: Blob, now = Da
       return { item, existing: true, restored }
     }
     const fresh: Omit<LibraryItem, 'id'> = {
-      name, format, addedAt: now, position: 0, pageCount: 0, openedAt: 0, finishedAt: 0, shelf: '', readingSeconds: 0, fileSize: file.size, archivedAt: 0
+      name, format, addedAt: now, position: 0, pageCount: 0, openedAt: 0, finishedAt: 0, shelf: '', readingSeconds: 0, fileSize: file.size, archivedAt: 0,
+      ...(tab && tab !== 'livros' ? { tab } : {})
     }
     const id = (await put(tx, 'items', fresh)) as number
     await put(tx, 'files', file, id)
@@ -326,3 +329,19 @@ export const setPref = (key: string, value: unknown) => transaction(['prefs'], '
 /** Todas as lojas, para o backup. */
 export const ALL_STORES: StoreName[] = ['items', 'files', 'covers', 'notes', 'terms', 'readingDays', 'readingLog', 'prefs', 'bookmarks']
 export { changed as notifyLibraryChanged }
+
+/** Muda o livro de aba. */
+export async function setItemTab(id: number, tab: string) {
+  await update(id, () => ({ tab: tab === 'livros' ? undefined : tab }))
+}
+
+/** Ao apagar uma aba, os livros dela voltam para a aba principal (nada é apagado). */
+export async function moveTabItems(from: string, to = 'livros') {
+  const items = await transaction(['items'], 'readwrite', async (tx) => {
+    const all = (await getAll<LibraryItem>(tx, 'items')).filter((i) => i.tab === from)
+    for (const item of all) await put(tx, 'items', { ...item, tab: to === 'livros' ? undefined : to })
+    return all.length
+  })
+  if (items) changed()
+  return items
+}

@@ -36,7 +36,9 @@ data class LibraryItem(
      * capítulos, [position] (0 a 10000) arredonda para o capítulo vizinho quando se está no começo ou
      * no fim de um capítulo.
      */
-    val exactPosition: Long = -1
+    val exactPosition: Long = -1,
+    /** Aba da tela inicial onde o livro fica ([AppTabs.MAIN] = a aba principal de livros). */
+    val tab: String = AppTabs.MAIN
 ) {
     val finished: Boolean get() = finishedAt > 0
     val archived: Boolean get() = archivedAt > 0
@@ -89,7 +91,8 @@ class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.
                 reading_seconds INTEGER NOT NULL DEFAULT 0,
                 file_size INTEGER NOT NULL DEFAULT 0,
                 archived_at INTEGER NOT NULL DEFAULT 0,
-                exact_position INTEGER NOT NULL DEFAULT -1
+                exact_position INTEGER NOT NULL DEFAULT -1,
+                tab TEXT NOT NULL DEFAULT 'livros'
             )
         """.trimIndent())
         createNotesTable(db)
@@ -147,6 +150,10 @@ class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.
         if (oldVersion < 9 && !hasColumn(db, "library_items", "exact_position")) {
             db.execSQL("ALTER TABLE library_items ADD COLUMN exact_position INTEGER NOT NULL DEFAULT -1")
         }
+        // Abas (0.23): os livros que já existem ficam na aba principal.
+        if (oldVersion < 10 && !hasColumn(db, "library_items", "tab")) {
+            db.execSQL("ALTER TABLE library_items ADD COLUMN tab TEXT NOT NULL DEFAULT 'livros'")
+        }
     }
 
     private fun hasColumn(db: SQLiteDatabase, table: String, column: String): Boolean =
@@ -189,7 +196,7 @@ class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.
      * Adiciona o documento. Se o mesmo URI já existir, mantém o registro (id, data e posição de
      * leitura) e só atualiza o nome. Retorna o id do novo documento, ou null se ele já existia.
      */
-    fun add(name: String, uri: String, format: String, fileSize: Long = 0): Long? {
+    fun add(name: String, uri: String, format: String, fileSize: Long = 0, tab: String = AppTabs.MAIN): Long? {
         val db = writableDatabase
         val values = ContentValues().apply {
             put("name", name)
@@ -197,6 +204,7 @@ class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.
             put("format", format)
             put("added_at", System.currentTimeMillis())
             put("file_size", fileSize)
+            put("tab", tab)
         }
         val id = db.insertWithOnConflict("library_items", null, values, SQLiteDatabase.CONFLICT_IGNORE)
         if (id != -1L) return id
@@ -494,12 +502,19 @@ class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "alexandria.
 
     private fun Cursor.toItem() = LibraryItem(
         getLong(0), getString(1), getString(2), getString(3), getLong(4), getInt(5), getInt(6), getLong(7),
-        getLong(8), getString(9), getLong(10), getLong(11), getLong(12), getLong(13)
+        getLong(8), getString(9), getLong(10), getLong(11), getLong(12), getLong(13), getString(14) ?: AppTabs.MAIN
     )
+
+    /** Muda o livro de aba. */
+    fun setTab(id: Long, tab: String) = update(id, ContentValues().apply { put("tab", tab) })
+
+    /** Ao apagar uma aba, os livros dela voltam para a principal (nada é apagado). Devolve quantos. */
+    fun moveTab(from: String, to: String = AppTabs.MAIN): Int =
+        writableDatabase.update("library_items", ContentValues().apply { put("tab", to) }, "tab = ?", arrayOf(from))
 
     private companion object {
         const val SELECT = "SELECT id, name, uri, format, added_at, last_position, page_count, opened_at, " +
-            "finished_at, shelf, reading_seconds, file_size, archived_at, exact_position FROM library_items"
+            "finished_at, shelf, reading_seconds, file_size, archived_at, exact_position, tab FROM library_items"
     }
 }
 

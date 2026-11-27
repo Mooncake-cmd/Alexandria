@@ -32,6 +32,10 @@ export interface TgMessage {
   date: number
   /** Quem enviou (num grupo). */
   sender?: string
+  /** Tipo do arquivo (video/mp4…), duração em segundos e tópico do grupo, quando houver. */
+  mime?: string
+  duration?: number
+  topic?: number
 }
 
 export interface TgApi {
@@ -44,6 +48,8 @@ export interface TgApi {
   anyBook?: boolean
   /** Mensagens com arquivo da conversa, das mais novas para as mais antigas (até [limit]). */
   files?(limit?: number): Promise<TgMessage[]>
+  /** Vídeos da conversa (enviados como vídeo ou como arquivo), dos mais novos para os mais antigos. */
+  videos?(limit?: number): Promise<TgMessage[]>
   upload(name: string, bytes: Uint8Array, caption: string, onProgress?: (fraction: number) => void): Promise<TgMessage>
   download(messageId: number, onProgress?: (fraction: number) => void): Promise<Uint8Array>
   remove(ids: number[]): Promise<void>
@@ -220,4 +226,47 @@ export function isTelegramUrl(url: string): boolean {
   } catch {
     return false
   }
+}
+
+// ---------- vídeos (abas de filmes e cursos) ----------
+
+export interface CloudVideo {
+  messageId: number
+  name: string
+  size: number
+  /** Segundos (0 se o Telegram não informou). */
+  duration: number
+  mime: string
+  date: number
+  sender?: string
+  topic?: number
+}
+
+const VIDEO_EXTENSIONS = /\.(mp4|m4v|mkv|webm|mov|avi|wmv|flv|mpe?g|ts|3gp)$/i
+
+export function isVideoMessage(m: TgMessage): boolean {
+  return !!m.size && ((m.mime ?? '').startsWith('video/') || VIDEO_EXTENSIONS.test(m.fileName ?? ''))
+}
+
+/** Vídeos do grupo da aba, do mais novo para o mais antigo. */
+export async function listVideos(api: TgApi): Promise<CloudVideo[]> {
+  const messages = api.videos ? await api.videos() : (await api.files?.()) ?? []
+  return messages.filter(isVideoMessage).map((m) => ({
+    messageId: m.id,
+    name: m.fileName || m.caption.split('\n')[0]?.trim() || `Vídeo ${m.id}`,
+    size: m.size ?? 0,
+    duration: m.duration ?? 0,
+    mime: m.mime ?? '',
+    date: m.date * 1000,
+    sender: m.sender,
+    topic: m.topic
+  })).sort((a, b) => b.date - a.date || b.messageId - a.messageId)
+}
+
+export function formatDuration(seconds: number): string {
+  if (!seconds) return ''
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const s = Math.floor(seconds % 60)
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`
 }

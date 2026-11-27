@@ -231,7 +231,7 @@ function TextBook({ item: initial, content, initialPrefs }: { item: LibraryItem;
       onPrefs={changePrefs}
       typography
       tools={tools}
-      sync={{ name: initial.name, size: initial.fileSize, format: initial.format, openedAt: initial.openedAt, pageCount: 0 }}
+      sync={{ name: initial.name, size: initial.fileSize, tab: initial.tab, format: initial.format, openedAt: initial.openedAt, pageCount: 0 }}
       readingSeconds={initial.readingSeconds}
       menu={[
         [prefs.paged ? 'Modo: rolagem contínua' : 'Modo: páginas (setas, roda do mouse ou clique duplo na borda)', () => changePrefs({ paged: !prefs.paged })],
@@ -304,7 +304,7 @@ function ReflowBookView({ item: initial, book, initialPrefs }: { item: LibraryIt
       onPrefs={changePrefs}
       typography
       tools={tools}
-      sync={{ name: initial.name, size: initial.fileSize, format: initial.format, openedAt: initial.openedAt, pageCount: book.chapterCount }}
+      sync={{ name: initial.name, size: initial.fileSize, tab: initial.tab, format: initial.format, openedAt: initial.openedAt, pageCount: book.chapterCount }}
       readingSeconds={initial.readingSeconds}
       menu={[
         ['Sumário', contents],
@@ -389,7 +389,7 @@ function PageBookView({ item: initial, source, initialPrefs }: { item: LibraryIt
       onPrefs={changePrefs}
       typography={false}
       tools={tools}
-      sync={{ name: initial.name, size: initial.fileSize, format: initial.format, openedAt: initial.openedAt, pageCount: source.pageCount }}
+      sync={{ name: initial.name, size: initial.fileSize, tab: initial.tab, format: initial.format, openedAt: initial.openedAt, pageCount: source.pageCount }}
       readingSeconds={initial.readingSeconds}
       keys={{ g: askPage }}
       menu={[

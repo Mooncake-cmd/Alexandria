@@ -5,8 +5,10 @@
  */
 import { getPref, setPref, addBook, bookFile, type LibraryItem } from '../storage/library'
 import { bookKey, DEVICE, pullPosition as pullFromGitHub, pushPosition as pushToGitHub, syncSettings, type SyncEntry } from '../storage/sync'
-import { copyCloud, downloadBook, listCloudBooks, pullPositionFrom, pushPositionTo, uploadBook, removeCloudBook, type CloudBook, type SponsoredItem, type TgApi } from './telegramCloud'
+import { copyCloud, downloadBook, listCloudBooks, listVideos, pullPositionFrom, pushPositionTo, uploadBook, removeCloudBook, type CloudBook, type CloudVideo, type SponsoredItem, type TgApi } from './telegramCloud'
 import type { CloudChat, CloudTarget } from './gramApi'
+import { MAIN_TAB, tabOf } from '../core/tabs'
+import { tabById } from '../storage/tabs'
 
 export interface TelegramSettings {
   apiId: number
@@ -14,7 +16,7 @@ export interface TelegramSettings {
   session: string
   name: string
   error?: string | null
-  /** Grupo privado onde fica a nuvem; sem ele, as Mensagens salvas. */
+  /** Antes das abas: o grupo da nuvem (agora é o grupo da aba principal, em "tabs"). */
   chat?: CloudChat | null
 }
 
@@ -38,15 +40,21 @@ export function setTelegramApiFactory(factory: ((s: TelegramSettings, target: Cl
   apiFactory = factory
 }
 
-const targetOf = (s: TelegramSettings): CloudTarget => s.chat ?? 'me'
-
-async function telegramApi(target?: CloudTarget): Promise<TgApi | null> {
-  const s = await telegramSettings()
-  if (!s?.session) return null
-  if (apiFactory) return apiFactory(s, target ?? targetOf(s))
-  const { connectedClient, gramApi } = await import('./gramApi')
-  return gramApi(await connectedClient({ apiId: s.apiId, apiHash: s.apiHash }, s.session), target ?? targetOf(s))
+/** Conversa da nuvem de uma aba: o grupo dela ou, na principal sem grupo, as Mensagens salvas. */
+async function targetOfTab(tabId?: string): Promise<CloudTarget | null> {
+  const tab = await tabById(tabId)
+  return tab.chat ?? (tab.id === MAIN_TAB ? 'me' : null)
 }
+
+async function telegramApi(target: CloudTarget | null | undefined): Promise<TgApi | null> {
+  const s = await telegramSettings()
+  if (!s?.session || !target) return null
+  if (apiFactory) return apiFactory(s, target)
+  const { connectedClient, gramApi } = await import('./gramApi')
+  return gramApi(await connectedClient({ apiId: s.apiId, apiHash: s.apiHash }, s.session), target)
+}
+
+const apiOfTab = async (tabId?: string) => telegramApi(await targetOfTab(tabId))
 
 async function client() {
   const s = await telegramSettings()
@@ -57,24 +65,15 @@ async function client() {
 
 // ---------- onde fica a nuvem: Mensagens salvas ou grupo privado ----------
 
-export async function useCloudChat(chat: CloudChat | null) {
-  const s = await telegramSettings()
-  if (s) await saveTelegram({ ...s, chat, error: null })
-  sponsoredCache = null
-}
-
-export async function createCloudGroup(): Promise<CloudChat> {
+/** Cria um grupo privado para a nuvem de uma aba (o nome aparece no Telegram). */
+export async function createCloudGroup(title = 'Alexandria — biblioteca'): Promise<CloudChat> {
   const { gram, client: c } = await client()
-  const chat = await gram.createGroup(c, 'Alexandria — biblioteca')
-  await useCloudChat(chat)
-  return chat
+  return gram.createGroup(c, title)
 }
 
 export async function joinCloudGroup(link: string): Promise<CloudChat> {
   const { gram, client: c } = await client()
-  const chat = await gram.joinGroup(c, link)
-  await useCloudChat(chat)
-  return chat
+  return gram.joinGroup(c, link)
 }
 
 export async function myGroups(): Promise<CloudChat[]> {
@@ -82,18 +81,15 @@ export async function myGroups(): Promise<CloudChat[]> {
   return gram.listGroups(c)
 }
 
-export async function cloudInviteLink(): Promise<string> {
-  const { s, gram, client: c } = await client()
-  if (!s.chat) throw new Error('A nuvem está nas Mensagens salvas: não há grupo para convidar.')
-  return gram.inviteLink(c, s.chat)
+export async function cloudInviteLink(chat: CloudChat): Promise<string> {
+  const { gram, client: c } = await client()
+  return gram.inviteLink(c, chat)
 }
 
 /** Copia para o grupo os livros e posições que estão nas Mensagens salvas. */
-export function copySavedToGroup(): Promise<{ books: number; positions: boolean }> {
+export function copySavedToGroup(chat: CloudChat): Promise<{ books: number; positions: boolean }> {
   return queued(async () => {
-    const { s, gram, client: c } = await client()
-    if (!s.chat) throw new Error('Escolha um grupo antes.')
-    const chat = s.chat
+    const { gram, client: c } = await client()
     const [from, to] = await Promise.all([telegramApi('me'), telegramApi(chat)])
     return copyCloud(from!, to!, (ids) => gram.forwardFromSaved(c, chat, ids))
   })
@@ -104,14 +100,14 @@ export function copySavedToGroup(): Promise<{ books: number; positions: boolean 
 /** A documentação pede para guardar o resultado por 5 minutos. */
 let sponsoredCache: { at: number; key: string; items: SponsoredItem[] } | null = null
 
-export async function cloudSponsored(): Promise<SponsoredItem[]> {
+export async function cloudSponsored(chat: CloudChat | null): Promise<SponsoredItem[]> {
   const s = await telegramSettings()
-  if (!s?.session || !s.chat || apiFactory) return []
-  const key = s.chat.id
+  if (!s?.session || !chat || apiFactory) return []
+  const key = chat.id
   if (sponsoredCache && sponsoredCache.key === key && Date.now() - sponsoredCache.at < 5 * 60_000) return sponsoredCache.items
   try {
     const { gram, client: c } = await client()
-    const items = await gram.sponsoredMessages(c, s.chat)
+    const items = await gram.sponsoredMessages(c, chat)
     sponsoredCache = { at: Date.now(), key, items }
     return items
   } catch {
@@ -119,18 +115,14 @@ export async function cloudSponsored(): Promise<SponsoredItem[]> {
   }
 }
 
-export async function sponsoredSeen(item: SponsoredItem) {
-  const s = await telegramSettings()
-  if (!s?.chat) return
+export async function sponsoredSeen(item: SponsoredItem, chat: CloudChat) {
   const { gram, client: c } = await client()
-  await gram.viewSponsored(c, s.chat, item.id).catch(() => {})
+  await gram.viewSponsored(c, chat, item.id).catch(() => {})
 }
 
-export async function sponsoredClicked(item: SponsoredItem) {
-  const s = await telegramSettings()
-  if (!s?.chat) return
+export async function sponsoredClicked(item: SponsoredItem, chat: CloudChat) {
   const { gram, client: c } = await client()
-  await gram.clickSponsored(c, s.chat, item.id).catch(() => {})
+  await gram.clickSponsored(c, chat, item.id).catch(() => {})
 }
 
 /** Erros que mostram que a sessão acabou (ex.: encerrada no Telegram, em "Dispositivos"). */
@@ -139,7 +131,7 @@ async function rememberTelegramError(e: unknown) {
   const s = await telegramSettings()
   if (!s) return
   if (/AUTH_KEY_UNREGISTERED|SESSION_REVOKED|USER_DEACTIVATED|AUTH_KEY_INVALID/.test(code)) await saveTelegram({ ...s, error: 'A sessão do Telegram foi encerrada. Entre de novo em Ajustes.' })
-  else if (s.chat && /CHANNEL_PRIVATE|CHANNEL_INVALID|PEER_ID_INVALID/.test(code)) await saveTelegram({ ...s, error: 'O grupo da nuvem não está acessível para esta conta (saiu do grupo ou ele foi apagado). Escolha outro lugar em Ajustes.' })
+  else if (/CHANNEL_PRIVATE|CHANNEL_INVALID/.test(code)) await saveTelegram({ ...s, error: 'O grupo da nuvem de uma aba não está acessível para esta conta (saiu do grupo ou ele foi apagado). Escolha outro grupo nas opções da aba.' })
 }
 
 // ---------- posição de leitura ----------
@@ -158,12 +150,12 @@ function limited<T>(work: Promise<T>): Promise<T> {
   ]).finally(() => clearTimeout(timer))
 }
 
-export async function pullPosition(name: string, size: number): Promise<SyncEntry | null> {
+export async function pullPosition(name: string, size: number, tab?: string): Promise<SyncEntry | null> {
   const provider = await syncProvider()
   if (provider === 'github') return pullFromGitHub(name, size)
   if (provider !== 'telegram' || size <= 0) return null
   try {
-    const api = await telegramApi()
+    const api = await apiOfTab(tab)
     return api ? await limited(pullPositionFrom(api, await bookKey(name, size))) : null
   } catch (e) {
     await rememberTelegramError(e)
@@ -174,13 +166,13 @@ export async function pullPosition(name: string, size: number): Promise<SyncEntr
 /** Fila: uma gravação de posição por vez (o Telegram não gosta de rajadas). */
 let positionQueue: Promise<unknown> = Promise.resolve()
 
-export function pushPosition(name: string, size: number, entry: SyncEntry, keepalive = false): Promise<void> {
+export function pushPosition(name: string, size: number, entry: SyncEntry, keepalive = false, tab?: string): Promise<void> {
   const run = async () => {
     const provider = await syncProvider()
     if (provider === 'github') return pushToGitHub(name, size, entry, keepalive)
     if (provider !== 'telegram' || size <= 0) return
     try {
-      const api = await telegramApi()
+      const api = await apiOfTab(tab)
       if (api) await limited(pushPositionTo(api, await bookKey(name, size), entry))
     } catch (e) {
       await rememberTelegramError(e)
@@ -219,8 +211,8 @@ function queued<T>(work: () => Promise<T>): Promise<T> {
   return next
 }
 
-export async function cloudBooks(): Promise<CloudBook[]> {
-  const api = await telegramApi()
+export async function cloudBooks(tab?: string): Promise<CloudBook[]> {
+  const api = await apiOfTab(tab)
   if (!api) return []
   try {
     return await listCloudBooks(api)
@@ -232,8 +224,8 @@ export async function cloudBooks(): Promise<CloudBook[]> {
 
 export function sendToCloud(item: LibraryItem, displayName: string): Promise<{ existed: boolean }> {
   return queued(async () => {
-    const api = await telegramApi()
-    if (!api) throw new Error('Entre no Telegram em Ajustes para usar a nuvem.')
+    const api = await apiOfTab(tabOf(item))
+    if (!api) throw new Error('Entre no Telegram em Ajustes e escolha o grupo da aba para usar a nuvem.')
     const file = await bookFile(item.id)
     if (!file) throw new Error('O arquivo deste livro não está guardado neste navegador.')
     setActivity({ label: `Enviando "${displayName}"`, fraction: 0 })
@@ -247,14 +239,14 @@ export function sendToCloud(item: LibraryItem, displayName: string): Promise<{ e
 }
 
 /** Baixa o livro da nuvem para a biblioteca deste navegador. */
-export function fetchFromCloud(book: CloudBook, displayName: string): Promise<LibraryItem> {
+export function fetchFromCloud(book: CloudBook, displayName: string, tab?: string): Promise<LibraryItem> {
   return queued(async () => {
-    const api = await telegramApi()
+    const api = await apiOfTab(tab)
     if (!api) throw new Error('Entre no Telegram em Ajustes para usar a nuvem.')
     setActivity({ label: `Baixando "${displayName}"`, fraction: 0 })
     try {
       const bytes = await downloadBook(api, book, (f) => setActivity({ label: `Baixando "${displayName}"`, fraction: f }))
-      const { item } = await addBook(book.name, book.format, new Blob([bytes]))
+      const { item } = await addBook(book.name, book.format, new Blob([bytes]), Date.now(), tab)
       return item
     } finally {
       setActivity(null)
@@ -262,8 +254,8 @@ export function fetchFromCloud(book: CloudBook, displayName: string): Promise<Li
   })
 }
 
-export async function deleteFromCloud(book: CloudBook) {
-  const api = await telegramApi()
+export async function deleteFromCloud(book: CloudBook, tab?: string) {
+  const api = await apiOfTab(tab)
   if (api) await removeCloudBook(api, book.key)
 }
 
@@ -272,4 +264,17 @@ export async function localKeys(items: LibraryItem[]): Promise<Map<string, Libra
   const map = new Map<string, LibraryItem>()
   for (const item of items) if (item.fileSize > 0) map.set(await bookKey(item.name, item.fileSize), item)
   return map
+}
+
+// ---------- vídeos (abas de filmes e cursos) ----------
+
+export async function cloudVideos(tab: string): Promise<CloudVideo[]> {
+  const api = await apiOfTab(tab)
+  if (!api) return []
+  try {
+    return await listVideos(api)
+  } catch (e) {
+    await rememberTelegramError(e)
+    throw e
+  }
 }

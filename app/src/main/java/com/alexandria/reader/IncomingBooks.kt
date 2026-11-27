@@ -40,7 +40,8 @@ object IncomingBooks {
      * tamanho) volta ao registro existente, com o progresso, as anotações e o glossário dele; se estava
      * arquivado na Estante, o arquivo novo o traz de volta.
      */
-    fun receive(context: Context, database: LibraryDatabase, uri: Uri, mime: String?): Result {
+    /** [tab]: aba de livros onde o livro novo entra (a aberta na tela inicial, por padrão). */
+    fun receive(context: Context, database: LibraryDatabase, uri: Uri, mime: String?, tab: String = AppTabs.importTab(context)): Result {
         val (name, declaredSize) = describe(context, uri)
         var format = Formats.detect(name, mime ?: context.contentResolver.getType(uri)) ?: throw UnsupportedFormat(name)
         if (format == "cbr" && looksLikeZip(BookFiles.header(context, uri, 4))) format = "cbz"
@@ -64,7 +65,7 @@ object IncomingBooks {
             BookFiles.deleteCaches(context, existing.id)
             return Result(database.find(existing.id)!!, true)
         }
-        val id = database.add(name, Uri.fromFile(copy).toString(), format, size)
+        val id = database.add(name, Uri.fromFile(copy).toString(), format, size, tab)
             ?: throw IllegalStateException("Não foi possível adicionar o livro")
         return Result(database.find(id)!!, false)
     }

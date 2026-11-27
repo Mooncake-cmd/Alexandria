@@ -33,6 +33,7 @@ class TelegramCloudTest {
         var session = ""
         var chat: JSONObject? = null
         val ads = JSONArray()
+        val videoList = JSONArray()
         var needsPassword = false
         var nextId = 1
 
@@ -107,6 +108,7 @@ class TelegramCloudTest {
                             "inviteLink" -> if (chat == null) throw CloudException("", "Sem grupo.") else JSONObject.quote("https://t.me/+abcDEF123")
                             "copyFromSaved" -> JSONObject().put("books", 2).put("positions", true).toString()
                             "sponsored" -> ads.toString()
+                            "videos" -> videoList.toString()
                             "viewSponsored", "clickSponsored" -> "true"
                             else -> throw CloudException("", "Método desconhecido: $method")
                         }
@@ -126,6 +128,7 @@ class TelegramCloudTest {
         TelegramCloud.engineFactory = { engine }
         context.getSharedPreferences("telegram", Context.MODE_PRIVATE).edit().clear().commit()
         context.getSharedPreferences("cloud", Context.MODE_PRIVATE).edit().clear().commit()
+        context.getSharedPreferences("tabs", Context.MODE_PRIVATE).edit().clear().commit()
         PositionSync.disconnect(context)
     }
 
@@ -177,18 +180,18 @@ class TelegramCloudTest {
         val file = File(context.cacheDir, "Dom Casmurro.epub").apply { writeBytes(bytes) }
         val progress = mutableListOf<Float>()
         var existed: Boolean? = null
-        TelegramCloud.upload(context, "Dom Casmurro.epub", "epub", file, { progress += it }) { existed = it.getOrThrow() }
+        TelegramCloud.upload(context, null, "Dom Casmurro.epub", "epub", file, { progress += it }) { existed = it.getOrThrow() }
         assertEquals(false, existed)
         assertEquals(1f, progress.last())
         assertEquals("init", engine.calls[engine.calls.indexOf("upload") - 1])
 
         // Enviar de novo não duplica.
-        TelegramCloud.upload(context, "Dom Casmurro.epub", "epub", file, {}) { existed = it.getOrThrow() }
+        TelegramCloud.upload(context, null, "Dom Casmurro.epub", "epub", file, {}) { existed = it.getOrThrow() }
         assertEquals(true, existed)
         assertEquals(1, engine.files.size)
 
         var books: List<CloudBook>? = null
-        TelegramCloud.books(context) { books = it.getOrThrow() }
+        TelegramCloud.books(context, null) { books = it.getOrThrow() }
         assertEquals(listOf("Dom Casmurro.epub"), books!!.map { it.name })
         assertEquals(SyncData.key("Dom Casmurro.epub", 23), books!![0].key)
 
@@ -197,13 +200,13 @@ class TelegramCloudTest {
             writeText("lixo antigo")
         }
         var downloaded: File? = null
-        TelegramCloud.download(context, books!![0], target, {}) { downloaded = it.getOrThrow() }
+        TelegramCloud.download(context, null, books!![0], target, {}) { downloaded = it.getOrThrow() }
         assertArrayEquals(bytes, downloaded!!.readBytes())
 
         // O código do arquivo vale uma vez só.
         engine.files.clear()
         var failed: Result<File>? = null
-        TelegramCloud.download(context, books!![0], target, {}) { failed = it }
+        TelegramCloud.download(context, null, books!![0], target, {}) { failed = it }
         assertTrue(failed!!.isFailure)
         assertFalse(target.exists())
     }
@@ -213,11 +216,11 @@ class TelegramCloudTest {
         login()
         val bytes = "Era uma vez".toByteArray()
         val source = File(context.cacheDir, "Conto.txt").apply { writeBytes(bytes) }
-        TelegramCloud.upload(context, "Conto.txt", "txt", source, {}) {}
+        TelegramCloud.upload(context, null, "Conto.txt", "txt", source, {}) {}
         source.delete()
         val book = engine.files.values.first().first
         val target = File(File(context.cacheDir, "cloud"), book.name)
-        TelegramCloud.download(context, book, target, {}) {}
+        TelegramCloud.download(context, null, book, target, {}) {}
         val db = LibraryDatabase(context)
         val received = IncomingBooks.receive(context, db, android.net.Uri.fromFile(target), null)
         assertFalse(received.reused)
@@ -259,7 +262,7 @@ class TelegramCloudTest {
         engine.session = ""
         context.getSharedPreferences("telegram", Context.MODE_PRIVATE).edit().putString("session", "VENCIDA").commit()
         var result: Result<List<CloudBook>>? = null
-        TelegramCloud.books(context) { result = it }
+        TelegramCloud.books(context, null) { result = it }
         assertTrue(result!!.isFailure)
         assertNotNull(TelegramCloud.settings(context)!!.error)
 
@@ -270,42 +273,53 @@ class TelegramCloudTest {
     }
 
     @Test
-    fun groupIsRememberedAndSentToTheEngine() {
+    fun eachCallGoesToTheChosenGroup() {
         login()
-        assertNull(TelegramCloud.settings(context)!!.chat)
         var created: CloudChat? = null
-        TelegramCloud.createGroup(context) { created = it.getOrThrow() }
+        TelegramCloud.createGroup(context, "Alexandria — Filmes") { created = it.getOrThrow() }
         assertEquals(CloudChat("777", "-42", "Alexandria — biblioteca"), created)
-        assertEquals(created, TelegramCloud.settings(context)!!.chat)
 
-        // As próximas chamadas levam o grupo no "init".
-        TelegramCloud.books(context) {}
+        // A chamada leva o grupo no "init"; sem grupo, vai para as Mensagens salvas.
+        TelegramCloud.books(context, created) {}
         assertEquals("777", engine.chat!!.getString("id"))
         assertEquals("-42", engine.chat!!.getString("accessHash"))
+        TelegramCloud.books(context, null) {}
+        assertNull(engine.chat)
 
         var link: String? = null
-        TelegramCloud.inviteLink(context) { link = it.getOrThrow() }
+        TelegramCloud.inviteLink(context, created!!) { link = it.getOrThrow() }
         assertEquals("https://t.me/+abcDEF123", link)
         var copied: Int? = null
-        TelegramCloud.copyFromSaved(context) { copied = it.getOrThrow() }
+        TelegramCloud.copyFromSaved(context, created!!) { copied = it.getOrThrow() }
         assertEquals(2, copied)
 
-        // Entrar por link troca o grupo; link ruim não troca nada.
         var bad: Result<CloudChat>? = null
         TelegramCloud.joinGroup(context, "oi") { bad = it }
         assertEquals("O link de convite não vale mais.", bad!!.exceptionOrNull()!!.message)
-        assertEquals("777", TelegramCloud.settings(context)!!.chat!!.id)
-        TelegramCloud.joinGroup(context, "https://t.me/+xyz") {}
-        assertEquals("Livros da família", TelegramCloud.settings(context)!!.chat!!.title)
+        var joined: CloudChat? = null
+        TelegramCloud.joinGroup(context, "https://t.me/+xyz") { joined = it.getOrThrow() }
+        assertEquals("Livros da família", joined!!.title)
 
         var groups: List<CloudChat>? = null
         TelegramCloud.groups(context) { groups = it.getOrThrow() }
         assertEquals(listOf("Leituras"), groups!!.map { it.title })
+    }
 
-        // De volta às Mensagens salvas: o "init" vai sem grupo.
-        TelegramCloud.useChat(context, null)
-        TelegramCloud.books(context) {}
+    @Test
+    fun readingPositionGoesToTheGroupOfTheBooksTab() {
+        login()
+        val group = CloudChat("888", "9", "HQs")
+        AppTabs.save(context, AppTabs.all(context) + AppTab("hqs", "HQs", AppTabs.BOOKS, group))
+        val entry = SyncEntry("cbz", 3, -1, 20, 1_700_000_000_000, "celular")
+        PositionSync.push(context, "Watchmen.cbz", 99, entry, "hqs")
+        assertEquals("888", engine.chat!!.getString("id"))
+        PositionSync.push(context, "Dom Casmurro.txt", 50, entry)
         assertNull(engine.chat)
+        // Aba sem grupo (fora a principal) não tem nuvem: nada é enviado.
+        AppTabs.save(context, AppTabs.all(context) + AppTab("local", "Local", AppTabs.BOOKS, null))
+        val before = engine.calls.size
+        PositionSync.push(context, "Outro.txt", 1, entry, "local")
+        assertEquals(before, engine.calls.size)
     }
 
     @Test
@@ -320,17 +334,17 @@ class TelegramCloudTest {
     fun sponsoredMessagesOnlyInGroupsAndCachedForFiveMinutes() {
         login()
         var ads: List<SponsoredItem>? = null
-        TelegramCloud.sponsored(context) { ads = it }
+        TelegramCloud.sponsored(context, null) { ads = it }
         assertEquals(emptyList<SponsoredItem>(), ads)
         assertFalse(engine.calls.contains("sponsored"))
 
-        TelegramCloud.createGroup(context) {}
+        val group = CloudChat("777", "1", "Filmes")
         engine.ads.put(JSONObject().put("id", "cmFuZG9t").put("title", "Canal de livros").put("message", "Leia mais").put("url", "https://t.me/livros")
             .put("buttonText", "Ver canal").put("recommended", false).put("sponsorInfo", "Anunciante X"))
-        TelegramCloud.sponsored(context) { ads = it }
+        TelegramCloud.sponsored(context, group) { ads = it }
         assertEquals(listOf("Canal de livros"), ads!!.map { it.title })
         assertEquals("Anunciante X", ads!![0].info)
-        TelegramCloud.sponsored(context) {}
+        TelegramCloud.sponsored(context, group) {}
         assertEquals(1, engine.calls.count { it == "sponsored" })
 
         assertTrue(SponsoredItem.isTelegramUrl("https://t.me/livros"))
@@ -340,20 +354,33 @@ class TelegramCloudTest {
     }
 
     @Test
+    fun videosOfTheTabGroup() {
+        login()
+        engine.videoList.put(JSONObject().put("messageId", 5).put("name", "Aula 01.mp4").put("size", 120_000_000).put("duration", 754).put("mime", "video/mp4").put("date", 1).put("sender", "Bia").put("topic", 3))
+        var list: List<CloudVideo>? = null
+        TelegramCloud.videos(context, CloudChat("777", "1", "Cursos")) { list = it.getOrThrow() }
+        assertEquals("777", engine.chat!!.getString("id"))
+        assertEquals(CloudVideo(5, "Aula 01.mp4", 120_000_000, 754, "video/mp4", 1, "Bia", 3), list!!.single())
+        assertEquals("12:34", CloudVideo.duration(754))
+        assertEquals("1:00:05", CloudVideo.duration(3605))
+        assertEquals("", CloudVideo.duration(0))
+    }
+
+    @Test
     fun positionStatusShowsWhetherTheCloudAnswered() {
         login()
         val entry = SyncEntry("epub", 21, 2100, 30, 1_700_000_000_000, "celular")
-        TelegramCloud.pushPosition(context, "k", entry)
+        TelegramCloud.pushPosition(context, null, "k", entry)
         val ok = TelegramCloud.positionStatus(context)
         assertTrue(ok.pushAt > 0)
         assertNull(ok.pushError)
 
         // Sessão recusada: o erro aparece em Ajustes.
         context.getSharedPreferences("telegram", Context.MODE_PRIVATE).edit().putString("session", "VENCIDA").commit()
-        TelegramCloud.pushPosition(context, "k", entry)
+        TelegramCloud.pushPosition(context, null, "k", entry)
         assertEquals("Sem sessão.", TelegramCloud.positionStatus(context).pushError)
         var pulled: SyncEntry? = entry
-        TelegramCloud.pullPosition(context, "k") { pulled = it }
+        TelegramCloud.pullPosition(context, null, "k") { pulled = it }
         assertNull(pulled)
         assertEquals("Sem sessão.", TelegramCloud.positionStatus(context).pullError)
     }

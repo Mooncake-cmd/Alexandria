@@ -432,3 +432,22 @@ kbd { font-family: inherit; font-size: 12px; background: var(--paper, #f5f2eb); 
 .sponsored-label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 .sponsored-title { font-weight: 700; }
 .sponsored-text { white-space: pre-line; font-size: 14px; }
+
+/* ---------- abas ---------- */
+.nav-label { margin: 6px 12px 2px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #8b939d; }
+.nav-new { background: none; border: 0; font: inherit; cursor: pointer; text-align: left; color: #9aa3ad; }
+.nav-sep { height: 1px; background: rgba(255, 255, 255, 0.08); margin: 8px 6px; }
+.nav-home { display: none; }
+.nav-tab span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav { overflow-y: auto; }
+.tab-strip { display: none; }
+.chip { display: inline-flex; align-items: center; padding: 7px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--text); text-decoration: none; font: inherit; font-size: 14px; white-space: nowrap; cursor: pointer; }
+.chip.active { background: var(--ink); border-color: var(--ink); color: #fff; font-weight: 700; }
+.tab-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+.tab-head h2 { margin: 0; }
+@media (max-width: 760px) {
+  .nav-label, .nav-tab, .nav-new, .nav-sep { display: none; }
+  .nav-home { display: flex; }
+  .nav { overflow: visible; }
+  .tab-strip { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0 12px; margin-bottom: 4px; scrollbar-width: none; }
+}

@@ -3,6 +3,12 @@
 Cada seção vira o texto da Release no GitHub e aparece no aviso de atualização do app.
 A versão mais nova fica em cima.
 
+## 0.23.0
+- Abas na tela inicial: além de Livros, crie abas de Livros, Filmes ou Cursos (o "＋" na fileira de abas). Cada aba pode ter o seu grupo privado do Telegram: toque em ⋯ ao lado do nome da aba → Grupo da nuvem.
+- Abas de livros separam os livros (por exemplo, HQs à parte): o que você importa entra na aba aberta, e "Mover para outra aba" troca de lugar. A posição de leitura vai para o grupo da aba do livro.
+- Abas de filmes e cursos já mostram os vídeos do grupo (nome, duração, tamanho, quem enviou). Assistir com streaming chega na próxima atualização.
+- O grupo da nuvem agora é escolhido em cada aba (antes ficava em Ajustes); o grupo que você já usava passou para a aba Livros.
+
 ## 0.22.2
 - Posição de leitura na nuvem do Telegram mais confiável: é gravada ao sair do livro mesmo quando a conexão demorou a responder na abertura; a posição recém-gravada é encontrada logo (sem esperar a busca do Telegram) e as dos outros livros não se perdem; um pedido sem resposta não trava mais a nuvem.
 - Ajustes → Nuvem pelo Telegram mostra quando a posição foi gravada pela última vez, ou o erro, se não foi.

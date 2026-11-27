@@ -1,6 +1,6 @@
 # Alexandria — projeto Android
 
-**Versão:** 0.22.2  
+**Versão:** 0.23.0  
 **Pacote:** `com.alexandria.reader`  
 **Plataforma:** Android 6.0 ou superior (API 23+)  
 **Idioma da interface:** Português (Brasil)
@@ -173,6 +173,21 @@ Em todos os formatos:
   [`NOVIDADES.md`](NOVIDADES.md). Sem o segredo, nada é publicado.
 - **A chave de assinatura** não fica no repositório (`.chave/` e `*.keystore` estão no `.gitignore`). Perdê-la
   significa que versões novas não instalam por cima das antigas (seria preciso desinstalar e perder os dados).
+
+### Abas (0.23)
+
+- A Biblioteca tem uma fileira de abas no topo (no site, na barra lateral). A aba principal, **Livros**, sempre existe;
+  o "＋" cria outras, de três tipos: **Livros** (biblioteca com leitor, como a principal), **Filmes** e **Cursos**.
+  Segurar uma aba (ou o ⋯ ao lado do nome) mostra Renomear, **Grupo da nuvem** e Apagar.
+- **Cada aba, um grupo**: a nuvem de cada aba é um grupo privado do Telegram, onde qualquer membro (mesmo sem o
+  Alexandria) envia arquivos. A aba principal sem grupo usa as Mensagens salvas; as outras, sem grupo, ficam só no
+  aparelho. O grupo escolhido antes das abas passou para a aba principal.
+- **Livros por aba**: o que for importado (ou chegar por "Abrir com") entra na aba de livros aberta; "Mover para outra
+  aba…" troca o livro de aba; apagar uma aba devolve os livros dela para a principal. A posição de leitura vai para o
+  grupo da aba do livro. Notas e Estatísticas continuam juntando todas as abas.
+- **Filmes e Cursos** (etapa 1 de 4): a aba lista os vídeos do grupo (enviados como vídeo ou como arquivo), com
+  duração, tamanho e quem enviou. Próximas etapas: player com streaming (celular e computador) e "continuar
+  assistindo"; playlists pelos tópicos do grupo (cursos com aulas em ordem); assistir offline, legendas `.srt` e busca.
 
 ### Notas, Estatísticas e Ajustes
 

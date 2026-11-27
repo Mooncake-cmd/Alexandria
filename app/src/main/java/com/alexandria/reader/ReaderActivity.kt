@@ -120,7 +120,7 @@ class ReaderActivity : Activity(), ReaderHost {
         if (fromNote != null || syncSize <= 0) {
             pullDone = true
         } else {
-            PositionSync.pull(this, item.name, syncSize) { entry ->
+            PositionSync.pull(this, item.name, syncSize, item.tab) { entry ->
                 if (closed) return@pull
                 pullDone = true
                 remote = entry
@@ -252,7 +252,7 @@ class ReaderActivity : Activity(), ReaderHost {
         if (!pullDone && (openedExact == null || exact == openedExact)) return
         if (exact == lastPushed) return
         lastPushed = exact
-        PositionSync.push(this, item.name, syncSize, SyncEntry(item.format, view.position(), exact, view.pageCount(), System.currentTimeMillis(), PositionSync.device()))
+        PositionSync.push(this, item.name, syncSize, SyncEntry(item.format, view.position(), exact, view.pageCount(), System.currentTimeMillis(), PositionSync.device()), item.tab)
     }
 
     /** O dedo começou na alça da régua: o gesto inteiro é dela, não do livro. */

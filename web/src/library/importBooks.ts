@@ -10,7 +10,7 @@ export const ACCEPT = '.pdf,.epub,.mobi,.azw,.azw3,.djvu,.djv,.cbz,.cbr,.docx,.t
  * Importa arquivos escolhidos ou arrastados para a janela. Formato pelo nome e pelo tipo; CBR que
  * é ZIP por dentro entra como CBZ. O mesmo livro não duplica. Devolve o último livro importado.
  */
-export async function importFiles(files: File[]): Promise<LibraryItem | null> {
+export async function importFiles(files: File[], tab?: string): Promise<LibraryItem | null> {
   let added = 0
   let existing = 0
   let restored = 0
@@ -24,7 +24,7 @@ export async function importFiles(files: File[]): Promise<LibraryItem | null> {
     }
     if (format === 'cbr' && looksLikeZip(new Uint8Array(await file.slice(0, 4).arrayBuffer()))) format = 'cbz'
     try {
-      const result = await addBook(file.name, format, file)
+      const result = await addBook(file.name, format, file, Date.now(), tab)
       last = result.item
       if (result.restored) restored++
       else if (result.existing) existing++

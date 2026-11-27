@@ -159,7 +159,20 @@ function senderName(m: Api.Message): string | undefined {
 function toMessage(m: Api.Message): TgMessage {
   const document = m.media instanceof Api.MessageMediaDocument && m.media.document instanceof Api.Document ? m.media.document : null
   const fileName = document?.attributes.find((a): a is Api.DocumentAttributeFilename => a instanceof Api.DocumentAttributeFilename)?.fileName
-  return { id: m.id, caption: m.message ?? '', fileName, size: document ? toNumber(document.size) : undefined, date: m.date, sender: senderName(m) }
+  const video = document?.attributes.find((a): a is Api.DocumentAttributeVideo => a instanceof Api.DocumentAttributeVideo)
+  // Num grupo com tópicos, a mensagem responde à primeira mensagem do tópico (o id do tópico).
+  const reply = m.replyTo instanceof Api.MessageReplyHeader && m.replyTo.forumTopic ? m.replyTo.replyToTopId ?? m.replyTo.replyToMsgId : undefined
+  return {
+    id: m.id,
+    caption: m.message ?? '',
+    fileName,
+    size: document ? toNumber(document.size) : undefined,
+    date: m.date,
+    sender: senderName(m),
+    mime: document?.mimeType,
+    duration: video ? toNumber(video.duration) : undefined,
+    topic: reply
+  }
 }
 
 /** As operações da nuvem (TgApi) sobre a conversa escolhida (Mensagens salvas, por padrão). */
@@ -175,6 +188,15 @@ export function gramApi(client: TelegramClient, target: CloudTarget = 'me'): TgA
     async files(limit = 3000) {
       const messages = await client.getMessages(peer, { filter: new Api.InputMessagesFilterDocument(), limit })
       return messages.filter((m) => m instanceof Api.Message).map(toMessage)
+    },
+    async videos(limit = 3000) {
+      // Vídeos enviados como vídeo e os enviados como arquivo (filmes em MKV, por exemplo).
+      const [asVideo, asFile] = await Promise.all([
+        client.getMessages(peer, { filter: new Api.InputMessagesFilterVideo(), limit }),
+        client.getMessages(peer, { filter: new Api.InputMessagesFilterDocument(), limit })
+      ])
+      const seen = new Set<number>()
+      return [...asVideo, ...asFile].filter((m) => m instanceof Api.Message && !seen.has(m.id) && !!seen.add(m.id)).map(toMessage)
     },
     async upload(name, bytes, caption, onProgress) {
       const file = new CustomFile(name, bytes.byteLength, '', Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength))
