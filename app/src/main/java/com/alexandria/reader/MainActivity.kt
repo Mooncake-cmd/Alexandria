@@ -1580,6 +1580,8 @@ class MainActivity : Activity() {
                     cloudError = null
                     cloudAds = emptyList()
                     videos = null
+                    videoTopics = TelegramCloud.Topics(false, emptyList())
+                    openTopic = -1
                     showLibrary()
                 }
             }, { tabOptions(tab) }), LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(8) })
@@ -1841,11 +1843,14 @@ class MainActivity : Activity() {
     private var videosLoading = false
     /** Onde cada vídeo parou (pela chave nome+tamanho), do arquivo de posições do grupo. */
     private var videoPositions: Map<String, SyncEntry> = emptyMap()
+    /** Tópicos do grupo da aba (cursos ou coleções) e o aberto na tela. */
+    private var videoTopics = TelegramCloud.Topics(false, emptyList())
+    private var openTopic = -1
 
     /** Nesta etapa só a lista dos vídeos do grupo; o player e as playlists por tópicos vêm depois. */
     private fun showVideoTab(tab: AppTab) {
         tabTitle(tab, "Aba de ${AppTabs.typeLabel(tab.type).lowercase()}${tab.chat?.let { " · grupo \"${it.title}\"" } ?: ""}. " +
-            if (tab.type == AppTabs.COURSES) "Cada tópico do grupo será um curso, com as aulas em ordem." else "Os tópicos do grupo serão coleções.")
+            if (tab.type == AppTabs.COURSES) "Cada tópico do grupo é um curso, com as aulas em ordem." else "Os tópicos do grupo são coleções.")
         if (!TelegramCloud.connected(this)) {
             content.addView(label("Entre no Telegram em Ajustes (Nuvem pelo Telegram) e depois escolha o grupo desta aba.", 13f, muted).apply {
                 setOnClickListener { showSection(SECTION_SETTINGS) }
@@ -1876,7 +1881,17 @@ class MainActivity : Activity() {
                     if (destroyed) return@videos
                     result.onSuccess { videos = it; videosError = null }.onFailure { videosError = it.message ?: "Não foi possível falar com o Telegram agora." }
                     if (section == SECTION_LIBRARY && AppTabs.current(this).id == tab.id) showLibrary()
-                    if (result.isSuccess) refreshVideoPositions(tab)
+                    if (result.isSuccess) {
+                        refreshVideoPositions(tab)
+                        TelegramCloud.topics(this, chat) { topics ->
+                            if (destroyed) return@topics
+                            topics.onSuccess { found ->
+                                if (found == videoTopics) return@onSuccess
+                                videoTopics = found
+                                if (section == SECTION_LIBRARY && AppTabs.current(this).id == tab.id) showLibrary()
+                            }
+                        }
+                    }
                 }
             }
             return
@@ -1891,19 +1906,184 @@ class MainActivity : Activity() {
             })
             return
         }
+        val courses = tab.type == AppTabs.COURSES
         val going = list!!.filter { videoStatus(it).third }
             .sortedByDescending { videoPositions[SyncData.key(it.keyName, it.size)]?.updated ?: 0L }
         if (going.isNotEmpty()) {
             content.addView(label("Continuar assistindo", 16f, ink, true).apply { setPadding(0, 0, 0, dp(8)) })
-            going.forEach { addVideoRow(tab, it) }
+            going.take(6).forEach { addVideoRow(tab, it, playlistOf(it, list)) }
             spacer(10)
         }
-        content.addView(label(
-            if (list.isEmpty()) "Nenhum vídeo no grupo ainda. Envie pelo Telegram (como vídeo ou como arquivo)."
-            else "${list.size} vídeo(s) no grupo. Toque para assistir.",
+        val (lists, loose) = Playlists.split(list, videoTopics.topics)
+        content.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(label(if (courses) "Cursos" else "Coleções", 16f, ink, true), LinearLayout.LayoutParams(0, -2, 1f))
+            addView(label("＋ ${if (courses) "Novo curso" else "Nova coleção"}", 14f, gold, true).apply {
+                minHeight = dp(44)
+                gravity = Gravity.CENTER_VERTICAL
+                setOnClickListener { newTopic(tab, chat) }
+            })
+        })
+        if (lists.isEmpty()) content.addView(label(
+            if (courses) "Nenhum curso ainda. Cada curso é um tópico do grupo: crie aqui ou no Telegram (com os tópicos ativados) e envie as aulas dentro dele."
+            else "Nenhuma coleção. Os tópicos do grupo viram coleções (por exemplo, Séries, Animações).",
             12f, muted
         ).apply { setPadding(0, 0, 0, dp(8)) })
-        list.forEach { addVideoRow(tab, it) }
+        for ((topic, videos) in lists) addPlaylist(tab, chat, topic, videos, courses)
+        spacer(8)
+        content.addView(label(if (lists.isEmpty()) "Vídeos" else "Vídeos soltos", 16f, ink, true).apply { setPadding(0, 0, 0, dp(4)) })
+        content.addView(label(
+            when {
+                list.isEmpty() -> "Nenhum vídeo no grupo ainda. Envie pelo Telegram (como vídeo ou como arquivo)."
+                loose.isEmpty() -> "Todos os vídeos estão em tópicos."
+                else -> "${loose.size} vídeo(s) fora de ${if (courses) "cursos" else "coleções"}. Toque para assistir."
+            },
+            12f, muted
+        ).apply { setPadding(0, 0, 0, dp(8)) })
+        loose.forEach { addVideoRow(tab, it) }
+    }
+
+    /** Abre o player; numa playlist, leva as aulas (para a próxima começar sozinha nos cursos). */
+    private fun playVideo(tab: AppTab, v: CloudVideo, playlist: List<CloudVideo>) {
+        val title = videoTopics.topics.firstOrNull { it.id == v.topic }?.title.takeIf { playlist.isNotEmpty() }
+        VideoActivity.open(this, tab.id, v, playlist, title, auto = tab.type == AppTabs.COURSES)
+    }
+
+    /** A playlist (aulas em ordem) do tópico deste vídeo, se ele estiver num. */
+    private fun playlistOf(v: CloudVideo, all: List<CloudVideo>): List<CloudVideo> {
+        if (v.topic == 0 || v.topic == Playlists.GENERAL || videoTopics.topics.none { it.id == v.topic }) return emptyList()
+        return Playlists.lessonOrder(all.filter { it.topic == v.topic })
+    }
+
+    private fun stoppedAt(v: CloudVideo): Pair<Long, Long>? =
+        videoPositions[SyncData.key(v.keyName, v.size)]?.let { Pair(it.position.toLong(), (if (it.pageCount > 0) it.pageCount else v.duration).toLong()) }
+
+    /** Um curso ou coleção: título, progresso, "Começar/Continuar" e, aberto, as aulas em ordem. */
+    private fun addPlaylist(tab: AppTab, chat: CloudChat, topic: Playlists.Topic, videos: List<CloudVideo>, courses: Boolean) {
+        val progress = Playlists.progress(videos, ::stoppedAt)
+        val expanded = openTopic == topic.id
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(10), dp(10), dp(10))
+            background = rounded(Color.WHITE, 12)
+        }
+        card.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            val info = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                setOnClickListener {
+                    openTopic = if (expanded) -1 else topic.id
+                    showLibrary()
+                }
+                setOnLongClickListener {
+                    renameTopic(tab, chat, topic)
+                    true
+                }
+                addView(label("${if (expanded) "▼" else "▶"}  ${topic.title}", 15f, ink, true))
+                val count = if (courses) "${videos.size} ${if (videos.size == 1) "aula" else "aulas"}${if (videos.isNotEmpty()) " · ${progress.done} assistida(s)" else ""}" else "${videos.size} vídeo(s)"
+                addView(label(count, 11f, muted).apply { setPadding(0, dp(2), 0, 0) })
+                if (courses && videos.isNotEmpty()) addView(android.widget.ProgressBar(this@MainActivity, null, android.R.attr.progressBarStyleHorizontal).apply {
+                    max = videos.size
+                    this.progress = progress.done
+                }, LinearLayout.LayoutParams(-1, dp(6)).apply { topMargin = dp(6) })
+            }
+            addView(info, LinearLayout.LayoutParams(0, -2, 1f))
+            val next = progress.next
+            if (courses && next != null) addView(label(if (progress.started) "Continuar" else "Começar", 13f, Color.WHITE, true).apply {
+                gravity = Gravity.CENTER
+                minHeight = dp(40)
+                setPadding(dp(14), 0, dp(14), 0)
+                background = rounded(ink, 10)
+                setOnClickListener {
+                    refreshOnResume = true
+                    playVideo(tab, next, videos)
+                }
+            }, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(8) })
+        })
+        content.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
+        if (expanded) {
+            if (videos.isEmpty()) content.addView(label("Nenhum vídeo neste tópico ainda. No Telegram, abra o tópico \"${topic.title}\" e envie os vídeos lá.", 12f, muted).apply {
+                setPadding(dp(8), 0, 0, dp(10))
+            })
+            videos.forEachIndexed { i, v -> addVideoRow(tab, v, videos, if (courses) i + 1 else null, indent = true) }
+        }
+    }
+
+    private fun newTopic(tab: AppTab, chat: CloudChat) {
+        val courses = tab.type == AppTabs.COURSES
+        val ask = {
+            val input = EditText(this).apply {
+                maxLines = 1
+                hint = "Nome (vira um tópico do grupo)"
+            }
+            AlertDialog.Builder(this)
+                .setTitle(if (courses) "Novo curso" else "Nova coleção")
+                .setView(LinearLayout(this).apply {
+                    setPadding(dp(22), 0, dp(22), 0)
+                    addView(input, LinearLayout.LayoutParams(-1, -2))
+                })
+                .setNegativeButton("Cancelar", null)
+                .setPositiveButton("Criar") { _, _ ->
+                    val title = input.text.toString().trim()
+                    if (title.isEmpty()) return@setPositiveButton
+                    TelegramCloud.createTopic(this, chat, title) { result ->
+                        if (destroyed) return@createTopic
+                        result.onSuccess {
+                            Toast.makeText(this, "\"$title\" criado. Envie os vídeos dentro desse tópico no Telegram.", Toast.LENGTH_LONG).show()
+                            videos = null
+                            showLibrary()
+                        }.onFailure { Toast.makeText(this, it.message ?: "Não foi possível criar o tópico.", Toast.LENGTH_LONG).show() }
+                    }
+                }
+                .show()
+        }
+        if (videoTopics.forum) {
+            ask()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Ativar tópicos no grupo?")
+            .setMessage("Cada ${if (courses) "curso" else "coleção"} é um tópico do grupo \"${chat.title}\". Quem envia pelo Telegram escolhe o tópico na hora de mandar o vídeo. Só o dono ou um administrador do grupo pode ativar.")
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Ativar") { _, _ ->
+                TelegramCloud.enableTopics(this, chat) { result ->
+                    if (destroyed) return@enableTopics
+                    result.onSuccess {
+                        videoTopics = videoTopics.copy(forum = true)
+                        ask()
+                    }.onFailure { Toast.makeText(this, it.message ?: "Não foi possível ativar os tópicos.", Toast.LENGTH_LONG).show() }
+                }
+            }
+            .show()
+    }
+
+    private fun renameTopic(tab: AppTab, chat: CloudChat, topic: Playlists.Topic) {
+        val input = EditText(this).apply {
+            setText(topic.title)
+            selectAll()
+            maxLines = 1
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Renomear")
+            .setView(LinearLayout(this).apply {
+                setPadding(dp(22), 0, dp(22), 0)
+                addView(input, LinearLayout.LayoutParams(-1, -2))
+            })
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Salvar") { _, _ ->
+                val title = input.text.toString().trim()
+                if (title.isEmpty() || title == topic.title) return@setPositiveButton
+                TelegramCloud.renameTopic(this, chat, topic.id, title) { result ->
+                    if (destroyed) return@renameTopic
+                    result.onSuccess {
+                        videoTopics = videoTopics.copy(topics = videoTopics.topics.map { if (it.id == topic.id) it.copy(title = title) else it })
+                        showLibrary()
+                    }.onFailure { Toast.makeText(this, it.message ?: "Não foi possível renomear.", Toast.LENGTH_LONG).show() }
+                }
+            }
+            .show()
     }
 
     private fun refreshVideoPositions(tab: AppTab) {
@@ -1927,8 +2107,9 @@ class MainActivity : Activity() {
         return Triple(if (at > 0) "Parou em ${VideoProgress.clock(at)}" else "", if (duration > 0) p.position.toFloat() / duration else 0f, at > 0)
     }
 
-    private fun addVideoRow(tab: AppTab, v: CloudVideo) {
+    private fun addVideoRow(tab: AppTab, v: CloudVideo, playlist: List<CloudVideo> = emptyList(), number: Int? = null, indent: Boolean = false) {
         val (status, fraction, _) = videoStatus(v)
+        val done = fraction >= 1f
         content.addView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), dp(10), dp(12), dp(10))
@@ -1936,12 +2117,12 @@ class MainActivity : Activity() {
             setOnClickListener {
                 // Ao voltar do player, as posições são lidas de novo (para "Continuar assistindo").
                 refreshOnResume = true
-                VideoActivity.open(this@MainActivity, tab.id, v)
+                playVideo(tab, v, playlist)
             }
             addView(LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                addView(label("▶  ${v.name.substringBeforeLast('.')}", 14f, ink, true).apply {
+                addView(label("${if (done) "✓" else "▶"}  ${number?.let { "$it. " } ?: ""}${v.name.substringBeforeLast('.')}", 14f, ink, true).apply {
                     maxLines = 2
                     ellipsize = TextUtils.TruncateAt.END
                 }, LinearLayout.LayoutParams(0, -2, 1f))
@@ -1955,7 +2136,10 @@ class MainActivity : Activity() {
                 max = 1000
                 progress = (fraction * 1000).toInt()
             }, LinearLayout.LayoutParams(-1, dp(6)).apply { topMargin = dp(6) })
-        }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
+        }, LinearLayout.LayoutParams(-1, -2).apply {
+            bottomMargin = dp(8)
+            if (indent) marginStart = dp(16)
+        })
     }
 
     /** Passo 1 do login no Telegram: api_id, api_hash e telefone. */

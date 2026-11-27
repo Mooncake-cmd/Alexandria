@@ -8,6 +8,7 @@ import { bookKey, DEVICE, pullPosition as pullFromGitHub, pushPosition as pushTo
 import { copyCloud, downloadBook, listCloudBooks, listVideos, pullPositionFrom, pushPositionTo, readPositions, uploadBook, removeCloudBook, type CloudBook, type CloudVideo, type SponsoredItem, type TgApi } from './telegramCloud'
 import type { CloudChat, CloudTarget, VideoSource } from './gramApi'
 import { BlockReader } from './blockReader'
+import type { Topic } from '../core/playlists'
 import { MAIN_TAB, tabOf } from '../core/tabs'
 import { tabById } from '../storage/tabs'
 
@@ -334,5 +335,59 @@ export function pushVideoPosition(tab: string, name: string, size: number, entry
 
 // Só nos testes de navegador: troca as ligações com o Telegram por falsas.
 if (typeof window !== 'undefined') {
-  ;(window as unknown as { __alxTest?: unknown }).__alxTest = { setVideoSourceFactory, setTelegramApiFactory, BlockReader }
+  ;(window as unknown as { __alxTest?: unknown }).__alxTest = { setVideoSourceFactory, setTelegramApiFactory, setTopicsFactory, BlockReader }
+}
+
+// ---------- tópicos do grupo (cursos e coleções) ----------
+
+/** Lista de vídeos guardada por aba (o player usa para achar a próxima aula). */
+const videoCache = new Map<string, CloudVideo[]>()
+export const cachedVideos = (tab: string) => videoCache.get(tab) ?? null
+
+export async function cloudVideosCached(tab: string): Promise<CloudVideo[]> {
+  const list = await cloudVideos(tab)
+  videoCache.set(tab, list)
+  return list
+}
+
+async function groupOf(tab: string) {
+  const t = await tabById(tab)
+  if (!t.chat) throw new Error('Esta aba não tem grupo.')
+  const { gram, client: c } = await client()
+  return { chat: t.chat, gram, c }
+}
+
+/** Só nos testes: troca os tópicos por falsos. */
+let topicsFactory: ((tab: string) => Promise<{ forum: boolean; topics: Topic[] }>) | null = null
+export function setTopicsFactory(factory: typeof topicsFactory) {
+  topicsFactory = factory
+}
+
+const topicsCache = new Map<string, Topic[]>()
+export const cachedTopics = (tab: string) => topicsCache.get(tab) ?? []
+
+export async function cloudTopics(tab: string): Promise<{ forum: boolean; topics: Topic[] }> {
+  let result: { forum: boolean; topics: Topic[] }
+  if (topicsFactory) result = await topicsFactory(tab)
+  else {
+    const { chat, gram, c } = await groupOf(tab)
+    result = await gram.listTopics(c, chat)
+  }
+  topicsCache.set(tab, result.topics)
+  return result
+}
+
+export async function enableCloudTopics(tab: string) {
+  const { chat, gram, c } = await groupOf(tab)
+  await gram.enableTopics(c, chat)
+}
+
+export async function createCloudTopic(tab: string, title: string): Promise<Topic> {
+  const { chat, gram, c } = await groupOf(tab)
+  return gram.createTopic(c, chat, title)
+}
+
+export async function renameCloudTopic(tab: string, topicId: number, title: string) {
+  const { chat, gram, c } = await groupOf(tab)
+  await gram.renameTopic(c, chat, topicId, title)
 }

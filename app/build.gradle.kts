@@ -11,8 +11,8 @@ android {
         applicationId = "com.alexandria.reader"
         minSdk = 23
         targetSdk = 35
-        versionCode = 31
-        versionName = "0.24.1"
+        versionCode = 32
+        versionName = "0.25.0"
     }
 
     ndkVersion = "27.0.12077973"

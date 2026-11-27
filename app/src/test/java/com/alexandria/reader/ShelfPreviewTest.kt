@@ -237,6 +237,22 @@ class ShelfPreviewTest {
             val movies = Robolectric.buildActivity(MainActivity::class.java).setup().get()
             shadowOf(Looper.getMainLooper()).idle()
             save(movies.window.decorView, File(dir, "aba-filmes.png"))
+            AppTabs.update(context, "cursos") { it.copy(chat = CloudChat("999", "1", "Cursos da família")) }
+            engine.forum = true
+            engine.topics[50] = "Curso de Python"
+            engine.topics[60] = "Violão para iniciantes"
+            listOf("Aula 2 - Variáveis.mp4", "Aula 10 - Final.mp4", "Aula 1 - Introdução.mp4").forEachIndexed { i, name ->
+                engine.videoList.put(org.json.JSONObject().put("messageId", 20 + i).put("name", name).put("size", 90_000_000L).put("duration", 900).put("date", 10 + i).put("topic", 50))
+            }
+            engine.positions[SyncData.key("Aula 1 - Introdução.mp4", 90_000_000L)] = org.json.JSONObject().put("format", "video").put("position", 890).put("exact", 890_000).put("pageCount", 900).put("updated", 9).put("device", "celular")
+            AppTabs.setCurrent(context, "cursos")
+            val courses = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+            shadowOf(Looper.getMainLooper()).idle()
+            courses.window.decorView.let { root ->
+                find(root) { it is TextView && it.text.toString().endsWith("Curso de Python") }!!.let { (it.parent as View).performClick() }
+            }
+            shadowOf(Looper.getMainLooper()).idle()
+            save(courses.window.decorView, File(dir, "aba-cursos.png"))
             AppTabs.setCurrent(context, AppTabs.MAIN)
         } finally {
             TelegramCloud.reset()

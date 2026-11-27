@@ -468,3 +468,20 @@ kbd { font-family: inherit; font-size: 12px; background: var(--paper, #f5f2eb); 
 .video-page .sync-error { color: #ffb4a8; max-width: 760px; line-height: 1.5; }
 .video-page .snack { position: absolute; left: 12px; bottom: 60px; background: rgba(20, 24, 30, 0.92); color: #fff; padding: 8px 14px; border-radius: 10px; font-size: 14px; }
 .video-page .snack .link { color: #d9ad66; }
+.playlists-head { margin-top: 14px; }
+.playlists-head h3 { margin: 0; }
+.course { background: var(--card); border: 1px solid var(--line); border-radius: 12px; margin: 0 0 10px; }
+.course-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px 6px 0; }
+.course-title { flex: 1; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; background: none; border: 0; text-align: left; font: inherit; color: var(--text); padding: 8px 14px; cursor: pointer; min-width: 0; }
+.course-title .video-bar { width: 100%; max-width: 360px; }
+.course .video-list { margin: 0 10px 10px; }
+.course-go { text-decoration: none; padding: 8px 14px; border-radius: 10px; white-space: nowrap; }
+.video-titles { min-width: 0; }
+.video-titles p { margin: 2px 0 0; color: #aab2bd; }
+.video-titles .link { color: #d9ad66; }
+.next-overlay { position: absolute; right: 16px; bottom: 70px; background: rgba(20, 24, 30, 0.95); color: #fff; padding: 14px 18px; border-radius: 12px; max-width: 360px; }
+.next-overlay p { margin: 0 0 4px; color: #aab2bd; font-size: 13px; }
+.next-overlay .primary { text-decoration: none; padding: 8px 14px; border-radius: 10px; display: inline-block; }
+a.primary { background: var(--ink); color: #fff; font-size: 14px; font-weight: 600; }
+.video-page a.primary { background: #d9ad66; color: #111; }
+.course-head .card-more { position: static; flex: none; }

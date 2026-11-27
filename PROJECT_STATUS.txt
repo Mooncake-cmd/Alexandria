@@ -1,9 +1,9 @@
 ALEXANDRIA — STATUS DA ENTREGA
 
-Versão do projeto: 0.24.1
+Versão do projeto: 0.25.0
 
 Build: compilado com sucesso (AGP 8.7.3, Gradle 8.14.3, SDK 35, NDK 27.0.12077973). Lint sem avisos.
-186 testes automatizados passando, incluindo integração com os motores do OpenReadEra compilados para Linux.
+188 testes automatizados passando, incluindo integração com os motores do OpenReadEra compilados para Linux.
 APK: ~15,3 MB, não versionado; gerado pelo GitHub Actions (artefato Alexandria-debug-apk) ou por ./gradlew assembleDebug.
 
 Formatos com leitor: PDF, EPUB, MOBI/AZW/AZW3, DJVU, CBZ, CBR (RAR 4/5 ou ZIP), DOCX, TXT.
@@ -18,7 +18,7 @@ Nuvem opcional pelo Telegram (Mensagens salvas da própria conta, api_id própri
 alternativa só para a posição: gist secreto do GitHub (token em Ajustes).
 Abas na tela inicial (Livros, Filmes, Cursos e as criadas pela pessoa), cada uma com o seu grupo do Telegram; livros
 separados por aba; abas de vídeo com streaming (player do Android no app, service worker no site) e "continuar
-assistindo" sincronizado pelo grupo (playlists por tópicos na próxima etapa).
+assistindo" sincronizado pelo grupo; cursos e coleções pelos tópicos do grupo, com próxima aula automática.
 Atualização pelo próprio app: verificação diária das Releases do GitHub, download, conferência da assinatura e instalador
 do Android. Releases publicadas por .github/workflows/release.yml com a chave oficial (segredo ALEXANDRIA_KEYSTORE).
 Glossário por livro (definir termo pela seleção, sublinhado e toque para ver), tempo de leitura (pausa pelo ritmo de leitura,

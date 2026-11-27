@@ -29,6 +29,7 @@ declare global {
     __alxTestApi?: TgApi
     __alxTestApis?: Record<string, TgApi>
     __alxTestSource?: (messageId: number) => Promise<VideoSource>
+    __alxTestTopics?: { forum: boolean; topics: { id: number; title: string }[] }
   }
 }
 
@@ -150,6 +151,28 @@ const methods: Record<string, (args: Args, id: string, bridge: Bridge) => Promis
   },
   async positions() {
     return readPositions(await api())
+  },
+  // ---------- tópicos do grupo (cursos e coleções) ----------
+  async topics() {
+    if (window.__alxTestTopics) return window.__alxTestTopics
+    const chat = settings?.chat
+    if (!chat) return { forum: false, topics: [] }
+    const { gram, client: c } = await client()
+    return gram.listTopics(c, chat)
+  },
+  async enableTopics() {
+    const { gram, client: c } = await client()
+    await gram.enableTopics(c, chatArg(settings?.chat))
+    return true
+  },
+  async createTopic(args) {
+    const { gram, client: c } = await client()
+    return gram.createTopic(c, chatArg(settings?.chat), String(args.title))
+  },
+  async renameTopic(args) {
+    const { gram, client: c } = await client()
+    await gram.renameTopic(c, chatArg(settings?.chat), Number(args.topicId), String(args.title))
+    return true
   },
   // ---------- vídeo por partes (o player do Android lê daqui) ----------
   async videoOpen(args) {

@@ -34,6 +34,8 @@ class TelegramCloudTest {
         var chat: JSONObject? = null
         val ads = JSONArray()
         val videoList = JSONArray()
+        var forum = false
+        val topics = LinkedHashMap<Int, String>()
         var needsPassword = false
         var nextId = 1
 
@@ -110,6 +112,21 @@ class TelegramCloudTest {
                             "sponsored" -> ads.toString()
                             "videos" -> videoList.toString()
                             "positions" -> JSONObject().apply { positions.forEach { (k, v) -> put(k, v) } }.toString()
+                            "topics" -> JSONObject().put("forum", forum).put("topics", JSONArray(topics.map { (id, title) -> JSONObject().put("id", id).put("title", title) })).toString()
+                            "enableTopics" -> {
+                                forum = true
+                                "true"
+                            }
+                            "createTopic" -> {
+                                if (!forum) throw CloudException("CHANNEL_FORUM_MISSING", "O grupo não usa tópicos.")
+                                val id = 100 + topics.size
+                                topics[id] = args.getString("title")
+                                JSONObject().put("id", id).put("title", args.getString("title")).toString()
+                            }
+                            "renameTopic" -> {
+                                topics[args.getInt("topicId")] = args.getString("title")
+                                "true"
+                            }
                             "viewSponsored", "clickSponsored" -> "true"
                             else -> throw CloudException("", "Método desconhecido: $method")
                         }
@@ -384,5 +401,22 @@ class TelegramCloudTest {
         TelegramCloud.pullPosition(context, null, "k") { pulled = it }
         assertNull(pulled)
         assertEquals("Sem sessão.", TelegramCloud.positionStatus(context).pullError)
+    }
+
+    @Test
+    fun topicsAreCreatedAfterEnablingThemInTheGroup() {
+        login()
+        val group = CloudChat("777", "1", "Cursos")
+        var created: Result<Playlists.Topic>? = null
+        TelegramCloud.createTopic(context, group, "Python") { created = it }
+        assertTrue(created!!.isFailure)
+        TelegramCloud.enableTopics(context, group) {}
+        TelegramCloud.createTopic(context, group, "Python") { created = it }
+        assertEquals(Playlists.Topic(100, "Python"), created!!.getOrThrow())
+        TelegramCloud.renameTopic(context, group, 100, "Python do zero") {}
+        var found: TelegramCloud.Topics? = null
+        TelegramCloud.topics(context, group) { found = it.getOrThrow() }
+        assertEquals(TelegramCloud.Topics(true, listOf(Playlists.Topic(100, "Python do zero"))), found)
+        assertEquals("777", engine.chat!!.getString("id"))
     }
 }

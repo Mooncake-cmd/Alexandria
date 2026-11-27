@@ -1,6 +1,6 @@
 # Alexandria — projeto Android
 
-**Versão:** 0.24.1  
+**Versão:** 0.25.0  
 **Pacote:** `com.alexandria.reader`  
 **Plataforma:** Android 6.0 ou superior (API 23+)  
 **Idioma da interface:** Português (Brasil)
@@ -186,8 +186,13 @@ Em todos os formatos:
   aba…" troca o livro de aba; apagar uma aba devolve os livros dela para a principal. A posição de leitura vai para o
   grupo da aba do livro. Notas e Estatísticas continuam juntando todas as abas.
 - **Filmes e Cursos**: a aba lista os vídeos do grupo (enviados como vídeo ou como arquivo), com duração, tamanho e
-  quem enviou. Próximas etapas: playlists pelos tópicos do grupo (cursos com aulas em ordem); assistir offline,
-  legendas `.srt` e busca.
+  quem enviou. Próxima etapa: assistir offline, legendas `.srt` e busca.
+- **Playlists pelos tópicos** (0.25): com os tópicos ativados no grupo, cada tópico é um **curso** (aba Cursos) ou uma
+  **coleção** (aba Filmes); o "Geral" e os vídeos sem tópico ficam em "Vídeos soltos". Aulas em ordem pelo número no
+  nome quando todas têm número (2 antes de 10; o 4 de ".mp4" não conta), senão pela ordem de envio. Cada curso mostra
+  aulas assistidas e Começar/Continuar (a primeira não assistida); nos cursos, a próxima aula começa sozinha em 5 s.
+  "＋ Novo curso/coleção" cria o tópico (ativando os tópicos do grupo, se for o dono ou administrador); segurar
+  (app) ou ⋯ (site) renomeia.
 - **Streaming** (0.24): o vídeo toca enquanto baixa. O arquivo é lido em blocos de 512 KB (o que o Telegram entrega
   por pedido), com memória limitada e os próximos blocos pedidos antes. No celular, o player é o do próprio Android
   (MediaPlayer com uma fonte de dados que lê pelo motor da nuvem; nada é instalado a mais). No site, um service worker

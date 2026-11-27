@@ -72,4 +72,23 @@ class VideoPlaybackTest {
         assertEquals("34:10", VideoProgress.clock(2050))
         assertEquals("3:01:05", VideoProgress.clock(3 * 3600 + 65))
     }
+
+    private fun v(id: Int, name: String, date: Long, topic: Int = 0) = CloudVideo(id, name, 10, 600, "video/mp4", date, "", topic, name)
+
+    @Test
+    fun lessonOrderAndPlaylistsMatchTheSite() {
+        assertEquals(listOf(3, 2, 1), Playlists.lessonOrder(listOf(v(1, "Aula 10.mp4", 1), v(2, "Aula 2.mp4", 2), v(3, "aula 01 - Intro.mp4", 3))).map { it.messageId })
+        // O 4 de .mp4 não conta: sem número no nome, vale a ordem de envio.
+        assertEquals(listOf(2, 3, 1), Playlists.lessonOrder(listOf(v(1, "Revisão.mp4", 30), v(2, "Introdução.mp4", 10), v(3, "Aula 2.mp4", 20))).map { it.messageId })
+        val videos = listOf(v(1, "Filme.mp4", 1), v(2, "Aula 1.mp4", 2, 50), v(3, "Ep 1.mp4", 3, 20), v(4, "Geral.mp4", 4, 1), v(5, "X.mp4", 5, 99), v(6, "Aula 0.mp4", 6, 50))
+        val (lists, loose) = Playlists.split(videos, listOf(Playlists.Topic(50, "Python"), Playlists.Topic(1, "General"), Playlists.Topic(20, "Série"), Playlists.Topic(70, "Vazio")))
+        assertEquals(listOf("Série" to listOf(3), "Python" to listOf(6, 2), "Vazio" to emptyList<Int>()), lists.map { it.topic.title to it.videos.map { x -> x.messageId } })
+        assertEquals(listOf(1, 4, 5), loose.map { it.messageId })
+        val course = listOf(v(1, "Aula 1.mp4", 1), v(2, "Aula 2.mp4", 2), v(3, "Aula 3.mp4", 3))
+        assertEquals(2, Playlists.next(course, 1)?.messageId)
+        assertEquals(null, Playlists.next(course, 3))
+        val stopped = mapOf(1 to Pair(590L, 600L), 2 to Pair(120L, 600L))
+        assertEquals(Playlists.Progress(1, 3, course[1], true), Playlists.progress(course) { stopped[it.messageId] })
+        assertEquals(Playlists.Progress(0, 3, course[0], false), Playlists.progress(course) { null })
+    }
 }

@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'preact/hooks'
-import { openVideo, pushVideoPosition, videoPositions } from '../cloud/cloud'
+import { cachedTopics, cachedVideos, openVideo, pushVideoPosition, videoPositions } from '../cloud/cloud'
+import { lessonOrder, nextInPlaylist, GENERAL_TOPIC } from '../core/playlists'
+import { tabById } from '../storage/tabs'
+import type { CloudVideo } from '../cloud/telegramCloud'
 import { closeStream, streamingReady, streamUrl } from '../cloud/streamHost'
 import { bookKey } from '../storage/sync'
 import { clock, resumeAt, watched } from '../core/videoProgress'
@@ -15,6 +18,9 @@ export function VideoPlayer({ tabId, messageId }: { tabId: string; messageId: nu
   const [src, setSrc] = useState('')
   const [error, setError] = useState('')
   const [snack, setSnack] = useState<{ at: number } | null>(null)
+  /** Curso deste vídeo (as aulas em ordem) e a contagem para a próxima aula. */
+  const [course, setCourse] = useState<{ title: string; list: CloudVideo[]; auto: boolean } | null>(null)
+  const [countdown, setCountdown] = useState<{ next: CloudVideo; seconds: number } | null>(null)
   const video = useRef<HTMLVideoElement>(null)
   const saved = useRef({ last: -1, resumed: false })
 
@@ -42,6 +48,35 @@ export function VideoPlayer({ tabId, messageId }: { tabId: string; messageId: nu
       if (opened) closeStream(opened, `${tabId}-${messageId}`)
     }
   }, [tabId, messageId])
+
+  useEffect(() => {
+    ;(async () => {
+      const list = cachedVideos(tabId)
+      const me = list?.find((v) => v.messageId === messageId)
+      if (!list || !me?.topic || me.topic === GENERAL_TOPIC) return
+      const topic = cachedTopics(tabId).find((t) => t.id === me.topic)
+      if (!topic) return
+      const tab = await tabById(tabId)
+      setCourse({ title: topic.title, list: lessonOrder(list.filter((v) => v.topic === me.topic)), auto: tab.type === 'cursos' })
+    })()
+  }, [tabId, messageId])
+
+  // Contagem para a próxima aula (só nos cursos): 5 s, com "Cancelar".
+  useEffect(() => {
+    if (!countdown) return
+    if (countdown.seconds <= 0) {
+      location.hash = `#/video/${tabId}/${countdown.next.messageId}`
+      return
+    }
+    const timer = setTimeout(() => setCountdown({ ...countdown, seconds: countdown.seconds - 1 }), 1000)
+    return () => clearTimeout(timer)
+  }, [countdown])
+
+  const onEnded = () => {
+    save(true)
+    const next = course ? nextInPlaylist(course.list, messageId) : null
+    if (next && course?.auto) setCountdown({ next, seconds: 5 })
+  }
 
   /** Grava onde parou (a cada 15 s tocando, ao pausar, ao sair e no fim). */
   const save = (force = false) => {
@@ -79,7 +114,18 @@ export function VideoPlayer({ tabId, messageId }: { tabId: string; messageId: nu
     <div class="video-page">
       <div class="video-top">
         <button type="button" class="secondary" onClick={() => history.length > 1 ? history.back() : (location.hash = `#/aba/${tabId}`)}>← Voltar</button>
-        <h2>{source ? source.name.replace(/\.[^.]+$/, '') : 'Vídeo'}</h2>
+        <div class="video-titles">
+          <h2>{source ? source.name.replace(/\.[^.]+$/, '') : 'Vídeo'}</h2>
+          {course && (
+            <p class="muted small">
+              {course.title} · aula {course.list.findIndex((v) => v.messageId === messageId) + 1} de {course.list.length}
+              {(() => {
+                const next = nextInPlaylist(course.list, messageId)
+                return next ? <> · <a class="link" href={`#/video/${tabId}/${next.messageId}`}>Próxima aula ›</a></> : null
+              })()}
+            </p>
+          )}
+        </div>
       </div>
       {error ? (
         <p class="sync-error">{error}</p>
@@ -96,11 +142,21 @@ export function VideoPlayer({ tabId, messageId }: { tabId: string; messageId: nu
               onLoadedMetadata={onMetadata}
               onTimeUpdate={() => save()}
               onPause={() => save(true)}
-              onEnded={() => save(true)}
+              onEnded={onEnded}
               onError={onError}
             />
           ) : (
             <p class="muted">Abrindo o vídeo…</p>
+          )}
+          {countdown && (
+            <div class="next-overlay" role="status">
+              <p>Próxima aula em {countdown.seconds} s</p>
+              <strong>{countdown.next.name.replace(/\.[^.]+$/, '')}</strong>
+              <div class="button-row">
+                <a class="primary" href={`#/video/${tabId}/${countdown.next.messageId}`}>Assistir agora</a>
+                <button type="button" class="secondary" onClick={() => setCountdown(null)}>Cancelar</button>
+              </div>
+            </div>
           )}
           {snack && (
             <div class="snack" role="status">

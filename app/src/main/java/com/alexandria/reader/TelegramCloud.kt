@@ -463,6 +463,29 @@ object TelegramCloud {
 
     // ---------- vídeos (abas de filmes e cursos) ----------
 
+    // ---------- tópicos do grupo (cursos e coleções) ----------
+
+    data class Topics(val forum: Boolean, val topics: List<Playlists.Topic>)
+
+    fun topics(context: Context, chat: CloudChat, done: (Result<Topics>) -> Unit) =
+        call(context, "topics", chat = chat) { r ->
+            done(r.mapCatching { json ->
+                val o = JSONObject(json)
+                val a = o.optJSONArray("topics") ?: JSONArray()
+                Topics(o.optBoolean("forum"), (0 until a.length()).map { a.getJSONObject(it).let { t -> Playlists.Topic(t.getInt("id"), t.optString("title")) } })
+            })
+        }
+
+    fun enableTopics(context: Context, chat: CloudChat, done: (Result<Unit>) -> Unit) = call(context, "enableTopics", chat = chat) { done(it.map { }) }
+
+    fun createTopic(context: Context, chat: CloudChat, title: String, done: (Result<Playlists.Topic>) -> Unit) =
+        call(context, "createTopic", JSONObject().put("title", title), chat = chat) { r ->
+            done(r.mapCatching { JSONObject(it).let { t -> Playlists.Topic(t.getInt("id"), t.optString("title")) } })
+        }
+
+    fun renameTopic(context: Context, chat: CloudChat, topicId: Int, title: String, done: (Result<Unit>) -> Unit) =
+        call(context, "renameTopic", JSONObject().put("topicId", topicId).put("title", title), chat = chat) { done(it.map { }) }
+
     /** Posições salvas no grupo (livros e vídeos), pela chave nome+tamanho. */
     fun positions(context: Context, chat: CloudChat?, done: (Result<Map<String, SyncEntry>>) -> Unit) =
         call(context, "positions", chat = chat) { r -> done(r.map { SyncData.parse("{\"books\":$it}") }) }

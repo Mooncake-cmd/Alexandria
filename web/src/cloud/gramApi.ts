@@ -11,6 +11,7 @@ import { Buffer } from 'buffer'
 import bigInt from 'big-integer'
 import { videoKeyName, type SponsoredItem, type TgApi, type TgMessage } from './telegramCloud'
 import { BLOCK, BlockReader } from './blockReader'
+import type { Topic } from '../core/playlists'
 
 /** Grupo privado da nuvem (o access_hash é preciso para falar com ele sem procurar de novo). */
 export interface CloudChat {
@@ -344,4 +345,51 @@ export async function videoSource(client: TelegramClient, target: CloudTarget, m
   }
   const fileName = doc.attributes.find((a): a is Api.DocumentAttributeFilename => a instanceof Api.DocumentAttributeFilename)?.fileName
   return { messageId, name: fileName ?? `Vídeo ${messageId}`, keyName: videoKeyName(fileName, messageId), size, mime: doc.mimeType || 'video/mp4', reader: new BlockReader(size, (i) => fetchBlock(i)) }
+}
+
+// ---------- tópicos do grupo (playlists) ----------
+
+/** Tópicos do grupo (vazio se o grupo não usa tópicos). */
+export async function listTopics(client: TelegramClient, chat: CloudChat): Promise<{ forum: boolean; topics: Topic[] }> {
+  const entity = await client.getEntity(peerOf(chat))
+  const forum = entity instanceof Api.Channel && !!entity.forum
+  if (!forum) return { forum, topics: [] }
+  const topics: Topic[] = []
+  let offsetDate = 0
+  let offsetId = 0
+  let offsetTopic = 0
+  for (let page = 0; page < 10; page++) {
+    const result = await client.invoke(new Api.channels.GetForumTopics({ channel: peerOf(chat), offsetDate, offsetId, offsetTopic, limit: 100 }))
+    const found = result.topics.filter((t): t is Api.ForumTopic => t instanceof Api.ForumTopic)
+    topics.push(...found.map((t) => ({ id: t.id, title: t.title })))
+    if (found.length < 100) break
+    const last = found[found.length - 1]
+    offsetDate = last.date
+    offsetId = last.topMessage
+    offsetTopic = last.id
+  }
+  return { forum, topics }
+}
+
+/** Liga os tópicos no grupo (só dono ou administrador). */
+export async function enableTopics(client: TelegramClient, chat: CloudChat) {
+  await client.invoke(new Api.channels.ToggleForum({ channel: peerOf(chat), enabled: true }))
+}
+
+/** Cria um tópico (um curso ou uma coleção). Devolve o tópico criado. */
+export async function createTopic(client: TelegramClient, chat: CloudChat, title: string): Promise<Topic> {
+  const updates = await client.invoke(new Api.channels.CreateForumTopic({ channel: peerOf(chat), title, randomId: bigInt(Math.floor(Math.random() * 2 ** 52)) }))
+  const list = 'updates' in updates ? updates.updates : []
+  for (const u of list) {
+    const m = u instanceof Api.UpdateNewChannelMessage ? u.message : null
+    if (m instanceof Api.MessageService && m.action instanceof Api.MessageActionTopicCreate) return { id: m.id, title }
+  }
+  // Sem a mensagem de criação na resposta: procura pelo nome.
+  const found = (await listTopics(client, chat)).topics.filter((t) => t.title === title).sort((a, b) => b.id - a.id)[0]
+  if (!found) throw new Error('O tópico foi criado, mas não apareceu ainda. Atualize a aba.')
+  return found
+}
+
+export async function renameTopic(client: TelegramClient, chat: CloudChat, topicId: number, title: string) {
+  await client.invoke(new Api.channels.EditForumTopic({ channel: peerOf(chat), topicId, title }))
 }

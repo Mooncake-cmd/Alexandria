@@ -49,6 +49,24 @@ class VideoActivity : Activity(), SurfaceHolder.Callback {
     private lateinit var spinner: ProgressBar
     private lateinit var message: TextView
     private lateinit var snack: TextView
+    private lateinit var subtitle: TextView
+    private lateinit var nextBox: LinearLayout
+    private lateinit var nextText: TextView
+    private var countdown = -1
+
+    /** Aulas da playlist (em ordem) e a posição desta. */
+    private val listIds: IntArray by lazy { intent.getIntArrayExtra(EXTRA_LIST_IDS) ?: IntArray(0) }
+    private val listNames: Array<String> by lazy { intent.getStringArrayExtra(EXTRA_LIST_NAMES) ?: emptyArray() }
+    private val index: Int get() = listIds.indexOf(messageId)
+    private val nextTick = object : Runnable {
+        override fun run() {
+            if (countdown < 0) return
+            if (countdown == 0) return openNext()
+            nextText.text = "Próxima aula em $countdown s\n${listNames.getOrNull(index + 1)?.substringBeforeLast('.') ?: ""}"
+            countdown--
+            main.postDelayed(this, 1000)
+        }
+    }
 
     private val main = Handler(Looper.getMainLooper())
     private val hideControls = Runnable { showControls(false) }
@@ -112,7 +130,23 @@ class VideoActivity : Activity(), SurfaceHolder.Callback {
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
         }
-        top.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
+        subtitle = text(12f, Color.rgb(170, 178, 189)).apply {
+            val course = intent.getStringExtra(EXTRA_COURSE)
+            text = if (course != null && index >= 0) "$course · aula ${index + 1} de ${listIds.size}" else ""
+            visibility = if (text.isEmpty()) View.GONE else View.VISIBLE
+        }
+        top.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(title)
+            addView(subtitle)
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        if (index >= 0 && index + 1 < listIds.size) top.addView(text(14f, Color.rgb(217, 173, 102), true).apply {
+            text = "Próxima ›"
+            gravity = Gravity.CENTER
+            minHeight = dp(48)
+            setPadding(dp(12), 0, 0, 0)
+            setOnClickListener { openNext() }
+        })
         root.addView(top, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
 
         controls = LinearLayout(this).apply {
@@ -164,6 +198,40 @@ class VideoActivity : Activity(), SurfaceHolder.Callback {
         }
         root.addView(snack, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START).apply {
             leftMargin = dp(16)
+            bottomMargin = dp(84)
+        })
+        nextBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(14), dp(18), dp(12))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(12).toFloat()
+                setColor(Color.argb(240, 20, 24, 30))
+            }
+            visibility = View.GONE
+        }
+        nextText = text(15f, bold = true)
+        nextBox.addView(nextText)
+        nextBox.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(text(14f, Color.rgb(217, 173, 102), true).apply {
+                text = "ASSISTIR AGORA"
+                minHeight = dp(44)
+                gravity = Gravity.CENTER_VERTICAL
+                setOnClickListener { openNext() }
+            })
+            addView(text(14f, Color.rgb(170, 178, 189), true).apply {
+                text = "CANCELAR"
+                minHeight = dp(44)
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(24), 0, 0, 0)
+                setOnClickListener {
+                    countdown = -1
+                    nextBox.visibility = View.GONE
+                }
+            })
+        })
+        root.addView(nextBox, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.END).apply {
+            rightMargin = dp(16)
             bottomMargin = dp(84)
         })
         setContentView(root)
@@ -218,6 +286,12 @@ class VideoActivity : Activity(), SurfaceHolder.Callback {
             playButton.text = "▶"
             save(true)
             showControls(true)
+            // Nos cursos, a próxima aula começa sozinha depois de 5 s (dá para cancelar).
+            if (intent.getBooleanExtra(EXTRA_AUTO, false) && index >= 0 && index + 1 < listIds.size) {
+                countdown = 5
+                nextBox.visibility = View.VISIBLE
+                main.post(nextTick)
+            }
         }
         mp.setOnErrorListener { _, _, _ ->
             fail("Este aparelho não conseguiu tocar este vídeo (formato ${opened.mime.removePrefix("video/").uppercase().ifEmpty { "desconhecido" }}). Tente enviar o vídeo em MP4.")
@@ -260,6 +334,15 @@ class VideoActivity : Activity(), SurfaceHolder.Callback {
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
         super.onConfigurationChanged(newConfig)
         player?.takeIf { prepared }?.let { fitSurface(it.videoWidth, it.videoHeight) }
+    }
+
+    private fun openNext() {
+        val i = index
+        if (i < 0 || i + 1 >= listIds.size) return
+        countdown = -1
+        save(true)
+        startActivity(intent(this, tabId, listIds[i + 1], listNames[i + 1], listIds, listNames, intent.getStringExtra(EXTRA_COURSE), intent.getBooleanExtra(EXTRA_AUTO, false)))
+        finish()
     }
 
     private fun togglePlay() {
@@ -348,10 +431,18 @@ class VideoActivity : Activity(), SurfaceHolder.Callback {
         const val EXTRA_MESSAGE = "message"
         const val EXTRA_NAME = "name"
 
-        fun open(context: Context, tab: String, video: CloudVideo) {
-            context.startActivity(
-                Intent(context, VideoActivity::class.java).putExtra(EXTRA_TAB, tab).putExtra(EXTRA_MESSAGE, video.messageId).putExtra(EXTRA_NAME, video.name)
-            )
+        const val EXTRA_LIST_IDS = "list_ids"
+        const val EXTRA_LIST_NAMES = "list_names"
+        const val EXTRA_COURSE = "course"
+        const val EXTRA_AUTO = "auto"
+
+        /** [playlist]: as aulas em ordem (vazia fora de cursos e coleções); [auto]: a próxima começa sozinha. */
+        fun open(context: Context, tab: String, video: CloudVideo, playlist: List<CloudVideo> = emptyList(), course: String? = null, auto: Boolean = false) {
+            context.startActivity(intent(context, tab, video.messageId, video.name, playlist.map { it.messageId }.toIntArray(), playlist.map { it.name }.toTypedArray(), course, auto))
         }
+
+        fun intent(context: Context, tab: String, messageId: Int, name: String, ids: IntArray, names: Array<String>, course: String?, auto: Boolean): Intent =
+            Intent(context, VideoActivity::class.java).putExtra(EXTRA_TAB, tab).putExtra(EXTRA_MESSAGE, messageId).putExtra(EXTRA_NAME, name)
+                .putExtra(EXTRA_LIST_IDS, ids).putExtra(EXTRA_LIST_NAMES, names).putExtra(EXTRA_COURSE, course).putExtra(EXTRA_AUTO, auto)
     }
 }

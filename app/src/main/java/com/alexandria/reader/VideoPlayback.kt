@@ -5,6 +5,72 @@ import java.io.IOException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
+/**
+ * Playlists pelos tópicos do grupo (as mesmas regras do site): cada tópico é um curso (aba Cursos)
+ * ou uma coleção (aba Filmes); os vídeos fora de tópicos ficam soltos.
+ */
+object Playlists {
+    data class Topic(val id: Int, val title: String)
+    data class Playlist(val topic: Topic, val videos: List<CloudVideo>)
+
+    /** O tópico "Geral" de todo grupo com tópicos. */
+    const val GENERAL = 1
+
+    /** Tem número no nome (sem contar a extensão: o 4 de .mp4 não vale). */
+    private fun hasNumber(name: String) = Regex("\\d").containsMatchIn(name.replace(Regex("\\.[a-zA-Z0-9]{2,4}$"), ""))
+
+    /** Compara nomes com os números pelo valor ("Aula 2" antes de "Aula 10"), sem diferenciar maiúsculas. */
+    private val collator = java.text.Collator.getInstance(java.util.Locale("pt", "BR")).apply { strength = java.text.Collator.PRIMARY }
+
+    private val natural = Comparator<String> { a, b ->
+        val pa = Regex("\\d+|\\D+").findAll(a.lowercase()).map { it.value }.toList()
+        val pb = Regex("\\d+|\\D+").findAll(b.lowercase()).map { it.value }.toList()
+        for (i in 0 until minOf(pa.size, pb.size)) {
+            val x = pa[i]
+            val y = pb[i]
+            val c = if (x[0].isDigit() && y[0].isDigit()) x.trimStart('0').length.compareTo(y.trimStart('0').length).takeIf { it != 0 } ?: x.trimStart('0').compareTo(y.trimStart('0'))
+            else collator.compare(x, y)
+            if (c != 0) return@Comparator c
+        }
+        pa.size.compareTo(pb.size)
+    }
+
+    /** Aulas numeradas seguem o número; sem número em todos, a ordem de envio (o mais antigo primeiro). */
+    fun lessonOrder(videos: List<CloudVideo>): List<CloudVideo> {
+        val byName = videos.isNotEmpty() && videos.all { hasNumber(it.name) }
+        return if (byName) videos.sortedWith(compareBy(natural) { v: CloudVideo -> v.name }.thenBy { it.date })
+        else videos.sortedWith(compareBy<CloudVideo> { it.date }.thenBy { it.messageId })
+    }
+
+    /** Vídeos por tópico (na ordem de criação dos tópicos) e os soltos. */
+    fun split(videos: List<CloudVideo>, topics: List<Topic>): Pair<List<Playlist>, List<CloudVideo>> {
+        val known = topics.filter { it.id != GENERAL }.associateBy { it.id }
+        val (inTopic, loose) = videos.partition { it.topic != 0 && it.topic in known }
+        val groups = inTopic.groupBy { it.topic }
+        return Pair(known.values.sortedBy { it.id }.map { Playlist(it, lessonOrder(groups[it.id].orEmpty())) }, loose)
+    }
+
+    fun next(list: List<CloudVideo>, messageId: Int): CloudVideo? {
+        val i = list.indexOfFirst { it.messageId == messageId }
+        return if (i >= 0 && i + 1 < list.size) list[i + 1] else null
+    }
+
+    /** Aulas assistidas, a próxima a assistir e se o curso já foi começado. */
+    data class Progress(val done: Int, val total: Int, val next: CloudVideo?, val started: Boolean)
+
+    fun progress(list: List<CloudVideo>, stoppedAt: (CloudVideo) -> Pair<Long, Long>?): Progress {
+        var done = 0
+        var next: CloudVideo? = null
+        var started = false
+        for (v in list) {
+            val p = stoppedAt(v)
+            if (p != null) started = true
+            if (p != null && VideoProgress.watched(p.first, if (p.second > 0) p.second else v.duration.toLong())) done++ else if (next == null) next = v
+        }
+        return Progress(done, list.size, next, started)
+    }
+}
+
 /** Regras do "continuar assistindo" (as mesmas do site). Tempos em segundos. */
 object VideoProgress {
     /** Assistido: chegou perto do fim (os créditos não contam). */

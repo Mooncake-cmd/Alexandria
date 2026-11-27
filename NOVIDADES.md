@@ -3,6 +3,11 @@
 Cada seção vira o texto da Release no GitHub e aparece no aviso de atualização do app.
 A versão mais nova fica em cima.
 
+## 0.25.0
+- Cursos e coleções pelos tópicos do grupo: na aba de Cursos, cada tópico é um curso, com as aulas em ordem (pelo número no nome, "Aula 2" antes de "Aula 10", ou pela ordem de envio), quantas você já assistiu e o botão Começar/Continuar. Na aba de Filmes, cada tópico é uma coleção.
+- Nos cursos, a próxima aula começa sozinha depois de 5 segundos (dá para cancelar), e o player mostra "aula 2 de 12" e "Próxima ›".
+- "＋ Novo curso" / "＋ Nova coleção" cria o tópico no grupo (e ativa os tópicos, se ainda não estiverem ativos). Segure um curso para renomear.
+
 ## 0.24.1
 - Corrige o app fechando ao abrir para quem já tinha livros antes das abas (o banco de dados não recebia a coluna nova das abas).
 - Se uma tela der erro, o app mostra o problema e o botão "Procurar atualização" em vez de fechar.
